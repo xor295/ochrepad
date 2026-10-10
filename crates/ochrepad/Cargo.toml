@@ -10,9 +10,9 @@ egui_commonmark = { version = "=0.25.0", features = ["better_syntax_highlighting
 egui_dock = { version = "=0.21.1", features = ["serde"] }
 image = { version = "=0.25.10", default-features = false, features = ["jpeg", "webp"] }
 notify = "=8.2.0"
-ochrepad-core = { version = "0.1.0", path = "../core" }
-ochrepad-fileio = { version = "0.1.0", path = "../fileio" }
-ochrepad-syntax = { version = "0.1.0", path = "../syntax" }
+ochrepad-core = { version = "0.1.0", path = "../ochrepad-core" }
+ochrepad-fileio = { version = "0.1.0", path = "../ochrepad-fileio" }
+ochrepad-syntax = { version = "0.1.0", path = "../ochrepad-syntax" }
 # SVGs in the Markdown preview with a restricted <image> resolver
 # (safe_images.rs); the same version egui_extras already uses.
 resvg = { version = "=0.45.1", default-features = false }

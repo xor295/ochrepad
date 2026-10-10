@@ -54,12 +54,12 @@ A Cargo workspace. The `core` crate must not depend on egui, so the editing logi
 ochrepad/
   Cargo.toml            # [workspace]
   crates/
-    core/               # no egui, no filesystem: text, positions, selections,
+    ochrepad-core/      # no egui, no filesystem: text, positions, selections,
                         # actions, transactions, undo, macros, search, transforms, diff
-    syntax/             # syntect wrapper + highlight checkpoint cache
-    fileio/             # load/save, encoding & line-ending detection, atomic writes,
+    ochrepad-syntax/    # syntect wrapper + highlight checkpoint cache
+    ochrepad-fileio/    # load/save, encoding & line-ending detection, atomic writes,
                         # autosave snapshots, session restore, config dir
-    app/                # eframe binary: editor widget, dock/tabs, menus, panels,
+    ochrepad/           # eframe binary: editor widget, dock/tabs, menus, panels,
                         # markdown preview, diff view
 ```
 

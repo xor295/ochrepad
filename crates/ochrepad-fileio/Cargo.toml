@@ -7,7 +7,7 @@ edition = "2024"
 chardetng = "=1.0.0"
 directories = "=6.0.0"
 encoding_rs = "=0.8.42"
-ochrepad-core = { version = "0.1.0", path = "../core" }
+ochrepad-core = { version = "0.1.0", path = "../ochrepad-core" }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.151"
 tempfile = "=3.27.0"
