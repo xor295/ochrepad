@@ -42,6 +42,33 @@ impl Default for FileMeta {
     }
 }
 
+/// How one edit changed the lines: lines `start..=old_end` were replaced by
+/// lines `start..=new_end`, and every later line moved by `new_end - old_end`.
+/// `old_end == new_end == usize::MAX` means "everything from `start` on may
+/// have changed" (the log overflowed).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LineEdit {
+    pub start: usize,
+    pub old_end: usize,
+    pub new_end: usize,
+}
+
+impl LineEdit {
+    pub fn everything_from(start: usize) -> Self {
+        Self {
+            start,
+            old_end: usize::MAX,
+            new_end: usize::MAX,
+        }
+    }
+
+    pub fn is_everything(&self) -> bool {
+        self.old_end == usize::MAX
+    }
+}
+
+const MAX_PENDING_LINE_EDITS: usize = 1024;
+
 #[derive(Debug)]
 pub struct Buffer {
     id: BufferId,
@@ -52,8 +79,8 @@ pub struct Buffer {
     saved_revision: Revision,
     pub language: Option<String>,
     pub meta: FileMeta,
-    /// First line whose text changed since the highlighter last asked.
-    pub(crate) dirty_from_line: Option<usize>,
+    /// Line edits since the last `take_line_edits`, for the highlighter.
+    line_edits: Vec<LineEdit>,
 }
 
 impl Buffer {
@@ -67,7 +94,7 @@ impl Buffer {
             saved_revision: 0,
             language: None,
             meta,
-            dirty_from_line: None,
+            line_edits: Vec::new(),
         }
     }
 
@@ -98,12 +125,30 @@ impl Buffer {
         self.history.break_coalescing();
     }
 
-    /// The first line changed since the last call, for incremental highlighting.
-    pub fn take_dirty_from_line(&mut self) -> Option<usize> {
-        self.dirty_from_line.take()
+    /// How the lines changed since the last call, in the order the edits
+    /// were applied (for incremental highlighting).
+    pub fn take_line_edits(&mut self) -> Vec<LineEdit> {
+        std::mem::take(&mut self.line_edits)
     }
 
-    pub(crate) fn note_dirty_line(&mut self, line: usize) {
-        self.dirty_from_line = Some(self.dirty_from_line.map_or(line, |l| l.min(line)));
+    pub(crate) fn record_line_edit(&mut self, edit: LineEdit) {
+        if let Some(last) = self.line_edits.last_mut()
+            && last.old_end == usize::MAX
+        {
+            last.start = last.start.min(edit.start);
+            return;
+        }
+        if self.line_edits.len() >= MAX_PENDING_LINE_EDITS {
+            // Nobody is draining the log; keep one conservative entry. The
+            // smallest start is never after the earliest changed line.
+            let start = self
+                .line_edits
+                .iter()
+                .map(|e| e.start)
+                .fold(edit.start, usize::min);
+            self.line_edits = vec![LineEdit::everything_from(start)];
+            return;
+        }
+        self.line_edits.push(edit);
     }
 }

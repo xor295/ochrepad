@@ -20,6 +20,9 @@ impl eframe::App for Shell {
             let ui_ms = start.elapsed().as_secs_f64() * 1000.0;
             let cpu_ms = f64::from(frame.info().cpu_usage.unwrap_or(0.0)) * 1000.0;
             if b.record(ui_ms, cpu_ms) {
+                if let Some(problem) = self.app.highlighting.problem() {
+                    println!("{problem}");
+                }
                 println!("{}", b.report());
                 self.bench = None;
                 ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);

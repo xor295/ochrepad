@@ -13,7 +13,7 @@ pub mod text;
 pub mod view;
 
 pub use action::{Action, ActionError, Motion};
-pub use buffer::{Buffer, BufferId, FileMeta, LineEnding};
+pub use buffer::{Buffer, BufferId, FileMeta, LineEdit, LineEnding};
 pub use changeset::{Bias, ChangeSet, Edit};
 pub use editor::{Clock, Editor, ManualClock, Settings, SystemClock};
 pub use history::{EditKind, Transaction};

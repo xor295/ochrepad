@@ -8,6 +8,7 @@ eframe = "=0.36.2"
 egui = "=0.36.2"
 ochrepad-core = { version = "0.1.0", path = "../core" }
 ochrepad-fileio = { version = "0.1.0", path = "../fileio" }
+ochrepad-syntax = { version = "0.1.0", path = "../syntax" }
 rfd = "=0.17.2"
 unicode-segmentation = "=1.13.3"
 

@@ -8,6 +8,7 @@ use std::sync::Arc;
 use egui::Color32;
 use ochrepad_core::position::grapheme_width;
 use ochrepad_core::{BufferId, Document};
+use ochrepad_syntax::{LineSpans, Span};
 use unicode_segmentation::UnicodeSegmentation;
 
 /// A run drawn as one galley at a fixed grid x. ASCII runs of one color are
@@ -35,11 +36,31 @@ pub struct LineLayout {
 }
 
 impl LineLayout {
-    pub fn build(text: String, cell_w: f32, tab_width: usize, color: Color32) -> Self {
+    /// `spans` (sorted, from the highlighter) color the text; gaps and
+    /// unhighlighted lines use `color`.
+    pub fn build(
+        text: String,
+        cell_w: f32,
+        tab_width: usize,
+        color: Color32,
+        spans: Option<&[Span]>,
+    ) -> Self {
+        let spans = spans.unwrap_or(&[]);
+        let mut span_i = 0;
         let mut boundaries = Vec::with_capacity(text.len() + 1);
         let mut pieces: Vec<Piece> = Vec::new();
         let mut col = 0usize;
         for (byte, g) in text.grapheme_indices(true) {
+            while span_i < spans.len() && spans[span_i].end <= byte {
+                span_i += 1;
+            }
+            let color = match spans.get(span_i) {
+                Some(s) if s.start <= byte => {
+                    let [r, g, b, a] = s.color;
+                    Color32::from_rgba_unmultiplied(r, g, b, a)
+                }
+                _ => color,
+            };
             let x = col as f32 * cell_w;
             boundaries.push((byte, x));
             let w = grapheme_width(g, col, tab_width);
@@ -95,16 +116,27 @@ impl LineLayout {
     }
 }
 
+/// Which styling a cached layout must have.
+#[derive(Clone, Copy)]
+pub enum Styling<'a> {
+    /// Any: positions do not depend on styling (hit testing).
+    Any,
+    /// These spans (compared by pointer), or none.
+    Exact(Option<&'a LineSpans>),
+}
+
 /// Layouts of recently shown lines, valid for one buffer revision and one set
 /// of metrics. Any edit invalidates all of them; rebuilding the visible lines
-/// takes well under a millisecond (M0).
+/// takes well under a millisecond (M0). A line is also rebuilt when the
+/// highlighter hands it different spans.
 #[derive(Default)]
 pub struct LayoutCache {
     key: Option<(BufferId, u64, u32, usize, Color32)>,
-    lines: HashMap<usize, Arc<LineLayout>>,
+    lines: HashMap<usize, (Option<LineSpans>, Arc<LineLayout>)>,
 }
 
 impl LayoutCache {
+    #[allow(clippy::too_many_arguments)]
     pub fn get(
         &mut self,
         doc: &Document,
@@ -113,23 +145,38 @@ impl LayoutCache {
         cell_w: f32,
         tab_width: usize,
         color: Color32,
+        styling: Styling<'_>,
     ) -> Arc<LineLayout> {
         let full_key = (key.0, key.1, cell_w.to_bits(), tab_width, color);
         if self.key != Some(full_key) {
             self.lines.clear();
             self.key = Some(full_key);
         }
-        self.lines
-            .entry(line)
-            .or_insert_with(|| {
-                Arc::new(LineLayout::build(
-                    doc.line_text(line),
-                    cell_w,
-                    tab_width,
-                    color,
-                ))
-            })
-            .clone()
+        let reusable = match (self.lines.get(&line), styling) {
+            (Some(_), Styling::Any) => true,
+            (Some((have, _)), Styling::Exact(want)) => match (have, want) {
+                (None, None) => true,
+                (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+                _ => false,
+            },
+            (None, _) => false,
+        };
+        if let (true, Some((_, layout))) = (reusable, self.lines.get(&line)) {
+            return layout.clone();
+        }
+        let spans = match styling {
+            Styling::Exact(s) => s.cloned(),
+            Styling::Any => None,
+        };
+        let layout = Arc::new(LineLayout::build(
+            doc.line_text(line),
+            cell_w,
+            tab_width,
+            color,
+            spans.as_ref().map(|s| &s[..]),
+        ));
+        self.lines.insert(line, (spans, layout.clone()));
+        layout
     }
 
     /// Drops layouts far from the visible range.
@@ -151,7 +198,7 @@ mod tests {
     #[test]
     fn hit_test_inverts_layout() {
         for line in ["\ta\t漢e\u{301}👨‍👩‍👧x", "plain ascii", "", "\t\t"] {
-            let l = LineLayout::build(line.to_owned(), CELL, 4, Color32::WHITE);
+            let l = LineLayout::build(line.to_owned(), CELL, 4, Color32::WHITE, None);
             for w in l.boundaries.windows(2) {
                 let ((lb, lx), (rb, rx)) = (w[0], w[1]);
                 assert_eq!(l.byte_at_x(lx), lb);
@@ -165,8 +212,42 @@ mod tests {
     }
 
     #[test]
+    fn spans_split_pieces_by_color() {
+        let span = |start, end| Span {
+            start,
+            end,
+            color: [255, 0, 0, 255],
+            bold: false,
+            italic: false,
+            underline: false,
+        };
+        let l = LineLayout::build(
+            "let x = 1;".to_owned(),
+            CELL,
+            4,
+            Color32::WHITE,
+            Some(&[span(0, 3), span(8, 9)]),
+        );
+        let runs: Vec<(&str, bool)> = l
+            .pieces
+            .iter()
+            .map(|p| (&l.text[p.range.clone()], p.color == Color32::RED))
+            .collect();
+        assert_eq!(
+            runs,
+            vec![("let", true), (" x = ", false), ("1", true), (";", false)]
+        );
+    }
+
+    #[test]
     fn columns_match_core_positions() {
-        let l = LineLayout::build("\ta\t漢e\u{301}👨‍👩‍👧x".to_owned(), CELL, 4, Color32::WHITE);
+        let l = LineLayout::build(
+            "\ta\t漢e\u{301}👨‍👩‍👧x".to_owned(),
+            CELL,
+            4,
+            Color32::WHITE,
+            None,
+        );
         let cols: Vec<f32> = l.boundaries.iter().map(|b| b.1 / CELL).collect();
         assert_eq!(cols, vec![0.0, 4.0, 5.0, 8.0, 10.0, 11.0, 13.0, 14.0]);
         // Wide and combining graphemes are clipped pieces; 'a' and 'x' are not.

@@ -140,6 +140,25 @@ proptest! {
         }
     }
 
+    /// The line-edit log accounts for every change in line count, and every
+    /// reported line is in range at the moment it is reported.
+    #[test]
+    fn line_edits_track_line_count(initial in text(), actions in prop::collection::vec(action(), 0..40)) {
+        let mut t = util::setup(&initial);
+        let id = t.buffer().id();
+        for a in actions {
+            let before = t.buffer().doc().line_count() as isize;
+            t.apply(a);
+            let edits = t.ed.buffer_mut(id).unwrap().take_line_edits();
+            let mut lines = before;
+            for e in &edits {
+                prop_assert!(e.start <= e.old_end && (e.old_end as isize) < lines);
+                lines += e.new_end as isize - e.old_end as isize;
+            }
+            prop_assert_eq!(lines, t.buffer().doc().line_count() as isize);
+        }
+    }
+
     /// ByteOffset -> VisualCol -> ByteOffset round-trips at every grapheme
     /// boundary, for any tab width.
     #[test]

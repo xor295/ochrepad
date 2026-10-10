@@ -4,6 +4,7 @@ pub mod app;
 pub mod bench;
 pub mod editor_view;
 pub mod fonts;
+pub mod highlight;
 pub mod keymap;
 pub mod layout;
 

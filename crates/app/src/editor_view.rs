@@ -10,7 +10,17 @@ use ochrepad_core::{
 use ochrepad_fileio::normalize_line_endings;
 
 use crate::keymap::{EditorCommand, Keymap};
-use crate::layout::{LayoutCache, LineLayout};
+use crate::layout::{LayoutCache, LineLayout, Styling};
+
+/// Supplies syntax highlighting for visible lines.
+pub trait LineStyler {
+    /// Spans for each line in `lines`; `None` draws a line unstyled.
+    fn line_spans(
+        &mut self,
+        doc: &Document,
+        lines: std::ops::Range<usize>,
+    ) -> Vec<Option<ochrepad_syntax::LineSpans>>;
+}
 
 const BLINK_HALF_PERIOD: f64 = 0.53;
 const SCROLLBAR_W: f32 = 12.0;
@@ -116,6 +126,7 @@ pub fn editor_view(
     state: &mut EditorViewState,
     keymap: &Keymap,
     label: &str,
+    styler: Option<&mut dyn LineStyler>,
 ) -> Response {
     let Some(buffer_id) = editor.view(view).map(|v| v.buffer()) else {
         return ui.label("(no view)");
@@ -460,7 +471,16 @@ pub fn editor_view(
                 scroll = line as f64 + 1.0 - f.rows_full as f64;
             }
             scroll = scroll.clamp(0.0, f.max_scroll);
-            let layout = line_layout(editor, buffer_id, &mut state.cache, line, &f, tab_width, ui);
+            let layout = line_layout(
+                editor,
+                buffer_id,
+                &mut state.cache,
+                line,
+                &f,
+                tab_width,
+                ui,
+                Styling::Any,
+            );
             let x = layout.x_of(head.0 - doc.line_start(line).0);
             let margin = 4.0 * cell_w;
             let visible = f.content.width() - TEXT_PAD - cell_w;
@@ -488,6 +508,7 @@ pub fn editor_view(
 
     paint(
         ui, editor, view, buffer_id, state, &f, scroll, x_off, h_max, focused, now, tab_width,
+        styler,
     );
     response
 }
@@ -521,6 +542,7 @@ pub fn selected_text(editor: &Editor, view: ViewId) -> String {
         .join("\n")
 }
 
+#[allow(clippy::too_many_arguments)]
 fn line_layout(
     editor: &Editor,
     buffer: ochrepad_core::BufferId,
@@ -529,6 +551,7 @@ fn line_layout(
     f: &Frame,
     tab_width: usize,
     ui: &Ui,
+    styling: Styling<'_>,
 ) -> std::sync::Arc<LineLayout> {
     let b = editor.buffer(buffer).expect("view's buffer exists");
     cache.get(
@@ -538,6 +561,7 @@ fn line_layout(
         f.cell_w,
         tab_width,
         ui.visuals().text_color(),
+        styling,
     )
 }
 
@@ -557,7 +581,7 @@ fn hit_test(
     let doc = doc_of(editor, buffer);
     let row = ((p.y - f.content.min.y) / f.line_h) as f64 + scroll;
     let line = (row.max(0.0).floor() as usize).min(f.line_count - 1);
-    let layout = line_layout(editor, buffer, cache, line, f, tab_width, ui);
+    let layout = line_layout(editor, buffer, cache, line, f, tab_width, ui, Styling::Any);
     let x = p.x - f.text_left() + x_off;
     ByteOffset(doc.line_start(line).0 + layout.byte_at_x(x))
 }
@@ -605,6 +629,7 @@ fn paint(
     focused: bool,
     now: f64,
     tab_width: usize,
+    styler: Option<&mut dyn LineStyler>,
 ) {
     let Some(v) = editor.view(view) else { return };
     let doc = doc_of(editor, buffer);
@@ -625,10 +650,26 @@ fn paint(
     let text_color = visuals.text_color();
     let current_line_bg = visuals.faint_bg_color;
     let sel_bg = visuals.selection.bg_fill;
+    let spans = styler.map(|s| s.line_spans(doc, first..last));
 
     for line in first..last {
         let y = y0 + (line - first) as f32 * f.line_h;
-        let layout = line_layout(editor, buffer, &mut state.cache, line, f, tab_width, ui);
+        let styling = Styling::Exact(
+            spans
+                .as_ref()
+                .and_then(|s| s.get(line - first))
+                .and_then(Option::as_ref),
+        );
+        let layout = line_layout(
+            editor,
+            buffer,
+            &mut state.cache,
+            line,
+            f,
+            tab_width,
+            ui,
+            styling,
+        );
         state.max_width = state.max_width.max(layout.width);
         let line_start = doc.line_start(line);
         let line_end = doc.line_end(line);
@@ -703,7 +744,7 @@ fn paint(
     // Carets and IME pre-edit.
     let caret_pos = |head: ByteOffset, cache: &mut LayoutCache| {
         let line = doc.line_of(head);
-        let layout = line_layout(editor, buffer, cache, line, f, tab_width, ui);
+        let layout = line_layout(editor, buffer, cache, line, f, tab_width, ui, Styling::Any);
         let x = x0 + layout.x_of(head.0 - doc.line_start(line).0);
         Pos2::new(x, y0 + (line as f32 - first as f32) * f.line_h)
     };

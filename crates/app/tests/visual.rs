@@ -52,6 +52,15 @@ fn snapshot_multi_cursor() {
     h.snapshot("multi_cursor");
 }
 
+#[test]
+fn snapshot_highlighting() {
+    let mut h = harness();
+    h.state_mut().set_language("Rust");
+    h.run();
+    set(&mut h, &[(0, 0)]);
+    h.snapshot("highlighting");
+}
+
 /// Not a snapshot: renders with the system CJK font to a PNG for a human to
 /// look at. `cargo test -p ochrepad --test visual -- --ignored`
 #[test]

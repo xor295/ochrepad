@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use crate::action::{Action, ActionError};
-use crate::buffer::{Buffer, BufferId, FileMeta};
+use crate::buffer::{Buffer, BufferId, FileMeta, LineEdit};
 use crate::changeset::{Bias, ChangeSet};
 use crate::history::Transaction;
 use crate::resolve::{Resolved, resolve};
@@ -318,9 +318,16 @@ impl Editor {
 }
 
 fn apply_changes(buffer: &mut Buffer, changes: &ChangeSet) {
-    if let Some(first) = changes.edits().first() {
-        let line = buffer.doc.line_of(first.start);
-        buffer.note_dirty_line(line);
+    // `ChangeSet::apply` goes back to front, so each line edit is recorded in
+    // the coordinates of the document at the moment it is applied.
+    for e in changes.edits().iter().rev() {
+        let start = buffer.doc.line_of(e.start);
+        let edit = LineEdit {
+            start,
+            old_end: buffer.doc.line_of(e.end),
+            new_end: start + e.text.bytes().filter(|&b| b == b'\n').count(),
+        };
+        buffer.record_line_edit(edit);
     }
     changes.apply(&mut buffer.doc);
 }

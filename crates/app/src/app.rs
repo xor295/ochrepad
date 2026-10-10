@@ -1,7 +1,8 @@
-//! The application shell for M3: one file, menus, status bar, title, and the
+//! The application shell: one file, menus, status bar, title, and the
 //! save-changes prompt.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use egui::{
     Button, CentralPanel, Id, Key, KeyboardShortcut, Modal, Modifiers, Panel, Ui, ViewportCommand,
@@ -10,7 +11,8 @@ use ochrepad_core::position::byte_to_visual_col;
 use ochrepad_core::{Action, Buffer, Editor, FileMeta, LineEnding, ViewId};
 use ochrepad_fileio as fileio;
 
-use crate::editor_view::{EditorViewState, editor_view, selected_text};
+use crate::editor_view::{EditorViewState, LineStyler, editor_view, selected_text};
+use crate::highlight::Highlighting;
 use crate::keymap::Keymap;
 
 /// What to do once unsaved changes have been dealt with.
@@ -30,6 +32,9 @@ pub struct OchrepadApp {
     confirm: Option<Pending>,
     close_confirmed: bool,
     title: String,
+    pub highlighting: Highlighting,
+    /// Whether egui is in dark mode (last frame).
+    dark: bool,
 }
 
 impl Default for OchrepadApp {
@@ -48,7 +53,7 @@ impl OchrepadApp {
     pub fn new() -> Self {
         let mut editor = Editor::new();
         let view = new_buffer_view(&mut editor, "", new_file_meta());
-        Self {
+        let mut app = Self {
             editor,
             view,
             view_state: EditorViewState::default(),
@@ -57,6 +62,35 @@ impl OchrepadApp {
             confirm: None,
             close_confirmed: false,
             title: String::new(),
+            highlighting: Highlighting::new(Arc::new(ochrepad_syntax::Registry::load())),
+            dark: true,
+        };
+        app.attach_highlighting();
+        app
+    }
+
+    fn attach_highlighting(&mut self) {
+        let dark = self.dark;
+        let id = self
+            .editor
+            .view(self.view)
+            .expect("app view exists")
+            .buffer();
+        if let Some(buffer) = self.editor.buffer_mut(id) {
+            self.highlighting.attach(buffer, dark);
+        }
+    }
+
+    /// Changes the buffer's language (from the status-bar picker).
+    pub fn set_language(&mut self, language: &str) {
+        let dark = self.dark;
+        let id = self
+            .editor
+            .view(self.view)
+            .expect("app view exists")
+            .buffer();
+        if let Some(buffer) = self.editor.buffer_mut(id) {
+            self.highlighting.set_language(buffer, language, dark);
         }
     }
 
@@ -109,6 +143,7 @@ impl OchrepadApp {
             self.editor.remove_buffer(old);
         }
         self.view_state = EditorViewState::default();
+        self.attach_highlighting();
     }
 
     /// Saves to the buffer's path, asking for one if it has none. Returns
@@ -138,7 +173,11 @@ impl OchrepadApp {
 
     pub fn save_to(&mut self, path: &Path) -> bool {
         match fileio::save_buffer_as(self.buffer_mut(), path) {
-            Ok(()) => true,
+            Ok(()) => {
+                // A new name may mean a new language, as in Notepad++.
+                self.attach_highlighting();
+                true
+            }
             Err(e) => {
                 self.message = Some(format!("Could not save {}:\n{e}", path.display()));
                 false
@@ -198,8 +237,26 @@ impl OchrepadApp {
 
         Panel::top("menu").show(ui, |ui| self.menu_bar(ui));
         Panel::bottom("status").show(ui, |ui| self.status_bar(ui));
+        self.dark = ui.visuals().dark_mode;
+        let first = self
+            .editor
+            .view(self.view)
+            .map_or(0, |v| v.scroll.first_line);
+        let id = self
+            .editor
+            .view(self.view)
+            .expect("app view exists")
+            .buffer();
+        if let Some(buffer) = self.editor.buffer_mut(id)
+            && self
+                .highlighting
+                .frame(buffer, first..first + 200, self.dark)
+        {
+            ui.ctx().request_repaint();
+        }
         CentralPanel::no_frame().show(ui, |ui| {
             let label = format!("Editor: {}", self.file_name());
+            let mut styler = self.highlighting.styler();
             editor_view(
                 ui,
                 &mut self.editor,
@@ -207,6 +264,7 @@ impl OchrepadApp {
                 &mut self.view_state,
                 &self.keymap,
                 &label,
+                styler.as_mut().map(|s| s as &mut dyn LineStyler),
             );
         });
 
@@ -260,6 +318,7 @@ impl OchrepadApp {
                     self.request(Pending::Exit);
                 }
             });
+            ui.menu_button("View", |ui| self.view_menu(ui));
             ui.menu_button("Edit", |ui| {
                 if ui
                     .add(Button::new("Undo").shortcut_text("Ctrl+Z"))
@@ -322,6 +381,57 @@ impl OchrepadApp {
         format!("Ln {}, Col {}", doc.line_of(head) + 1, col.0 + 1)
     }
 
+    fn view_menu(&mut self, ui: &mut Ui) {
+        let dark = ui.visuals().dark_mode;
+        if ui.radio(dark, "Dark mode").clicked() {
+            ui.ctx().set_theme(egui::ThemePreference::Dark);
+        }
+        if ui.radio(!dark, "Light mode").clicked() {
+            ui.ctx().set_theme(egui::ThemePreference::Light);
+        }
+        ui.separator();
+        ui.menu_button("Syntax theme", |ui| {
+            egui::ScrollArea::vertical()
+                .max_height(400.0)
+                .show(ui, |ui| {
+                    let current = self.highlighting.theme_override.clone();
+                    if ui
+                        .radio(current.is_none(), "Automatic (follows dark/light)")
+                        .clicked()
+                    {
+                        self.highlighting.theme_override = None;
+                    }
+                    for name in ochrepad_syntax::Registry::theme_names() {
+                        if ui.radio(current.as_deref() == Some(name), name).clicked() {
+                            self.highlighting.theme_override = Some(name.to_owned());
+                        }
+                    }
+                });
+        });
+    }
+
+    fn language_picker(&mut self, ui: &mut Ui) {
+        let current = self.highlighting.language().to_owned();
+        ui.menu_button(current.clone(), |ui| {
+            egui::ScrollArea::vertical()
+                .max_height(400.0)
+                .show(ui, |ui| {
+                    let mut chosen = None;
+                    for name in self.highlighting.languages() {
+                        if ui.selectable_label(*name == current, name).clicked() {
+                            chosen = Some(name.clone());
+                        }
+                    }
+                    if let Some(name) = chosen {
+                        self.set_language(&name);
+                        ui.close();
+                    }
+                });
+        })
+        .response
+        .on_hover_text("Language");
+    }
+
     fn status_bar(&mut self, ui: &mut Ui) {
         let carets = self
             .editor
@@ -347,6 +457,12 @@ impl OchrepadApp {
                     ui.separator();
                     ui.label("Mixed line endings (saved as shown)")
                         .on_hover_text("The file had more than one kind of line ending. Saving converts all of them to the one shown.");
+                }
+                ui.separator();
+                self.language_picker(ui);
+                if let Some(problem) = self.highlighting.problem() {
+                    ui.separator();
+                    ui.label(problem);
                 }
             });
         });

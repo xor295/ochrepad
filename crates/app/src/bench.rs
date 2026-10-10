@@ -8,15 +8,19 @@ use ochrepad_core::{Action, ByteOffset, SelectionSet};
 
 use crate::OchrepadApp;
 
-const PHASES: [&str; 4] = [
-    "warmup",
+const PHASES: [&str; 5] = [
+    "highlight warm-up",
     "fling 60 lines/frame",
     "random jump",
-    "typing at top",
+    "typing, 1 key/6 frames",
+    "typing, 1 key/frame",
 ];
 const FRAMES: usize = 600;
 
 pub struct Bench {
+    started: Option<Instant>,
+    /// How long the initial highlighting pass took.
+    pub highlight_done: Option<std::time::Duration>,
     phase: usize,
     frame: usize,
     last: Option<Instant>,
@@ -28,6 +32,8 @@ pub struct Bench {
 impl Default for Bench {
     fn default() -> Self {
         Self {
+            started: None,
+            highlight_done: None,
             phase: 0,
             frame: 0,
             last: None,
@@ -40,6 +46,12 @@ impl Default for Bench {
 impl Bench {
     /// Sets up this frame's scroll position or edit.
     pub fn drive(&mut self, app: &mut OchrepadApp) {
+        let started = *self.started.get_or_insert_with(Instant::now);
+        if self.phase == 0 && !app.highlighting.is_busy() && self.frame > 0 {
+            self.highlight_done.get_or_insert(started.elapsed());
+            // End the warm-up phase on the next `record`.
+            self.frame = usize::MAX - 1;
+        }
         let lines = app.buffer().doc().line_count();
         let view = app.view;
         match self.phase {
@@ -56,15 +68,19 @@ impl Bench {
                     v.scroll.first_line = (self.rng % lines.max(1) as u64) as usize;
                 }
             }
-            3 => {
+            3 | 4 => {
+                // Type at the top of the file: about 10 keys/s at 60 fps,
+                // then a stress run with a key every frame.
                 if self.frame == 0 {
                     let _ = app.editor.apply(
                         view,
                         Action::SetSelections(SelectionSet::caret(ByteOffset(0))),
                     );
                 }
-                let _ = app.editor.apply(view, Action::InsertText("x".into()));
-                app.view_state.reveal_caret();
+                if self.phase == 4 || self.frame.is_multiple_of(6) {
+                    let _ = app.editor.apply(view, Action::InsertText("x".into()));
+                    app.view_state.reveal_caret();
+                }
             }
             _ => {}
         }
@@ -81,7 +97,8 @@ impl Bench {
             self.samples[self.phase].push((interval, ui_ms, cpu_ms));
         }
         self.frame += 1;
-        let limit = if self.phase == 0 { 60 } else { FRAMES };
+        // Warm-up lasts until highlighting is idle (or 20,000 frames).
+        let limit = if self.phase == 0 { 20_000 } else { FRAMES };
         if self.frame >= limit {
             self.frame = 0;
             self.phase += 1;
@@ -90,7 +107,11 @@ impl Bench {
     }
 
     pub fn report(&self) -> String {
-        let mut out = format!(
+        let mut out = match self.highlight_done {
+            Some(d) => format!("initial highlighting finished after {d:?}\n"),
+            None => "initial highlighting did not finish during warm-up\n".to_owned(),
+        };
+        out += &format!(
             "{:<22} {:>30} {:>30} {:>30}\n{:<22} {:>30} {:>30} {:>30}\n",
             "phase",
             "frame interval ms",

@@ -250,16 +250,48 @@ fn unknown_view_is_an_error() {
 }
 
 #[test]
-fn dirty_lines_are_reported_for_the_highlighter() {
+fn line_edits_are_reported_for_the_highlighter() {
+    use ochrepad_core::LineEdit;
+    let le = |start, old_end, new_end| LineEdit {
+        start,
+        old_end,
+        new_end,
+    };
     let mut t = setup("a\nb\nc|");
-    t.typ("x");
     let id = t.buffer().id();
-    assert_eq!(t.ed.buffer_mut(id).unwrap().take_dirty_from_line(), Some(2));
-    assert_eq!(t.ed.buffer_mut(id).unwrap().take_dirty_from_line(), None);
-    t.set_sels(vec![(1, 1)]);
-    t.typ("y");
-    t.apply(Action::Undo);
-    assert_eq!(t.ed.buffer_mut(id).unwrap().take_dirty_from_line(), Some(0));
+    t.typ("x");
+    assert_eq!(
+        t.ed.buffer_mut(id).unwrap().take_line_edits(),
+        vec![le(2, 2, 2)]
+    );
+    assert_eq!(t.ed.buffer_mut(id).unwrap().take_line_edits(), vec![]);
+
+    // Two carets: edits are reported back to front, each in the coordinates
+    // of the moment it was applied.
+    t.set_sels(vec![(1, 1), (5, 5)]);
+    t.apply(Action::InsertText("1\n2".into()));
+    assert_eq!(
+        t.ed.buffer_mut(id).unwrap().take_line_edits(),
+        vec![le(2, 2, 3), le(0, 0, 1)]
+    );
+    // Deleting a newline joins two lines.
+    t.set_sels(vec![(0, 0)]);
+    t.mv(Motion::LineEnd).apply(Action::DeleteForward);
+    assert_eq!(
+        t.ed.buffer_mut(id).unwrap().take_line_edits(),
+        vec![le(0, 1, 0)]
+    );
+}
+
+#[test]
+fn line_edit_log_collapses_when_not_drained() {
+    let mut t = setup("x\n|");
+    let id = t.buffer().id();
+    for _ in 0..1100 {
+        t.typ("a");
+    }
+    let edits = t.ed.buffer_mut(id).unwrap().take_line_edits();
+    assert_eq!(edits, vec![ochrepad_core::LineEdit::everything_from(1)]);
 }
 
 #[test]
