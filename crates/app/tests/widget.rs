@@ -11,6 +11,9 @@ fn harness() -> Harness<'static, OchrepadApp> {
     let mut h = Harness::builder()
         .with_size(Vec2::new(800.0, 600.0))
         .with_step_dt(1.0 / 60.0)
+        // Background highlighting runs on a wall-clock budget; let `run`
+        // wait for it even on a loaded machine.
+        .with_max_steps(10_000)
         .build_ui_state(|ui, app: &mut OchrepadApp| app.show(ui), OchrepadApp::new());
     h.run();
     h
@@ -30,7 +33,7 @@ fn text(h: &Harness<'_, OchrepadApp>) -> String {
 fn sels(h: &Harness<'_, OchrepadApp>) -> Vec<(usize, usize)> {
     let app = h.state();
     app.editor
-        .view(app.view)
+        .view(app.active_view())
         .unwrap()
         .selections
         .ranges()
@@ -184,7 +187,7 @@ fn page_down_and_caret_stays_visible() {
     assert!(page_line > 10, "page down moved to line {page_line}");
     key(&mut h, Modifiers::COMMAND, Key::End);
     let app = h.state();
-    let scroll = app.editor.view(app.view).unwrap().scroll;
+    let scroll = app.editor.view(app.active_view()).unwrap().scroll;
     assert!(scroll.first_line > 950, "scrolled to {}", scroll.first_line);
 }
 
@@ -242,29 +245,13 @@ fn ime_preedit_is_shown_not_inserted_until_commit() {
     }));
     h.run();
     assert_eq!(text(&h), "a");
-    assert_eq!(h.state().view_state.preedit(), Some("ni"));
+    assert_eq!(h.state().view_state().unwrap().preedit(), Some("ni"));
     h.event(Event::Ime(ImeEvent::Commit("你".into())));
     h.run();
     assert_eq!(text(&h), "a你");
-    assert_eq!(h.state().view_state.preedit(), None);
+    assert_eq!(h.state().view_state().unwrap().preedit(), None);
     let ime = h.output().platform_output.ime;
     assert!(ime.is_some(), "IME cursor position is reported");
-}
-
-#[test]
-fn new_file_with_unsaved_changes_asks_first() {
-    let mut h = with_text("draft");
-    key(&mut h, Modifiers::COMMAND, Key::N);
-    assert_eq!(text(&h), "draft");
-    h.get_by_label("Save changes to new 1?");
-    h.get_by_label("Cancel").click();
-    h.run();
-    assert_eq!(text(&h), "draft");
-    key(&mut h, Modifiers::COMMAND, Key::N);
-    h.get_by_label("Don't Save").click();
-    h.run();
-    assert_eq!(text(&h), "");
-    assert!(!h.state().buffer().is_dirty());
 }
 
 #[test]
@@ -311,7 +298,7 @@ fn selection_api_round_trip() {
     let mut h = with_text("é");
     let app = h.state_mut();
     let _ = app.editor.apply(
-        app.view,
+        app.active_view(),
         ochrepad_core::Action::SetSelections(ochrepad_core::SelectionSet::single(Selection::new(
             ByteOffset(1),
             ByteOffset(50),

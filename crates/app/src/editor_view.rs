@@ -71,7 +71,7 @@ impl Default for EditorViewState {
             last_press: None,
             max_width: 0.0,
             reveal_caret: true,
-            request_focus: true,
+            request_focus: false,
         }
     }
 }

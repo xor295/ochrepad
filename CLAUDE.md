@@ -1,4 +1,4 @@
-Follow PLAN.md; current milestone is M4 (done on branch `m4-syntax`, awaiting review; next is M5)
+Follow PLAN.md; current milestone is M5 (done on branch `m5-tabs`, awaiting review; next is M6)
 
 ## Decisions made after M0 (apply when building the editor widget, M3)
 

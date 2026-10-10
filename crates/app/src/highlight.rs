@@ -1,29 +1,35 @@
-//! Glue between a buffer and its incremental highlighter: language detection,
-//! the size limit, theme following light/dark mode, and time-sliced
-//! background work.
+//! Glue between buffers and their incremental highlighters: language
+//! detection, the size limit, theme following light/dark mode, and
+//! time-sliced background work. One highlighter per buffer, shared by all of
+//! the buffer's views.
 
+use std::collections::HashMap;
 use std::ops::Range;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use ochrepad_core::{Buffer, Document};
+use ochrepad_core::{Buffer, BufferId, Document};
 use ochrepad_syntax::{BufferHighlighter, DEFAULT_SIZE_LIMIT, LineSpans, PLAIN_TEXT, Registry};
 
 use crate::editor_view::LineStyler;
 
-/// Background highlighting time per frame.
+/// Background highlighting time per frame, shared by the visible buffers.
 pub const FRAME_BUDGET: Duration = Duration::from_millis(4);
+
+struct BufferState {
+    hl: Option<BufferHighlighter>,
+    language: String,
+    too_large: bool,
+}
 
 pub struct Highlighting {
     registry: Arc<Registry>,
     languages: Vec<String>,
-    hl: Option<BufferHighlighter>,
-    language: String,
+    buffers: HashMap<BufferId, BufferState>,
     /// User's syntax theme; `None` follows light/dark mode.
     pub theme_override: Option<String>,
     pub size_limit: usize,
-    too_large: bool,
 }
 
 impl Highlighting {
@@ -31,11 +37,9 @@ impl Highlighting {
         Self {
             languages: registry.language_names(),
             registry,
-            hl: None,
-            language: PLAIN_TEXT.to_owned(),
+            buffers: HashMap::new(),
             theme_override: None,
             size_limit: DEFAULT_SIZE_LIMIT,
-            too_large: false,
         }
     }
 
@@ -43,18 +47,10 @@ impl Highlighting {
         &self.languages
     }
 
-    pub fn language(&self) -> &str {
-        &self.language
-    }
-
-    /// Whether the background pass still has work to do.
-    pub fn is_busy(&self) -> bool {
-        self.hl.as_ref().is_some_and(BufferHighlighter::is_busy)
-    }
-
-    /// The syntax theme in use, if highlighting is running.
-    pub fn active_theme(&self) -> Option<&str> {
-        self.hl.as_ref().map(BufferHighlighter::theme)
+    pub fn language(&self, buffer: BufferId) -> &str {
+        self.buffers
+            .get(&buffer)
+            .map_or(PLAIN_TEXT, |b| b.language.as_str())
     }
 
     pub fn effective_theme(&self, dark: bool) -> String {
@@ -63,8 +59,23 @@ impl Highlighting {
             .unwrap_or_else(|| Registry::default_theme(dark).to_owned())
     }
 
-    /// Starts highlighting a (new or newly opened) buffer, detecting its
-    /// language from the file name and first line.
+    /// The syntax theme in use for `buffer`, if it is being highlighted.
+    pub fn active_theme(&self, buffer: BufferId) -> Option<&str> {
+        self.buffers
+            .get(&buffer)
+            .and_then(|b| b.hl.as_ref())
+            .map(BufferHighlighter::theme)
+    }
+
+    /// Whether any background pass still has work to do.
+    pub fn is_busy(&self) -> bool {
+        self.buffers
+            .values()
+            .any(|b| b.hl.as_ref().is_some_and(BufferHighlighter::is_busy))
+    }
+
+    /// Starts highlighting a (new, newly opened or renamed) buffer, detecting
+    /// its language from the file name and first line.
     pub fn attach(&mut self, buffer: &mut Buffer, dark: bool) {
         let name = buffer
             .meta
@@ -76,48 +87,74 @@ impl Highlighting {
         let first_line = buffer.doc().line_text(0);
         let language = self.registry.detect(name.as_deref(), &first_line);
         let _ = buffer.take_line_edits();
-        self.hl = None;
+        self.buffers.remove(&buffer.id());
         self.set_language(buffer, &language, dark);
+    }
+
+    pub fn detach(&mut self, buffer: BufferId) {
+        self.buffers.remove(&buffer);
     }
 
     pub fn set_language(&mut self, buffer: &mut Buffer, language: &str, dark: bool) {
         buffer.language = Some(language.to_owned());
-        self.language = language.to_owned();
         let theme = self.effective_theme(dark);
-        match &mut self.hl {
+        let state = self
+            .buffers
+            .entry(buffer.id())
+            .or_insert_with(|| BufferState {
+                hl: None,
+                language: String::new(),
+                too_large: false,
+            });
+        state.language = language.to_owned();
+        state.too_large = false;
+        match &mut state.hl {
             Some(hl) => hl.set_syntax(&self.registry, language),
-            None => {
-                self.hl = Some(BufferHighlighter::new(&self.registry, language, &theme));
-            }
+            None => state.hl = Some(BufferHighlighter::new(&self.registry, language, &theme)),
         }
-        self.too_large = false;
     }
 
-    /// Per frame: applies the buffer's line edits, follows the theme, enforces
-    /// the size limit and runs a slice of background work. Returns whether
-    /// more work remains (the caller should request a repaint).
-    pub fn frame(&mut self, buffer: &mut Buffer, visible: Range<usize>, dark: bool) -> bool {
-        let edits = buffer.take_line_edits();
-        let too_large = buffer.doc().len().0 > self.size_limit;
-        if too_large != self.too_large {
-            self.too_large = too_large;
-            self.hl = (!too_large).then(|| {
-                BufferHighlighter::new(&self.registry, &self.language, &self.effective_theme(dark))
-            });
-            return false;
-        }
+    /// Per frame, for every buffer: applies its line edits, follows the
+    /// theme and enforces the size limit. Buffers with a visible view get a
+    /// slice of background work, prioritising their visible lines. Returns
+    /// whether more work remains (the caller should request a repaint).
+    pub fn frame<'a>(
+        &mut self,
+        buffers: impl Iterator<Item = &'a mut Buffer>,
+        visible: &HashMap<BufferId, Range<usize>>,
+        dark: bool,
+    ) -> bool {
         let theme = self.effective_theme(dark);
-        let Some(hl) = &mut self.hl else {
-            return false;
-        };
-        hl.apply_edits(&edits);
-        hl.set_theme(&self.registry, &theme);
-        hl.work(&self.registry, buffer.doc(), visible, FRAME_BUDGET)
+        let budget = FRAME_BUDGET / visible.len().max(1) as u32;
+        let mut busy = false;
+        for buffer in buffers {
+            let edits = buffer.take_line_edits();
+            let Some(state) = self.buffers.get_mut(&buffer.id()) else {
+                continue;
+            };
+            let too_large = buffer.doc().len().0 > self.size_limit;
+            if too_large != state.too_large {
+                state.too_large = too_large;
+                state.hl = (!too_large)
+                    .then(|| BufferHighlighter::new(&self.registry, &state.language, &theme));
+                continue;
+            }
+            let Some(hl) = &mut state.hl else {
+                continue;
+            };
+            hl.apply_edits(&edits);
+            hl.set_theme(&self.registry, &theme);
+            if let Some(lines) = visible.get(&buffer.id()) {
+                busy |= hl.work(&self.registry, buffer.doc(), lines.clone(), budget);
+            }
+        }
+        busy
     }
 
     /// Text for the status bar when highlighting is not running normally.
-    pub fn problem(&self) -> Option<String> {
-        if self.too_large {
+    pub fn problem(&self, buffer: BufferId) -> Option<String> {
+        let state = self.buffers.get(&buffer)?;
+        if state.too_large {
             let limit = match self.size_limit {
                 n if n >= 1024 * 1024 => format!("{} MB", n / (1024 * 1024)),
                 n if n >= 1024 => format!("{} KB", n / 1024),
@@ -125,14 +162,15 @@ impl Highlighting {
             };
             return Some(format!("Highlighting off: file larger than {limit}"));
         }
-        self.hl
+        state
+            .hl
             .as_ref()
             .and_then(BufferHighlighter::error)
             .map(|e| format!("Highlighting stopped: {e}"))
     }
 
-    pub fn styler(&mut self) -> Option<Styler<'_>> {
-        let hl = self.hl.as_mut()?;
+    pub fn styler(&mut self, buffer: BufferId) -> Option<Styler<'_>> {
+        let hl = self.buffers.get_mut(&buffer)?.hl.as_mut()?;
         Some(Styler {
             registry: &self.registry,
             hl,

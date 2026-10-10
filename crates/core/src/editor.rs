@@ -142,6 +142,18 @@ impl Editor {
         self.views.get_mut(&id)
     }
 
+    pub fn buffers(&self) -> impl Iterator<Item = &Buffer> {
+        self.buffers.values()
+    }
+
+    pub fn buffers_mut(&mut self) -> impl Iterator<Item = &mut Buffer> {
+        self.buffers.values_mut()
+    }
+
+    pub fn views(&self) -> impl Iterator<Item = &View> {
+        self.views.values()
+    }
+
     pub fn views_of(&self, buffer: BufferId) -> impl Iterator<Item = &View> {
         self.views.values().filter(move |v| v.buffer() == buffer)
     }

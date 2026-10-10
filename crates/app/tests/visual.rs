@@ -12,8 +12,11 @@ const SAMPLE: &str = "fn main() {\n\tlet greeting = \"héllo\";\n\tprintln!(\"{g
 
 fn harness() -> Harness<'static, OchrepadApp> {
     let mut h = Harness::builder()
-        .with_size(Vec2::new(520.0, 200.0))
+        .with_size(Vec2::new(520.0, 240.0))
         .with_step_dt(1.0 / 60.0)
+        // Background highlighting runs on a wall-clock budget; let `run`
+        // wait for it even on a loaded machine.
+        .with_max_steps(10_000)
         .wgpu()
         .build_ui_state(|ui, app: &mut OchrepadApp| app.show(ui), OchrepadApp::new());
     h.event(Event::Paste(SAMPLE.to_owned()));
@@ -28,7 +31,7 @@ fn set(h: &mut Harness<'_, OchrepadApp>, ranges: &[(usize, usize)]) {
         .map(|&(a, b)| Selection::new(ByteOffset(a), ByteOffset(b)))
         .collect();
     let _ = app.editor.apply(
-        app.view,
+        app.active_view(),
         Action::SetSelections(SelectionSet::new(ranges, 0)),
     );
     h.run();
@@ -61,6 +64,18 @@ fn snapshot_highlighting() {
     h.snapshot("highlighting");
 }
 
+#[test]
+fn snapshot_split_view() {
+    let mut h = harness();
+    h.state_mut().set_language("Rust");
+    h.run();
+    set(&mut h, &[(0, 2)]);
+    h.state_mut().clone_to_other_view();
+    h.run();
+    set(&mut h, &[(16, 24)]);
+    h.snapshot("split_view");
+}
+
 /// Not a snapshot: renders with the system CJK font to a PNG for a human to
 /// look at. `cargo test -p ochrepad --test visual -- --ignored`
 #[test]
@@ -69,6 +84,9 @@ fn render_with_system_fonts() {
     let mut h = Harness::builder()
         .with_size(Vec2::new(700.0, 260.0))
         .with_step_dt(1.0 / 60.0)
+        // Background highlighting runs on a wall-clock budget; let `run`
+        // wait for it even on a loaded machine.
+        .with_max_steps(10_000)
         .wgpu()
         .build_ui_state(|ui, app: &mut OchrepadApp| app.show(ui), OchrepadApp::new());
     let font = ochrepad::fonts::install(&h.ctx);

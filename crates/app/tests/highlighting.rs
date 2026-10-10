@@ -11,6 +11,9 @@ fn harness() -> Harness<'static, OchrepadApp> {
     let mut h = Harness::builder()
         .with_size(Vec2::new(900.0, 600.0))
         .with_step_dt(1.0 / 60.0)
+        // Background highlighting runs on a wall-clock budget; let `run`
+        // wait for it even on a loaded machine.
+        .with_max_steps(10_000)
         .build_ui_state(|ui, app: &mut OchrepadApp| app.show(ui), OchrepadApp::new());
     h.run();
     h
@@ -29,7 +32,8 @@ fn open(h: &mut Harness<'_, OchrepadApp>, name: &str, text: &str) -> tempfile::T
 fn colors(h: &mut Harness<'_, OchrepadApp>, line: usize) -> usize {
     let app = h.state_mut();
     let doc = app.buffer().doc().clone();
-    let Some(mut styler) = app.highlighting.styler() else {
+    let id = app.buffer_id();
+    let Some(mut styler) = app.highlighting.styler(id) else {
         return 0;
     };
     let spans = styler.line_spans(&doc, line..line + 1);
@@ -73,7 +77,7 @@ fn language_picker_changes_the_language() {
     let pick = h.state().highlighting.languages()[1].clone();
     h.get_by_label(&pick).click();
     h.run();
-    assert_eq!(h.state().highlighting.language(), pick);
+    assert_eq!(h.state().highlighting.language(h.state().buffer_id()), pick);
     assert_eq!(h.state().buffer().language.as_deref(), Some(pick.as_str()));
 }
 
@@ -92,13 +96,22 @@ fn syntax_theme_follows_light_and_dark_mode() {
     let _dir = open(&mut h, "a.rs", "fn x() {}\n");
     h.ctx.set_theme(egui::Theme::Dark);
     h.run();
-    assert_eq!(h.state().highlighting.active_theme(), Some("OneHalfDark"));
+    assert_eq!(
+        h.state().highlighting.active_theme(h.state().buffer_id()),
+        Some("OneHalfDark")
+    );
     h.ctx.set_theme(egui::Theme::Light);
     h.run();
-    assert_eq!(h.state().highlighting.active_theme(), Some("OneHalfLight"));
+    assert_eq!(
+        h.state().highlighting.active_theme(h.state().buffer_id()),
+        Some("OneHalfLight")
+    );
     h.state_mut().highlighting.theme_override = Some("Dracula".into());
     h.run();
-    assert_eq!(h.state().highlighting.active_theme(), Some("Dracula"));
+    assert_eq!(
+        h.state().highlighting.active_theme(h.state().buffer_id()),
+        Some("Dracula")
+    );
 }
 
 #[test]

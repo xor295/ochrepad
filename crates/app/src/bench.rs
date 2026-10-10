@@ -53,7 +53,7 @@ impl Bench {
             self.frame = usize::MAX - 1;
         }
         let lines = app.buffer().doc().line_count();
-        let view = app.view;
+        let view = app.active_view();
         match self.phase {
             1 => {
                 if let Some(v) = app.editor.view_mut(view) {
@@ -79,7 +79,7 @@ impl Bench {
                 }
                 if self.phase == 4 || self.frame.is_multiple_of(6) {
                     let _ = app.editor.apply(view, Action::InsertText("x".into()));
-                    app.view_state.reveal_caret();
+                    app.reveal_caret();
                 }
             }
             _ => {}

@@ -20,7 +20,7 @@ impl eframe::App for Shell {
             let ui_ms = start.elapsed().as_secs_f64() * 1000.0;
             let cpu_ms = f64::from(frame.info().cpu_usage.unwrap_or(0.0)) * 1000.0;
             if b.record(ui_ms, cpu_ms) {
-                if let Some(problem) = self.app.highlighting.problem() {
+                if let Some(problem) = self.app.highlighting.problem(self.app.buffer_id()) {
                     println!("{problem}");
                 }
                 println!("{}", b.report());
@@ -35,10 +35,11 @@ impl eframe::App for Shell {
 fn main() -> eframe::Result {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let bench = args.iter().any(|a| a == "--bench");
-    let path = args
+    let paths: Vec<PathBuf> = args
         .iter()
-        .find(|a| !a.starts_with("--"))
-        .map(PathBuf::from);
+        .filter(|a| !a.starts_with("--"))
+        .map(PathBuf::from)
+        .collect();
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -65,7 +66,7 @@ fn main() -> eframe::Result {
                 eprintln!("ochrepad: no system CJK font found; CJK text will show as boxes");
             }
             let mut app = OchrepadApp::new();
-            if let Some(path) = path {
+            for path in paths {
                 let t = Instant::now();
                 app.open_path(&path);
                 if bench {
