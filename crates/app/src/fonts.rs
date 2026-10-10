@@ -1,5 +1,6 @@
 //! Font setup. egui's built-in fonts have no CJK glyphs, so a CJK font is
-//! loaded from the system font directory and appended as a fallback.
+//! loaded from the system font directory and appended as a fallback. The
+//! menus and panels use the system's UI font where there is a known one.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -43,6 +44,30 @@ fn cjk_candidates() -> Vec<PathBuf> {
         }
     }
     out
+}
+
+/// The system UI font (static fonts only), used ahead of egui's built-in
+/// proportional font. None on macOS: its UI font is a variable font.
+fn ui_font_candidates() -> Vec<PathBuf> {
+    if cfg!(windows) {
+        let root = std::env::var_os("SystemRoot")
+            .map_or_else(|| PathBuf::from(r"C:\Windows"), PathBuf::from);
+        vec![root.join("Fonts").join("segoeui.ttf")]
+    } else if cfg!(target_os = "macos") {
+        Vec::new()
+    } else {
+        [
+            "/usr/share/fonts/truetype/inter/Inter-Regular.ttf",
+            "/usr/share/fonts/opentype/inter/Inter-Regular.otf",
+            "/usr/share/fonts/cantarell/Cantarell-Regular.otf",
+            "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+            "/usr/share/fonts/noto/NotoSans-Regular.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        ]
+        .into_iter()
+        .map(PathBuf::from)
+        .collect()
+    }
 }
 
 /// Monospace fonts installed on this system, as (name, path).
@@ -116,6 +141,19 @@ pub fn install_with(ctx: &egui::Context, monospace: Option<&std::path::Path>) ->
             .entry(FontFamily::Monospace)
             .or_default()
             .insert(0, "user-mono".to_owned());
+    }
+    if let Some(bytes) = ui_font_candidates()
+        .into_iter()
+        .find_map(|p| std::fs::read(p).ok())
+    {
+        defs.font_data.insert(
+            "system-ui".to_owned(),
+            Arc::new(FontData::from_owned(bytes)),
+        );
+        defs.families
+            .entry(FontFamily::Proportional)
+            .or_default()
+            .insert(0, "system-ui".to_owned());
     }
     let found = cjk_candidates()
         .into_iter()

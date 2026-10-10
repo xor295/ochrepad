@@ -48,7 +48,8 @@ fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1200.0, 800.0])
-            .with_title("ochrepad"),
+            .with_title("ochrepad")
+            .with_icon(ochrepad::theme::icon(64)),
         wgpu_options: eframe::WgpuConfiguration {
             surface: eframe::SurfaceConfig {
                 present_mode: if bench {

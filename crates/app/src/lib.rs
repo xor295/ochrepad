@@ -12,5 +12,6 @@ pub mod layout;
 pub mod macro_ui;
 pub mod preview;
 pub mod settings;
+pub mod theme;
 
 pub use app::OchrepadApp;

@@ -811,8 +811,8 @@ fn paint(
     let gutter_painter = painter.with_clip_rect(f.gutter.intersect(painter.clip_rect()));
 
     painter.rect_filled(f.content, 0.0, visuals.extreme_bg_color);
-    painter.rect_filled(f.gutter, 0.0, visuals.faint_bg_color);
-    painter.rect_filled(f.vbar.union(f.hbar), 0.0, visuals.faint_bg_color);
+    painter.rect_filled(f.gutter, 0.0, visuals.extreme_bg_color);
+    painter.rect_filled(f.vbar.union(f.hbar), 0.0, visuals.extreme_bg_color);
 
     let first = scroll.floor() as usize;
     let y0 = f.content.min.y - scroll.fract() as f32 * f.line_h;
@@ -827,11 +827,8 @@ fn paint(
         Some(s) if first < last => s.find_all(doc, doc.line_start(first)..doc.line_end(last - 1)),
         _ => Vec::new(),
     };
-    let match_bg = if visuals.dark_mode {
-        egui::Color32::from_rgba_unmultiplied(255, 190, 0, 55)
-    } else {
-        egui::Color32::from_rgba_unmultiplied(255, 200, 0, 110)
-    };
+    let match_bg = crate::theme::match_bg(&visuals);
+    let accent = crate::theme::accent(&visuals);
 
     for line in first..last {
         let y = y0 + (line - first) as f32 * f.line_h;
@@ -907,7 +904,7 @@ fn paint(
             (line + 1).to_string(),
             f.font.clone(),
             if has_caret {
-                text_color
+                accent
             } else {
                 visuals.weak_text_color()
             },
@@ -962,7 +959,7 @@ fn paint(
 
     // Scrollbars.
     let (v_thumb, h_thumb) = thumbs(f, scroll, x_off, h_max, state.max_width);
-    let thumb_color = visuals.widgets.inactive.bg_fill;
+    let thumb_color = visuals.widgets.hovered.bg_fill;
     painter.rect_filled(v_thumb.shrink(2.0), 3.0, thumb_color);
     if h_max > 0.0 {
         painter.rect_filled(h_thumb.shrink(2.0), 3.0, thumb_color);
