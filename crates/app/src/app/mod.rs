@@ -32,6 +32,7 @@ use crate::find_panel::{FindPanel, FindRequest};
 use crate::highlight::Highlighting;
 use crate::keymap::Keymap;
 use crate::macro_ui::{MacroSource, Macros};
+use crate::preview::Previews;
 
 const NEW: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::N);
 const OPEN: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::O);
@@ -51,6 +52,17 @@ const NEXT_TAB: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key
 const PREV_TAB: KeyboardShortcut =
     KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::Tab);
 
+/// What a dock tab shows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Tab {
+    Editor(ViewId),
+    /// The Markdown preview of a buffer.
+    Preview(BufferId),
+}
+
+const PREVIEW: KeyboardShortcut =
+    KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::M);
+
 /// Requests collected while the dock is drawn, handled afterwards.
 enum TabCommand {
     Close(ViewId),
@@ -60,7 +72,8 @@ enum TabCommand {
 
 pub struct OchrepadApp {
     pub editor: Editor,
-    pub dock: DockState<ViewId>,
+    pub dock: DockState<Tab>,
+    pub previews: Previews,
     view_states: HashMap<ViewId, EditorViewState>,
     /// Names of buffers that have never been saved ("new 1", "new 2", …).
     untitled: HashMap<BufferId, String>,
@@ -104,7 +117,8 @@ impl OchrepadApp {
         let view = editor.add_view(buffer).expect("buffer was just added");
         let mut app = Self {
             editor,
-            dock: DockState::new(vec![view]),
+            dock: DockState::new(vec![Tab::Editor(view)]),
+            previews: Previews::default(),
             view_states: HashMap::new(),
             untitled: HashMap::from([(buffer, "new 1".to_owned())]),
             next_untitled: 2,
@@ -175,7 +189,13 @@ impl OchrepadApp {
 
     /// Tab views in dock order.
     pub fn tabs(&self) -> Vec<ViewId> {
-        self.dock.iter_all_tabs().map(|(_, v)| *v).collect()
+        self.dock
+            .iter_all_tabs()
+            .filter_map(|(_, t)| match t {
+                Tab::Editor(v) => Some(*v),
+                Tab::Preview(_) => None,
+            })
+            .collect()
     }
 
     /// Error or info text currently shown in a dialog.
@@ -214,7 +234,7 @@ impl OchrepadApp {
 
     /// Makes `view` the active tab of its pane and gives it keyboard focus.
     pub fn activate(&mut self, view: ViewId) {
-        if let Some(path) = self.dock.find_tab(&view) {
+        if let Some(path) = self.dock.find_tab(&Tab::Editor(view)) {
             let _ = self.dock.set_active_tab(path);
             self.dock.set_focused_node_and_surface(NodePath {
                 surface: path.surface,
@@ -227,7 +247,7 @@ impl OchrepadApp {
 
     fn add_tab(&mut self, buffer: BufferId) -> ViewId {
         let view = self.editor.add_view(buffer).expect("buffer was just added");
-        self.dock.push_to_focused_leaf(view);
+        self.dock.push_to_focused_leaf(Tab::Editor(view));
         self.activate(view);
         view
     }
@@ -307,7 +327,7 @@ impl OchrepadApp {
             v.selections = src.selections.clone();
             v.scroll = src.scroll;
         }
-        let here = self.dock.find_tab(&source).map(|p| NodePath {
+        let here = self.dock.find_tab(&Tab::Editor(source)).map(|p| NodePath {
             surface: p.surface,
             node: p.node,
         });
@@ -319,13 +339,14 @@ impl OchrepadApp {
         match (other, here) {
             (Some(other), _) => {
                 if let Ok(leaf) = self.dock.leaf_mut(other) {
-                    leaf.tabs.push(view);
+                    leaf.tabs.push(Tab::Editor(view));
                 }
             }
             (None, Some(here)) => {
-                self.dock.split(here, Split::Right, 0.5, Node::leaf(view));
+                self.dock
+                    .split(here, Split::Right, 0.5, Node::leaf(Tab::Editor(view)));
             }
-            (None, None) => self.dock.push_to_focused_leaf(view),
+            (None, None) => self.dock.push_to_focused_leaf(Tab::Editor(view)),
         }
         self.activate(view);
         view
@@ -483,7 +504,7 @@ impl OchrepadApp {
 
     /// Removes a tab and its view, and the buffer if this was its last view.
     fn close_now(&mut self, view: ViewId) {
-        if let Some(path) = self.dock.find_tab(&view) {
+        if let Some(path) = self.dock.find_tab(&Tab::Editor(view)) {
             self.dock.remove_tab(path);
         }
         let buffer = self.editor.view(view).map(|v| v.buffer());
@@ -495,8 +516,12 @@ impl OchrepadApp {
         if let Some(buffer) = buffer
             && self.editor.views_of(buffer).next().is_none()
         {
-            // Closed without saving: its backup goes too.
+            // Closed without saving: its backup goes too, and its preview.
             self.delete_snapshot(buffer);
+            if let Some(path) = self.dock.find_tab(&Tab::Preview(buffer)) {
+                self.dock.remove_tab(path);
+            }
+            self.previews.remove(buffer);
             self.editor.remove_buffer(buffer);
             self.discard_approved.remove(&buffer);
             self.highlighting.detach(buffer);
@@ -506,7 +531,10 @@ impl OchrepadApp {
             let next = self
                 .dock
                 .find_active_focused()
-                .map(|(_, v)| *v)
+                .and_then(|(_, t)| match t {
+                    Tab::Editor(v) => Some(*v),
+                    Tab::Preview(_) => None,
+                })
                 .or_else(|| self.tabs().first().copied());
             if let Some(next) = next {
                 self.activate(next);
@@ -515,7 +543,7 @@ impl OchrepadApp {
     }
 
     fn cycle_tab(&mut self, forward: bool) {
-        let Some(path) = self.dock.find_tab(&self.active) else {
+        let Some(path) = self.dock.find_tab(&Tab::Editor(self.active)) else {
             return;
         };
         let node = NodePath {
@@ -535,12 +563,14 @@ impl OchrepadApp {
         } else {
             (i + n - 1) % n
         };
-        let view = leaf.tabs[next];
+        let tab = leaf.tabs[next];
         let _ = self.dock.set_active_tab(egui_dock::TabPath {
             tab: TabIndex(next),
             ..path
         });
-        self.activate(view);
+        if let Tab::Editor(view) = tab {
+            self.activate(view);
+        }
     }
 
     /// Plays a macro on the active view; failures are shown in a dialog.
@@ -628,6 +658,7 @@ impl OchrepadApp {
             let style = Style::from_egui(ui.style());
             let find_highlight = self.find.highlighter();
             let mut tabs = Tabs {
+                previews: &mut self.previews,
                 find_highlight,
                 editor: &mut self.editor,
                 view_states: &mut self.view_states,
@@ -650,7 +681,7 @@ impl OchrepadApp {
                 .show_inside(ui, &mut tabs);
         });
         self.new_tab_on_tab_bar_double_click(ui, &tab_rects);
-        if let Some((_, view)) = self.dock.find_active_focused()
+        if let Some((_, Tab::Editor(view))) = self.dock.find_active_focused()
             && *view != self.active
         {
             self.active = *view;
@@ -767,6 +798,9 @@ impl OchrepadApp {
             && let Some(source) = self.macros.shortcut_pressed(ui)
         {
             self.play_macro(source, ochrepad_core::Repeat::Times(1));
+        }
+        if pressed(ui, &PREVIEW) {
+            self.open_preview();
         }
         if pressed(ui, &CLOSE) {
             self.close_view(self.active);
@@ -1025,7 +1059,49 @@ impl OchrepadApp {
         }
     }
 
+    /// Shows the active buffer's Markdown preview beside it (or switches to
+    /// it if it is already open). The editor keeps the keyboard.
+    pub fn open_preview(&mut self) {
+        let buffer = self.buffer_id();
+        if let Some(path) = self.dock.find_tab(&Tab::Preview(buffer)) {
+            let _ = self.dock.set_active_tab(path);
+            return;
+        }
+        let here = self
+            .dock
+            .find_tab(&Tab::Editor(self.active))
+            .map(|p| NodePath {
+                surface: p.surface,
+                node: p.node,
+            });
+        let other = self
+            .dock
+            .iter_leaves()
+            .map(|(path, _)| path)
+            .find(|path| Some(*path) != here);
+        match (other, here) {
+            (Some(other), _) => {
+                if let Ok(leaf) = self.dock.leaf_mut(other) {
+                    leaf.tabs.push(Tab::Preview(buffer));
+                    leaf.active = TabIndex(leaf.tabs.len() - 1);
+                }
+            }
+            (None, Some(here)) => {
+                self.dock
+                    .split(here, Split::Right, 0.5, Node::leaf(Tab::Preview(buffer)));
+            }
+            (None, None) => self.dock.push_to_focused_leaf(Tab::Preview(buffer)),
+        }
+        self.activate(self.active);
+    }
+
     fn view_menu(&mut self, ui: &mut Ui) {
+        if ui
+            .add(Button::new("Markdown Preview").shortcut_text("Ctrl+Shift+M"))
+            .clicked()
+        {
+            self.open_preview();
+        }
         if ui.button("Clone to Other View").clicked() {
             self.clone_to_other_view();
         }
@@ -1216,8 +1292,9 @@ impl OchrepadApp {
     }
 }
 
-/// Draws the tabs: one editor per view.
+/// Draws the tabs: one editor per view, and Markdown previews.
 struct Tabs<'a> {
+    previews: &'a mut Previews,
     find_highlight: Option<&'a ochrepad_core::Searcher>,
     editor: &'a mut Editor,
     view_states: &'a mut HashMap<ViewId, EditorViewState>,
@@ -1232,14 +1309,23 @@ struct Tabs<'a> {
 }
 
 impl TabViewer for Tabs<'_> {
-    type Tab = ViewId;
+    type Tab = Tab;
 
-    fn id(&mut self, tab: &mut ViewId) -> Id {
-        Id::new(("ochrepad-tab", tab.0))
+    fn id(&mut self, tab: &mut Tab) -> Id {
+        match tab {
+            Tab::Editor(v) => Id::new(("ochrepad-tab", v.0)),
+            Tab::Preview(b) => Id::new(("ochrepad-preview-tab", b.0)),
+        }
     }
 
-    fn title(&mut self, tab: &mut ViewId) -> WidgetText {
-        let Some(buffer) = self.editor.view(*tab).map(|v| v.buffer()) else {
+    fn title(&mut self, tab: &mut Tab) -> WidgetText {
+        let view = match tab {
+            Tab::Editor(v) => *v,
+            Tab::Preview(b) => {
+                return format!("Preview: {}", buffer_name(self.editor, self.untitled, *b)).into();
+            }
+        };
+        let Some(buffer) = self.editor.view(view).map(|v| v.buffer()) else {
             return "?".into();
         };
         let name = buffer_name(self.editor, self.untitled, buffer);
@@ -1251,8 +1337,16 @@ impl TabViewer for Tabs<'_> {
         }
     }
 
-    fn ui(&mut self, ui: &mut Ui, tab: &mut ViewId) {
-        let view = *tab;
+    fn ui(&mut self, ui: &mut Ui, tab: &mut Tab) {
+        let view = match *tab {
+            Tab::Editor(v) => v,
+            Tab::Preview(b) => {
+                if let Some(buffer) = self.editor.buffer(b) {
+                    self.previews.show(ui, buffer);
+                }
+                return;
+            }
+        };
         let Some(v) = self.editor.view(view) else {
             return;
         };
@@ -1287,7 +1381,10 @@ impl TabViewer for Tabs<'_> {
         );
     }
 
-    fn context_menu(&mut self, ui: &mut Ui, tab: &mut ViewId, _path: NodePath) {
+    fn context_menu(&mut self, ui: &mut Ui, tab: &mut Tab, _path: NodePath) {
+        let Tab::Editor(tab) = tab else {
+            return;
+        };
         if ui.button("Close").clicked() {
             self.commands.push(TabCommand::Close(*tab));
         }
@@ -1299,24 +1396,29 @@ impl TabViewer for Tabs<'_> {
         }
     }
 
-    fn on_tab_button(&mut self, tab: &mut ViewId, response: &egui::Response) {
+    fn on_tab_button(&mut self, tab: &mut Tab, response: &egui::Response) {
         self.tab_rects.push(response.rect);
         // egui_dock gives tab buttons no accessibility info.
         let title = self.title(tab).text().to_owned();
         response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &title));
     }
 
-    fn on_close(&mut self, tab: &mut ViewId) -> OnCloseResponse {
-        // The app closes it after any save prompt.
-        self.commands.push(TabCommand::Close(*tab));
-        OnCloseResponse::Ignore
+    fn on_close(&mut self, tab: &mut Tab) -> OnCloseResponse {
+        match tab {
+            Tab::Editor(view) => {
+                // The app closes it after any save prompt.
+                self.commands.push(TabCommand::Close(*view));
+                OnCloseResponse::Ignore
+            }
+            Tab::Preview(_) => OnCloseResponse::Close,
+        }
     }
 
-    fn allowed_in_windows(&self, _tab: &mut ViewId) -> bool {
+    fn allowed_in_windows(&self, _tab: &mut Tab) -> bool {
         false
     }
 
-    fn scroll_bars(&self, _tab: &ViewId) -> [bool; 2] {
+    fn scroll_bars(&self, _tab: &Tab) -> [bool; 2] {
         [false, false]
     }
 }

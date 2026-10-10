@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 eframe = "=0.36.2"
 egui = "=0.36.2"
+egui_commonmark = { version = "=0.25.0", features = ["better_syntax_highlighting"] }
 egui_dock = { version = "=0.21.1", features = ["serde"] }
 ochrepad-core = { version = "0.1.0", path = "../core" }
 ochrepad-fileio = { version = "0.1.0", path = "../fileio" }

@@ -294,7 +294,11 @@ fn double_clicking_a_panes_tab_bar_adds_the_tab_to_that_pane() {
     );
     let new = h.state().active_view();
     let app = h.state();
-    let pane_of = |v| app.dock.find_tab(&v).map(|p| p.node);
+    let pane_of = |v| {
+        app.dock
+            .find_tab(&ochrepad::app::Tab::Editor(v))
+            .map(|p| p.node)
+    };
     assert_eq!(pane_of(new), pane_of(left), "new tab is in the left pane");
     assert_eq!(app.buffer_name(app.buffer_id()), "new 2");
 }

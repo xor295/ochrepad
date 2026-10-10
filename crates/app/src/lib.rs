@@ -9,5 +9,6 @@ pub mod highlight;
 pub mod keymap;
 pub mod layout;
 pub mod macro_ui;
+pub mod preview;
 
 pub use app::OchrepadApp;

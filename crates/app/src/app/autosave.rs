@@ -17,7 +17,7 @@ use ochrepad_fileio as fileio;
 use ochrepad_fileio::worker::{Job, SnapshotInfo, Worker, read_snapshot, snapshot_paths};
 use serde::{Deserialize, Serialize};
 
-use super::OchrepadApp;
+use super::{OchrepadApp, Tab};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct AutosaveSettings {
@@ -359,7 +359,10 @@ impl OchrepadApp {
                 x_offset: v.scroll.x_offset,
             });
         }
-        session.layout = Some(self.dock.filter_map_tabs(|v| tab_index.get(v).copied()));
+        session.layout = Some(self.dock.filter_map_tabs(|t| match t {
+            Tab::Editor(v) => tab_index.get(v).copied(),
+            Tab::Preview(_) => None,
+        }));
         session.active = tab_index.get(&self.active).copied();
         session
     }
@@ -481,9 +484,9 @@ impl OchrepadApp {
         }
         let dock = session
             .layout
-            .map(|l| l.filter_map_tabs(|i| views.get(*i).copied().flatten()))
+            .map(|l| l.filter_map_tabs(|i| views.get(*i).copied().flatten().map(Tab::Editor)))
             .filter(|d| d.iter_all_tabs().count() == restored.len())
-            .unwrap_or_else(|| DockState::new(restored.clone()));
+            .unwrap_or_else(|| DockState::new(restored.iter().copied().map(Tab::Editor).collect()));
 
         // Replace the empty startup tab(s).
         let startup: Vec<ViewId> = self.tabs();

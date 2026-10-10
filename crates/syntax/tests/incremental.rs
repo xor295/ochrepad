@@ -125,11 +125,16 @@ fn far_viewport_gets_spans_before_the_pass_arrives() {
     let mut h = BufferHighlighter::new(&REG, "Rust", theme());
     let t = Instant::now();
     let spans = h.line_spans(&REG, &doc, 40_000..40_060);
-    assert!(
-        t.elapsed() < Duration::from_millis(200),
-        "{:?}",
-        t.elapsed()
-    );
+    // Only the visible lines are parsed (from a fresh state), not the 40,000
+    // before them. Timing is only meaningful in an optimized build.
+    if !cfg!(debug_assertions) {
+        assert!(
+            t.elapsed() < Duration::from_millis(200),
+            "{:?}",
+            t.elapsed()
+        );
+    }
+    assert_eq!(h.lines_processed, 0, "the background pass did not run");
     assert!(spans.iter().all(Option::is_some));
     assert!(h.is_busy());
 }
