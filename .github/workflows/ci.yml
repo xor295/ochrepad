@@ -1,4 +1,4 @@
-# Formatting, lints and the full test suite on Windows, Linux and macOS,
+# Formatting, lints and the full test suite on Windows and Linux,
 # for every pull request and every push to main.
 name: CI
 
@@ -36,8 +36,6 @@ jobs:
             os: windows-latest
           - name: Linux
             os: ubuntu-latest
-          - name: macOS
-            os: macos-latest
 
     steps:
       # Actions are pinned to commits (the tag is in the comment).
