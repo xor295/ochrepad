@@ -78,6 +78,11 @@ impl FindPanel {
         self.searcher().and_then(Result::ok)
     }
 
+    /// Puts the keyboard in the find field on the next frame.
+    pub fn focus_field(&mut self) {
+        self.focus_field = true;
+    }
+
     pub fn message(&self) -> Option<&str> {
         self.message.as_ref().map(|(m, _)| m.as_str())
     }

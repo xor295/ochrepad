@@ -66,6 +66,9 @@ fn main() -> eframe::Result {
                 eprintln!("ochrepad: no system CJK font found; CJK text will show as boxes");
             }
             let mut app = OchrepadApp::new();
+            if let Some(dir) = ochrepad_fileio::config_dir() {
+                app.set_macro_file(dir.join("macros.json"));
+            }
             for path in paths {
                 let t = Instant::now();
                 app.open_path(&path);

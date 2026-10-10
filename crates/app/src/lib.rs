@@ -8,5 +8,6 @@ pub mod fonts;
 pub mod highlight;
 pub mod keymap;
 pub mod layout;
+pub mod macro_ui;
 
 pub use app::OchrepadApp;

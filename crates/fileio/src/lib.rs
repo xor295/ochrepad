@@ -297,6 +297,32 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     Ok(())
 }
 
+/// The per-user configuration directory (settings, macros, session),
+/// e.g. `%APPDATA%\ochrepad\config` on Windows.
+pub fn config_dir() -> Option<PathBuf> {
+    directories::ProjectDirs::from("", "", "ochrepad").map(|d| d.config_dir().to_path_buf())
+}
+
+/// Reads a JSON file; `Ok(None)` if it does not exist.
+pub fn load_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<Option<T>, String> {
+    match std::fs::read(path) {
+        Ok(bytes) => serde_json::from_slice(&bytes)
+            .map(Some)
+            .map_err(|e| format!("{}: {e}", path.display())),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(format!("{}: {e}", path.display())),
+    }
+}
+
+/// Writes `value` as pretty JSON, atomically, creating the directory.
+pub fn save_json<T: serde::Serialize>(path: &Path, value: &T) -> io::Result<()> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let json = serde_json::to_vec_pretty(value).map_err(io::Error::other)?;
+    write_atomic(path, &json)
+}
+
 /// Loads a file into a new buffer.
 pub fn open_into(editor: &mut Editor, path: &Path) -> Result<BufferId, LoadError> {
     let Decoded { text, meta } = load(path)?;

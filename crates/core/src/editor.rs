@@ -170,6 +170,19 @@ impl Editor {
         self.recording.take().unwrap_or_default()
     }
 
+    /// The actions recorded so far, while recording.
+    pub fn recorded(&self) -> Option<&[Action]> {
+        self.recording.as_deref()
+    }
+
+    pub(crate) fn take_recording(&mut self) -> Option<Vec<Action>> {
+        self.recording.take()
+    }
+
+    pub(crate) fn restore_recording(&mut self, recording: Option<Vec<Action>>) {
+        self.recording = recording;
+    }
+
     /// Everything applied to `view`'s buffer until the matching
     /// [`Self::end_undo_group`] undoes as one step.
     pub fn begin_undo_group(&mut self, view: ViewId) -> Result<(), ActionError> {
@@ -216,7 +229,9 @@ impl Editor {
                 self.commit(view, buffer_id, resolved)?;
             }
         }
-        if let Some(rec) = &mut self.recording {
+        if let Some(rec) = &mut self.recording
+            && action.is_recordable()
+        {
             rec.push(action);
         }
         Ok(())

@@ -272,3 +272,15 @@ proptest! {
         prop_assert_eq!(encode(&d.text, &d.meta).unwrap(), bytes);
     }
 }
+
+#[test]
+fn json_settings_round_trip_atomically() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("nested").join("macros.json");
+    assert_eq!(ochrepad_fileio::load_json::<Vec<String>>(&path), Ok(None));
+    let value = vec!["a".to_owned(), "b".to_owned()];
+    ochrepad_fileio::save_json(&path, &value).unwrap();
+    assert_eq!(ochrepad_fileio::load_json(&path), Ok(Some(value)));
+    std::fs::write(&path, "not json").unwrap();
+    assert!(ochrepad_fileio::load_json::<Vec<String>>(&path).is_err());
+}

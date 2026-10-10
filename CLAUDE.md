@@ -1,4 +1,4 @@
-Follow PLAN.md; current milestone is M8 (done on branch `m8-transforms`, awaiting review; next is M9)
+Follow PLAN.md; current milestone is M9 (done on branch `m9-macros`, awaiting review; next is M10)
 
 ## Decisions made after M0 (apply when building the editor widget, M3)
 

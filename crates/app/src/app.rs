@@ -27,6 +27,7 @@ use crate::editor_view::{
 use crate::find_panel::{FindPanel, FindRequest};
 use crate::highlight::Highlighting;
 use crate::keymap::Keymap;
+use crate::macro_ui::{MacroSource, Macros};
 
 const NEW: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::N);
 const OPEN: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::O);
@@ -38,6 +39,10 @@ const FIND: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::F)
 const REPLACE: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::H);
 const FIND_NEXT: KeyboardShortcut = KeyboardShortcut::new(Modifiers::NONE, Key::F3);
 const FIND_PREV: KeyboardShortcut = KeyboardShortcut::new(Modifiers::SHIFT, Key::F3);
+const RECORD_MACRO: KeyboardShortcut =
+    KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::R);
+const PLAY_MACRO: KeyboardShortcut =
+    KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::P);
 const NEXT_TAB: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::Tab);
 const PREV_TAB: KeyboardShortcut =
     KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::Tab);
@@ -74,6 +79,7 @@ pub struct OchrepadApp {
     title: String,
     pub highlighting: Highlighting,
     pub find: FindPanel,
+    pub macros: Macros,
     /// Visible line range per buffer in the last frame, for highlighting.
     visible: HashMap<BufferId, Range<usize>>,
     /// Whether egui is in dark mode (last frame).
@@ -111,6 +117,7 @@ impl OchrepadApp {
             title: String::new(),
             highlighting: Highlighting::new(Arc::new(ochrepad_syntax::Registry::load())),
             find: FindPanel::default(),
+            macros: Macros::default(),
             visible: HashMap::new(),
             dark: true,
         };
@@ -537,6 +544,28 @@ impl OchrepadApp {
         self.activate(view);
     }
 
+    /// Plays a macro on the active view; failures are shown in a dialog.
+    pub fn play_macro(&mut self, source: MacroSource, repeat: ochrepad_core::Repeat) {
+        match self
+            .macros
+            .play(&mut self.editor, self.active, source, repeat)
+        {
+            Ok(_) => {}
+            Err(msg) => self.message = Some(msg),
+        }
+        let state = self.view_state_mut();
+        state.reveal_caret();
+        state.request_focus();
+    }
+
+    /// Uses `path` for saved macros (normally `macros.json` in the config
+    /// directory).
+    pub fn set_macro_file(&mut self, path: PathBuf) {
+        if let Err(e) = self.macros.set_file(path) {
+            self.message = Some(format!("Could not load saved macros:\n{e}"));
+        }
+    }
+
     fn apply(&mut self, action: Action) {
         let _ = self.editor.apply(self.active, action);
         let state = self.view_state_mut();
@@ -642,6 +671,21 @@ impl OchrepadApp {
         }
 
         self.dialogs(ui);
+        if let Some((source, repeat)) = self.macros.dialogs(ui) {
+            self.play_macro(source, repeat);
+        }
+        // When nothing has the keyboard (e.g. after a menu closes or a panel
+        // button is clicked) and no dialog is up, give it back: to the find
+        // field while the find panel is open, otherwise to the editor.
+        let idle = self.message.is_none()
+            && self.confirming.is_none()
+            && !self.macros.dialog_open()
+            && ui.memory(|m| m.focused().is_none());
+        if idle && self.find.open {
+            self.find.focus_field();
+        } else if idle {
+            self.focus_request = Some(self.active);
+        }
         if self.close_confirmed && !self.close_sent {
             self.close_sent = true;
             ui.ctx().send_viewport_cmd(ViewportCommand::Close);
@@ -716,6 +760,17 @@ impl OchrepadApp {
             self.find.find(&mut self.editor, self.active, false);
             self.view_state_mut().reveal_caret();
         }
+        if pressed(ui, &RECORD_MACRO) {
+            self.macros.toggle_recording(&mut self.editor);
+        }
+        if pressed(ui, &PLAY_MACRO) {
+            self.play_macro(MacroSource::Recorded, ochrepad_core::Repeat::Times(1));
+        }
+        if !self.macros.dialog_open()
+            && let Some(source) = self.macros.shortcut_pressed(ui)
+        {
+            self.play_macro(source, ochrepad_core::Repeat::Times(1));
+        }
         if pressed(ui, &CLOSE) {
             self.close_view(self.active);
         }
@@ -732,6 +787,7 @@ impl OchrepadApp {
             ui.menu_button("File", |ui| self.file_menu(ui));
             ui.menu_button("Edit", |ui| self.edit_menu(ui));
             ui.menu_button("Search", |ui| self.search_menu(ui));
+            ui.menu_button("Macro", |ui| self.macro_menu(ui));
             ui.menu_button("View", |ui| self.view_menu(ui));
         });
     }
@@ -870,6 +926,75 @@ impl OchrepadApp {
         }
     }
 
+    fn macro_menu(&mut self, ui: &mut Ui) {
+        let recording = self.editor.is_recording();
+        let label = if recording {
+            "Stop Recording"
+        } else {
+            "Start Recording"
+        };
+        if ui
+            .add(Button::new(label).shortcut_text("Ctrl+Shift+R"))
+            .clicked()
+        {
+            self.macros.toggle_recording(&mut self.editor);
+        }
+        let has_recording = !self.macros.recorded.is_empty();
+        if ui
+            .add_enabled(
+                !recording && has_recording,
+                Button::new("Playback").shortcut_text("Ctrl+Shift+P"),
+            )
+            .clicked()
+        {
+            self.play_macro(MacroSource::Recorded, ochrepad_core::Repeat::Times(1));
+        }
+        if ui
+            .add_enabled(
+                !recording && has_recording,
+                Button::new("Save Current Recorded Macro…"),
+            )
+            .clicked()
+        {
+            self.macros.open_save_dialog();
+        }
+        if ui
+            .add_enabled(
+                !recording && (has_recording || !self.macros.saved.is_empty()),
+                Button::new("Run a Macro Multiple Times…"),
+            )
+            .clicked()
+        {
+            self.macros.open_run_dialog();
+        }
+        if !self.macros.saved.is_empty() {
+            ui.separator();
+            let saved: Vec<(String, String)> = self
+                .macros
+                .saved
+                .iter()
+                .map(|m| (m.name.clone(), m.shortcut.clone().unwrap_or_default()))
+                .collect();
+            for (i, (name, shortcut)) in saved.iter().enumerate() {
+                if ui
+                    .add_enabled(!recording, Button::new(name).shortcut_text(shortcut))
+                    .clicked()
+                {
+                    self.play_macro(MacroSource::Saved(i), ochrepad_core::Repeat::Times(1));
+                }
+            }
+            ui.menu_button("Delete Saved Macro", |ui| {
+                for (i, (name, _)) in saved.iter().enumerate() {
+                    if ui.button(name).clicked()
+                        && let Err(e) = self.macros.delete(i)
+                    {
+                        self.message = Some(e);
+                    }
+                }
+            });
+        }
+    }
+
     fn search_menu(&mut self, ui: &mut Ui) {
         let item = |ui: &mut Ui, label: &str, shortcut: &str| {
             ui.add(Button::new(label).shortcut_text(shortcut)).clicked()
@@ -974,6 +1099,13 @@ impl OchrepadApp {
         let meta = self.buffer().meta.clone();
         ui.horizontal(|ui| {
             ui.label(self.caret_status());
+            if let Some(recorded) = self.editor.recorded() {
+                ui.separator();
+                ui.colored_label(
+                    ui.visuals().error_fg_color,
+                    format!("Recording macro ({} actions)", recorded.len()),
+                );
+            }
             if column {
                 ui.separator();
                 ui.label(format!("Column selection, {carets} lines"));
