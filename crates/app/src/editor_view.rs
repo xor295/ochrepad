@@ -382,7 +382,12 @@ pub fn editor_view(
         );
         let mods = ui.input(|i| i.modifiers);
         let shift = mods.shift;
+        // A click on a line number selects the whole line (and dragging
+        // extends by lines); Shift+click extends the selection by lines.
+        let in_gutter = f.gutter.contains(p);
+        let prev = editor.view(view).map(|v| v.selections.primary().clone());
         let mode = match count {
+            _ if in_gutter => DragMode::Line,
             _ if mods.alt => {
                 let (line, col) = line_col_at(&f, scroll, x_off, p);
                 DragMode::Column(line, col)
@@ -408,7 +413,7 @@ pub fn editor_view(
                     head_col: col,
                 },
             );
-        } else if mods.command && count == 1 {
+        } else if mods.command && count == 1 && !in_gutter {
             // Ctrl+click adds a caret; it becomes the primary.
             let mut ranges = editor
                 .view(view)
@@ -436,15 +441,43 @@ pub fn editor_view(
             DragMode::Char | DragMode::Column(..) => {}
         }
         let sel = editor.view(view).map(|v| v.selections.primary().clone());
-        let range = sel.map_or((anchor, anchor), |s| {
+        let mut range = sel.clone().map_or((anchor, anchor), |s| {
             if mode == DragMode::Char {
                 (anchor, anchor)
             } else {
                 (s.start(), s.end())
             }
         });
+        if in_gutter
+            && shift
+            && let (Some(prev), Some(line)) = (prev, sel)
+        {
+            // Extend from where the previous selection started: if it is
+            // whole lines, from the line at its anchor end (as a line drag
+            // keeps the line it started on), else from its anchor.
+            let doc = doc_of(editor, buffer_id);
+            let at_line_start = |b: ByteOffset| b == doc.line_start(doc.line_of(b));
+            let whole_lines = !prev.is_empty()
+                && at_line_start(prev.start())
+                && (at_line_start(prev.end()) || prev.end() == doc.len());
+            let a = prev.anchor;
+            let (a0, a1) = if !whole_lines {
+                (a, a)
+            } else if a < prev.head {
+                (a, next_line_start(doc, doc.line_of(a)))
+            } else {
+                (doc.line_start(doc.line_of(ByteOffset(a.0 - 1))), a)
+            };
+            let new = if line.start() >= a0 {
+                Selection::new(a0, line.end().max(a1))
+            } else {
+                Selection::new(a1, line.start())
+            };
+            let _ = editor.apply(view, Action::SetSelections(SelectionSet::single(new)));
+            range = (a0, a1);
+        }
         // A Ctrl+click only adds a caret; it does not start a drag.
-        state.drag = (!(mods.command && count == 1 && !mods.alt)).then_some(Drag {
+        state.drag = (in_gutter || !(mods.command && count == 1 && !mods.alt)).then_some(Drag {
             mode,
             anchor: range,
         });
