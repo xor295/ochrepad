@@ -1,5 +1,7 @@
 # ochrepad
 
+[![CI](https://github.com/xor295/ochrepad/actions/workflows/ci.yml/badge.svg)](https://github.com/xor295/ochrepad/actions/workflows/ci.yml)
+
 A fast, native text editor in the spirit of Notepad++, written in Rust with
 [egui](https://github.com/emilk/egui).
 
@@ -69,10 +71,18 @@ On Windows the build embeds the icon into the executable; that needs the
 Windows SDK's resource compiler (installed with the Visual Studio C++ build
 tools that Rust uses). Without it the build still succeeds, with a warning.
 
-ochrepad is developed and tested on Windows 11. The code is cross-platform
-(eframe, rfd and notify all support Linux and macOS), but those platforms have
-not been tested yet. On Linux, file dialogs go through the XDG desktop
-portal.
+On Linux, install eframe's recommended development packages first (Debian
+and Ubuntu names):
+
+```sh
+sudo apt-get install libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev
+```
+
+To run it you need an X11 or Wayland desktop with Vulkan or OpenGL drivers.
+File dialogs go through the XDG desktop portal.
+
+ochrepad is developed on Windows 11. CI builds and tests it on Windows, Linux
+and macOS, but it has had little hands-on use on Linux and macOS so far.
 
 ## Keyboard shortcuts
 

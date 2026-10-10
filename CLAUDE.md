@@ -19,6 +19,8 @@ cargo run -p ochrepad --features dev-inspect                  # egui inspection 
 
 A change is done when fmt, clippy (`-D warnings`) and `cargo test --workspace` pass. Commit at green; the user pushes.
 
+CI (`.github/workflows/ci.yml`) runs the same checks on Windows, Linux and macOS for pull requests and pushes to `main`. Failed snapshot tests upload their `.new.png`/`.diff.png` images as an artifact. Linux and macOS are only exercised there, so check those runs after platform-sensitive changes (paths, fonts, file watching, rendering). To catch compile errors locally first: `cargo clippy --workspace --all-targets --target x86_64-unknown-linux-gnu -- -D warnings` (and `aarch64-apple-darwin`); both targets are installed. Actions are pinned to commit SHAs with the tag in a comment; when updating one, pick a release at least two weeks old.
+
 The release exe is locked while it runs, so `cargo build --release` fails with "Access is denied" if the user has ochrepad open. That is not a build error.
 
 ## Layout
