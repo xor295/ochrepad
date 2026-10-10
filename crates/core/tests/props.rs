@@ -63,6 +63,14 @@ fn action() -> impl Strategy<Value = Action> {
         1 => Just(Action::AddCursorAbove),
         2 => Just(Action::AddCursorBelow),
         1 => Just(Action::CollapseSelections),
+        1 => text().prop_map(Action::Paste),
+        1 => prop::collection::vec((0usize..300, 0usize..300), 1..4).prop_map(|v| {
+            let ranges = v
+                .into_iter()
+                .map(|(a, h)| ochrepad_core::Selection::new(ByteOffset(a), ByteOffset(h)))
+                .collect();
+            Action::SetSelections(SelectionSet::new(ranges, 0))
+        }),
         2 => Just(Action::Undo),
         1 => Just(Action::Redo),
     ]

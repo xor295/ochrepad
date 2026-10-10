@@ -1,4 +1,4 @@
-Follow PLAN.md; current milestone is M2 (done on branch `m2-fileio`, awaiting review; next is M3)
+Follow PLAN.md; current milestone is M3 (done on branch `m3-widget`, awaiting review; next is M4)
 
 ## Decisions made after M0 (apply when building the editor widget, M3)
 

@@ -261,3 +261,32 @@ fn dirty_lines_are_reported_for_the_highlighter() {
     t.apply(Action::Undo);
     assert_eq!(t.ed.buffer_mut(id).unwrap().take_dirty_from_line(), Some(0));
 }
+
+#[test]
+fn paste_distributes_lines_over_matching_selections() {
+    let mut t = setup("a|\nb|\nc|");
+    t.apply(Action::Paste("1\n2\n3\n".into()));
+    assert_eq!(t.show(), "a1|\nb2|\nc3|");
+    // Count mismatch: the whole text goes to every caret.
+    let mut t = setup("a|\nb|");
+    t.apply(Action::Paste("x\ny\nz".into()));
+    assert_eq!(t.show(), "ax\ny\nz|\nbx\ny\nz|");
+    // A single caret always gets the whole text.
+    let mut t = setup("|");
+    assert_eq!(t.apply(Action::Paste("p\nq".into())).show(), "p\nq|");
+}
+
+#[test]
+fn set_selections_clamps_into_the_document() {
+    let mut t = setup("é|x");
+    let set = SelectionSet::new(
+        vec![
+            Selection::new(ByteOffset(1), ByteOffset(99)),
+            Selection::caret(ByteOffset(0)),
+        ],
+        0,
+    );
+    t.apply(Action::SetSelections(set));
+    // 1 is inside 'é' and snaps back to 0; 99 clamps to the end.
+    assert_eq!(t.show(), "^éx|");
+}

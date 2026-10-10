@@ -41,11 +41,47 @@ pub(crate) fn resolve(
             } else {
                 EditKind::Other
             };
-            edit_each(doc, sels, kind, |s| {
+            edit_each(doc, sels, kind, |_, s| {
                 Edit::new(s.start(), s.end(), text.as_str())
             })
         }
-        Action::InsertNewline => edit_each(doc, sels, EditKind::Other, |s| {
+        Action::Paste(text) => {
+            // One line per selection when the counts match (e.g. a multi-caret
+            // copy pasted back), otherwise the whole text at every selection.
+            let body = text.strip_suffix('\n').unwrap_or(text);
+            let lines: Vec<&str> = body.split('\n').collect();
+            if sels.len() > 1 && lines.len() == sels.len() {
+                edit_each(doc, sels, EditKind::Other, |i, s| {
+                    Edit::new(s.start(), s.end(), lines[i])
+                })
+            } else {
+                edit_each(doc, sels, EditKind::Other, |_, s| {
+                    Edit::new(s.start(), s.end(), text.as_str())
+                })
+            }
+        }
+        Action::SetSelections(set) => {
+            let clamp = |p: ByteOffset| {
+                let mut p = p.min(doc.len());
+                while !doc.is_char_boundary(p) {
+                    p.0 -= 1;
+                }
+                p
+            };
+            let ranges = set
+                .ranges()
+                .iter()
+                .map(|s| Selection {
+                    anchor: clamp(s.anchor),
+                    head: clamp(s.head),
+                    goal: s.goal,
+                })
+                .collect();
+            Resolved::Selections(
+                SelectionSet::new(ranges, set.primary_index()).with_rect(set.rect().cloned()),
+            )
+        }
+        Action::InsertNewline => edit_each(doc, sels, EditKind::Other, |_, s| {
             let line = doc.line_of(s.start());
             let prefix = doc.slice(doc.line_start(line)..s.start());
             let indent: String = prefix
@@ -96,15 +132,20 @@ pub(crate) fn resolve(
     }
 }
 
-/// One edit per selection; afterwards each selection becomes a caret at the
+/// One edit per selection (`f` gets its index); afterwards each selection becomes a caret at the
 /// end of its replacement.
 fn edit_each(
     doc: &Document,
     sels: &SelectionSet,
     kind: EditKind,
-    f: impl Fn(&Selection) -> Edit,
+    mut f: impl FnMut(usize, &Selection) -> Edit,
 ) -> Resolved {
-    let edits: Vec<Edit> = sels.ranges().iter().map(f).collect();
+    let edits: Vec<Edit> = sels
+        .ranges()
+        .iter()
+        .enumerate()
+        .map(|(i, s)| f(i, s))
+        .collect();
     let ends: Vec<ByteOffset> = edits.iter().map(|e| e.end).collect();
     let changes = ChangeSet::new(doc.len(), edits);
     let after = SelectionSet::new(
@@ -137,7 +178,7 @@ fn delete(
     } else {
         EditKind::Other
     };
-    edit_each(doc, sels, kind, |s| {
+    edit_each(doc, sels, kind, |_, s| {
         let (start, end) = if s.is_empty() {
             range_at(s.head)
         } else {

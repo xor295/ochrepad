@@ -6,6 +6,7 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 use crate::buffer::BufferId;
+use crate::selection::SelectionSet;
 use crate::view::ViewId;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -32,6 +33,9 @@ pub enum Motion {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Action {
     InsertText(String),
+    /// Like `InsertText`, but when there are several selections and the text
+    /// has exactly that many lines, each selection gets one line.
+    Paste(String),
     /// Newline plus the current line's leading whitespace (auto-indent).
     InsertNewline,
     DeleteBackward,
@@ -49,6 +53,9 @@ pub enum Action {
     AddCursorBelow,
     /// Collapse to a caret at the primary selection's head.
     CollapseSelections,
+    /// Replace the selections (mouse clicks and drags). Positions are clamped
+    /// into the document and onto char boundaries.
+    SetSelections(SelectionSet),
     Undo,
     Redo,
 }

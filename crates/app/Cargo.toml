@@ -1,0 +1,20 @@
+[package]
+name = "ochrepad"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+eframe = "=0.36.2"
+egui = "=0.36.2"
+ochrepad-core = { version = "0.1.0", path = "../core" }
+ochrepad-fileio = { version = "0.1.0", path = "../fileio" }
+rfd = "=0.17.2"
+unicode-segmentation = "=1.13.3"
+
+[dev-dependencies]
+egui_kittest = { version = "=0.36.2", features = ["wgpu", "snapshot"] }
+tempfile = "=3.27.0"
+
+[features]
+# Expose the egui inspection protocol (PLAN 6); run with EGUI_INSPECTION=1.
+dev-inspect = ["eframe/inspection"]
