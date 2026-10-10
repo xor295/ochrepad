@@ -2731,6 +2731,7 @@ dependencies = [
  "ochrepad-core",
  "ochrepad-fileio",
  "ochrepad-syntax",
+ "resvg",
  "rfd",
  "serde",
  "serde_json",
