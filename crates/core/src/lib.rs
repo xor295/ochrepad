@@ -4,6 +4,7 @@
 pub mod action;
 pub mod buffer;
 pub mod changeset;
+pub mod diff;
 pub mod editor;
 pub mod history;
 pub mod macros;

@@ -1,4 +1,4 @@
-Follow PLAN.md; current milestone is M11 (done on branch `m11-markdown`, awaiting review; next is M12)
+Follow PLAN.md; current milestone is M12 (done on branch `m12-diff`, awaiting review; next is M13)
 
 ## Decisions made after M0 (apply when building the editor widget, M3)
 

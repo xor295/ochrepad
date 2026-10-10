@@ -280,3 +280,44 @@ proptest! {
         }
     }
 }
+
+proptest! {
+    #![proptest_config(ProptestConfig { cases: 2000, ..ProptestConfig::default() })]
+
+    /// The aligned rows list every line of each side exactly once, in
+    /// order; equal rows have equal text; hunks cover exactly the non-equal
+    /// rows; word ranges lie on char boundaries.
+    #[test]
+    fn diff_rows_cover_both_sides(a in text(), b in text()) {
+        use ochrepad_core::diff::{RowKind, diff_lines, diff_words};
+        let (left, right) = (Document::new(&a), Document::new(&b));
+        let d = diff_lines(&left, &right);
+        let ls: Vec<usize> = d.rows.iter().filter_map(|r| r.left).collect();
+        let rs: Vec<usize> = d.rows.iter().filter_map(|r| r.right).collect();
+        prop_assert_eq!(ls, (0..left.line_count()).collect::<Vec<_>>());
+        prop_assert_eq!(rs, (0..right.line_count()).collect::<Vec<_>>());
+        let mut in_hunk = vec![false; d.rows.len()];
+        for h in &d.hunks {
+            for i in h.clone() {
+                in_hunk[i] = true;
+            }
+        }
+        for (i, r) in d.rows.iter().enumerate() {
+            prop_assert_eq!(in_hunk[i], r.kind != RowKind::Equal);
+            if let (Some(l), Some(rr)) = (r.left, r.right) {
+                let (lt, rt) = (left.line_text(l), right.line_text(rr));
+                if r.kind == RowKind::Equal {
+                    prop_assert_eq!(&lt, &rt);
+                } else {
+                    let (wa, wb) = diff_words(&lt, &rt);
+                    for w in &wa {
+                        prop_assert!(lt.is_char_boundary(w.start) && lt.is_char_boundary(w.end));
+                    }
+                    for w in &wb {
+                        prop_assert!(rt.is_char_boundary(w.start) && rt.is_char_boundary(w.end));
+                    }
+                }
+            }
+        }
+    }
+}

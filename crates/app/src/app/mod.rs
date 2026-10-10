@@ -28,6 +28,7 @@ mod autosave;
 
 pub use autosave::{AutosaveSettings, Session, SessionBuffer, SessionTab};
 
+use crate::compare::{Compare, CompareId, CompareSide, Compares};
 use crate::find_panel::{FindPanel, FindRequest};
 use crate::highlight::Highlighting;
 use crate::keymap::Keymap;
@@ -58,7 +59,12 @@ pub enum Tab {
     Editor(ViewId),
     /// The Markdown preview of a buffer.
     Preview(BufferId),
+    /// A side-by-side comparison.
+    Compare(CompareId),
 }
+
+const NEXT_DIFF: KeyboardShortcut = KeyboardShortcut::new(Modifiers::NONE, Key::F8);
+const PREV_DIFF: KeyboardShortcut = KeyboardShortcut::new(Modifiers::SHIFT, Key::F8);
 
 const PREVIEW: KeyboardShortcut =
     KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::M);
@@ -74,6 +80,7 @@ pub struct OchrepadApp {
     pub editor: Editor,
     pub dock: DockState<Tab>,
     pub previews: Previews,
+    pub compares: Compares,
     view_states: HashMap<ViewId, EditorViewState>,
     /// Names of buffers that have never been saved ("new 1", "new 2", …).
     untitled: HashMap<BufferId, String>,
@@ -119,6 +126,7 @@ impl OchrepadApp {
             editor,
             dock: DockState::new(vec![Tab::Editor(view)]),
             previews: Previews::default(),
+            compares: Compares::default(),
             view_states: HashMap::new(),
             untitled: HashMap::from([(buffer, "new 1".to_owned())]),
             next_untitled: 2,
@@ -193,7 +201,7 @@ impl OchrepadApp {
             .iter_all_tabs()
             .filter_map(|(_, t)| match t {
                 Tab::Editor(v) => Some(*v),
-                Tab::Preview(_) => None,
+                Tab::Preview(_) | Tab::Compare(_) => None,
             })
             .collect()
     }
@@ -522,6 +530,12 @@ impl OchrepadApp {
                 self.dock.remove_tab(path);
             }
             self.previews.remove(buffer);
+            for id in self.compares.involving(buffer) {
+                if let Some(path) = self.dock.find_tab(&Tab::Compare(id)) {
+                    self.dock.remove_tab(path);
+                }
+                self.compares.map.remove(&id);
+            }
             self.editor.remove_buffer(buffer);
             self.discard_approved.remove(&buffer);
             self.highlighting.detach(buffer);
@@ -533,7 +547,7 @@ impl OchrepadApp {
                 .find_active_focused()
                 .and_then(|(_, t)| match t {
                     Tab::Editor(v) => Some(*v),
-                    Tab::Preview(_) => None,
+                    Tab::Preview(_) | Tab::Compare(_) => None,
                 })
                 .or_else(|| self.tabs().first().copied());
             if let Some(next) = next {
@@ -658,6 +672,7 @@ impl OchrepadApp {
             let style = Style::from_egui(ui.style());
             let find_highlight = self.find.highlighter();
             let mut tabs = Tabs {
+                compares: &mut self.compares,
                 previews: &mut self.previews,
                 find_highlight,
                 editor: &mut self.editor,
@@ -799,6 +814,20 @@ impl OchrepadApp {
         {
             self.play_macro(source, ochrepad_core::Repeat::Times(1));
         }
+        if pressed(ui, &PREV_DIFF)
+            && let Some(c) = self
+                .focused_compare()
+                .and_then(|id| self.compares.get_mut(id))
+        {
+            c.previous_change();
+        }
+        if pressed(ui, &NEXT_DIFF)
+            && let Some(c) = self
+                .focused_compare()
+                .and_then(|id| self.compares.get_mut(id))
+        {
+            c.next_change();
+        }
         if pressed(ui, &PREVIEW) {
             self.open_preview();
         }
@@ -819,6 +848,7 @@ impl OchrepadApp {
             ui.menu_button("Edit", |ui| self.edit_menu(ui));
             ui.menu_button("Search", |ui| self.search_menu(ui));
             ui.menu_button("Macro", |ui| self.macro_menu(ui));
+            ui.menu_button("Compare", |ui| self.compare_menu(ui));
             ui.menu_button("View", |ui| self.view_menu(ui));
             ui.menu_button("Settings", |ui| {
                 let s = &mut self.persist.settings;
@@ -1059,6 +1089,99 @@ impl OchrepadApp {
         }
     }
 
+    /// Opens a comparison of two buffers in a new tab.
+    pub fn compare(&mut self, left: BufferId, right: BufferId) -> CompareId {
+        self.open_compare(CompareSide::Buffer(left), CompareSide::Buffer(right))
+    }
+
+    /// Compares the active buffer's file on disk (left) with the buffer.
+    pub fn compare_with_saved(&mut self) -> Option<CompareId> {
+        let buffer = self.buffer_id();
+        let path = self.buffer().meta.path.clone()?;
+        match fileio::load(&path) {
+            Ok(d) => {
+                let saved = CompareSide::Saved {
+                    buffer,
+                    doc: ochrepad_core::Document::new(&d.text),
+                };
+                Some(self.open_compare(saved, CompareSide::Buffer(buffer)))
+            }
+            Err(e) => {
+                self.message = Some(format!("Could not read {}:\n{e}", path.display()));
+                None
+            }
+        }
+    }
+
+    fn open_compare(&mut self, left: CompareSide, right: CompareSide) -> CompareId {
+        let compare = Compare::new(&self.editor, left, right);
+        let id = self.compares.add(compare);
+        self.dock.push_to_focused_leaf(Tab::Compare(id));
+        id
+    }
+
+    /// The comparison shown in the focused pane, if any.
+    pub fn focused_compare(&mut self) -> Option<CompareId> {
+        match self.dock.find_active_focused() {
+            Some((_, Tab::Compare(id))) => Some(*id),
+            _ => None,
+        }
+    }
+
+    fn compare_menu(&mut self, ui: &mut Ui) {
+        let current = self.buffer_id();
+        let others: Vec<(BufferId, String)> = self
+            .tabs()
+            .into_iter()
+            .filter_map(|v| self.editor.view(v).map(|v| v.buffer()))
+            .filter(|b| *b != current)
+            .fold(Vec::new(), |mut acc, b| {
+                if !acc.iter().any(|(x, _)| *x == b) {
+                    acc.push((b, self.buffer_name(b)));
+                }
+                acc
+            });
+        ui.add_enabled_ui(!others.is_empty(), |ui| {
+            ui.menu_button("Compare With", |ui| {
+                for (b, name) in &others {
+                    if ui.button(name).clicked() {
+                        self.compare(current, *b);
+                        ui.close();
+                    }
+                }
+            });
+        });
+        let has_file = self.buffer().meta.path.is_some();
+        if ui
+            .add_enabled(has_file, Button::new("Compare With Saved Version"))
+            .clicked()
+        {
+            self.compare_with_saved();
+        }
+        ui.separator();
+        let focused = self.focused_compare();
+        if ui
+            .add_enabled(
+                focused.is_some(),
+                Button::new("Next Difference").shortcut_text("F8"),
+            )
+            .clicked()
+            && let Some(c) = focused.and_then(|id| self.compares.get_mut(id))
+        {
+            c.next_change();
+        }
+        if ui
+            .add_enabled(
+                focused.is_some(),
+                Button::new("Previous Difference").shortcut_text("Shift+F8"),
+            )
+            .clicked()
+            && let Some(c) = focused.and_then(|id| self.compares.get_mut(id))
+        {
+            c.previous_change();
+        }
+    }
+
     /// Shows the active buffer's Markdown preview beside it (or switches to
     /// it if it is already open). The editor keeps the keyboard.
     pub fn open_preview(&mut self) {
@@ -1292,8 +1415,9 @@ impl OchrepadApp {
     }
 }
 
-/// Draws the tabs: one editor per view, and Markdown previews.
+/// Draws the tabs: one editor per view, Markdown previews and comparisons.
 struct Tabs<'a> {
+    compares: &'a mut Compares,
     previews: &'a mut Previews,
     find_highlight: Option<&'a ochrepad_core::Searcher>,
     editor: &'a mut Editor,
@@ -1315,6 +1439,7 @@ impl TabViewer for Tabs<'_> {
         match tab {
             Tab::Editor(v) => Id::new(("ochrepad-tab", v.0)),
             Tab::Preview(b) => Id::new(("ochrepad-preview-tab", b.0)),
+            Tab::Compare(c) => Id::new(("ochrepad-compare-tab", c.0)),
         }
     }
 
@@ -1323,6 +1448,18 @@ impl TabViewer for Tabs<'_> {
             Tab::Editor(v) => *v,
             Tab::Preview(b) => {
                 return format!("Preview: {}", buffer_name(self.editor, self.untitled, *b)).into();
+            }
+            Tab::Compare(c) => {
+                let name = |b| buffer_name(self.editor, self.untitled, b);
+                return match self.compares.get(*c) {
+                    Some(c) => format!(
+                        "Compare: {} vs {}",
+                        c.left.label(&name),
+                        c.right.label(&name)
+                    ),
+                    None => "Compare".to_owned(),
+                }
+                .into();
             }
         };
         let Some(buffer) = self.editor.view(view).map(|v| v.buffer()) else {
@@ -1343,6 +1480,14 @@ impl TabViewer for Tabs<'_> {
             Tab::Preview(b) => {
                 if let Some(buffer) = self.editor.buffer(b) {
                     self.previews.show(ui, buffer);
+                }
+                return;
+            }
+            Tab::Compare(id) => {
+                let (editor, untitled) = (&*self.editor, self.untitled);
+                let name = |b| buffer_name(editor, untitled, b);
+                if let Some(c) = self.compares.get_mut(id) {
+                    c.show(ui, editor, &name, id);
                 }
                 return;
             }
@@ -1411,6 +1556,10 @@ impl TabViewer for Tabs<'_> {
                 OnCloseResponse::Ignore
             }
             Tab::Preview(_) => OnCloseResponse::Close,
+            Tab::Compare(id) => {
+                self.compares.map.remove(id);
+                OnCloseResponse::Close
+            }
         }
     }
 

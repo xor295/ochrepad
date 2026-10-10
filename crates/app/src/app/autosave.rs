@@ -361,7 +361,7 @@ impl OchrepadApp {
         }
         session.layout = Some(self.dock.filter_map_tabs(|t| match t {
             Tab::Editor(v) => tab_index.get(v).copied(),
-            Tab::Preview(_) => None,
+            Tab::Preview(_) | Tab::Compare(_) => None,
         }));
         session.active = tab_index.get(&self.active).copied();
         session

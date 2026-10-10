@@ -2,6 +2,7 @@
 
 pub mod app;
 pub mod bench;
+pub mod compare;
 pub mod editor_view;
 pub mod find_panel;
 pub mod fonts;

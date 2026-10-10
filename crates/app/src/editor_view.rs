@@ -592,6 +592,45 @@ pub fn editor_view(
     response
 }
 
+/// Draws a line's text from its layout with its first cell at `x0`, row top
+/// at `y`. Pieces outside the painter's clip rect are skipped; non-ASCII
+/// graphemes are clipped to their cells. Shared by the editor and the
+/// compare view so there is one text renderer.
+pub(crate) fn paint_line_text(
+    painter: &egui::Painter,
+    layout: &LineLayout,
+    x0: f32,
+    y: f32,
+    font: &FontId,
+    line_h: f32,
+) {
+    let clip = painter.clip_rect();
+    for piece in &layout.pieces {
+        let px = x0 + piece.x;
+        if px > clip.max.x {
+            break;
+        }
+        if px + piece.width < clip.min.x {
+            continue;
+        }
+        let galley = painter.layout_no_wrap(
+            layout.text[piece.range.clone()].to_owned(),
+            font.clone(),
+            piece.color,
+        );
+        if piece.clip {
+            let slot = Rect::from_min_size(Pos2::new(px, y), Vec2::new(piece.width, line_h));
+            painter.with_clip_rect(slot.intersect(clip)).galley(
+                Pos2::new(px, y),
+                galley,
+                piece.color,
+            );
+        } else {
+            painter.galley(Pos2::new(px, y), galley, piece.color);
+        }
+    }
+}
+
 /// The egui id of the editor widget for `view` (it holds keyboard focus).
 pub fn editor_id(view: ViewId) -> Id {
     Id::new(("ochrepad-editor", view.0))
@@ -860,28 +899,7 @@ fn paint(
             text_painter.rect_filled(r, 0.0, sel_bg);
         }
 
-        for piece in &layout.pieces {
-            let px = x0 + piece.x;
-            if px > f.content.max.x {
-                break;
-            }
-            if px + piece.width < f.content.min.x {
-                continue;
-            }
-            let galley = text_painter.layout_no_wrap(
-                layout.text[piece.range.clone()].to_owned(),
-                f.font.clone(),
-                piece.color,
-            );
-            if piece.clip {
-                let slot = Rect::from_min_size(Pos2::new(px, y), Vec2::new(piece.width, f.line_h));
-                text_painter
-                    .with_clip_rect(slot.intersect(text_painter.clip_rect()))
-                    .galley(Pos2::new(px, y), galley, piece.color);
-            } else {
-                text_painter.galley(Pos2::new(px, y), galley, piece.color);
-            }
-        }
+        paint_line_text(&text_painter, &layout, x0, y, &f.font, f.line_h);
 
         gutter_painter.text(
             Pos2::new(f.gutter.max.x - f.cell_w, y),
