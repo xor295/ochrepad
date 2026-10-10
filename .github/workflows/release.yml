@@ -1,0 +1,163 @@
+# Builds the Windows and Linux downloads when a version tag (v1.2.3) is
+# pushed, and attaches them to a draft GitHub release for review.
+#
+# To release: set the version in the crates' Cargo.toml files, give the
+# version's section in CHANGELOG.md its date, commit, then
+#   git tag v1.2.3 && git push origin v1.2.3
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      # Signed build-provenance attestations (actions/attest).
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - name: Windows
+            os: windows-latest
+            platform: windows-x86_64
+            exe: ochrepad.exe
+          # The oldest supported Ubuntu, so the binary runs on older glibc.
+          - name: Linux
+            os: ubuntu-22.04
+            platform: linux-x86_64
+            exe: ochrepad
+
+    steps:
+      # Actions are pinned to commits (the tag is in the comment).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check the tag matches the version
+        shell: bash
+        run: |
+          version=$(grep -m1 '^version' crates/ochrepad/Cargo.toml | cut -d'"' -f2)
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match version $version in crates/ochrepad/Cargo.toml"
+            exit 1
+          fi
+
+      - name: Install Rust
+        shell: bash
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustc --version
+
+      - name: Install Linux packages
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev
+
+      # A clean build (no cache), exactly from Cargo.lock.
+      - name: Build
+        run: cargo build --release --locked -p ochrepad --bin ochrepad
+
+      - name: Package
+        shell: bash
+        run: |
+          name="ochrepad-$GITHUB_REF_NAME-${{ matrix.platform }}"
+          mkdir -p "dist/$name"
+          cp "target/release/${{ matrix.exe }}" README.md LICENSE CHANGELOG.md "dist/$name/"
+          cd dist
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            7z a -tzip "$name.zip" "$name" > /dev/null
+          else
+            strip "$name/${{ matrix.exe }}"
+            tar -czf "$name.tar.gz" "$name"
+          fi
+          rm -r "$name"
+          ls -l
+
+      - name: Attest build provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: dist/*
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dist-${{ matrix.platform }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    name: Draft release
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: dist-*
+          merge-multiple: true
+          path: dist
+
+      - name: Checksums
+        working-directory: dist
+        run: |
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      # The release notes are the version's section of CHANGELOG.md, plus how
+      # to verify a download.
+      - name: Release notes
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v v="$version" '
+            /^## \[/ { if (found) exit; if (index($0, "## [" v "]") == 1) { found = 1; next } }
+            /^\[[^]]+\]: / { exit }
+            found { print }
+          ' CHANGELOG.md > notes.md
+          if ! grep -q '[^[:space:]]' notes.md; then
+            echo "::error::CHANGELOG.md has no section for $version"
+            exit 1
+          fi
+          cat >> notes.md <<EOF
+
+          ## Verifying a download
+
+          \`SHA256SUMS.txt\` lists each file's SHA-256 checksum. Each download also
+          has a signed record that this repository's release workflow built it,
+          which the [GitHub CLI](https://cli.github.com) can check:
+
+          \`\`\`sh
+          gh attestation verify <file> --repo $GITHUB_REPOSITORY
+          \`\`\`
+          EOF
+
+      - name: Create the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --draft --verify-tag \
+            --title "ochrepad $GITHUB_REF_NAME" \
+            --notes-file notes.md
