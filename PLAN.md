@@ -51,7 +51,7 @@ The editor has six layers:
 A Cargo workspace. The `core` crate must not depend on egui, so the editing logic is fully testable headless.
 
 ```
-editor/
+ochrepad/
   Cargo.toml            # [workspace]
   crates/
     core/               # no egui, no filesystem: text, positions, selections,

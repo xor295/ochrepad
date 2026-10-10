@@ -1,1 +1,1 @@
-“Follow PLAN.md; current milestone is M0
+Follow PLAN.md; current milestone is M0
