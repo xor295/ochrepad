@@ -19,6 +19,9 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  # Line numbers only (no full debug info): faster builds and a smaller
+  # cache, and panics still point at the line.
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
 jobs:
   check:

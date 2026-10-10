@@ -8,6 +8,8 @@ use egui_kittest::Harness;
 use ochrepad::OchrepadApp;
 use ochrepad_core::{Action, ByteOffset, Selection, SelectionSet};
 
+mod util;
+
 const SAMPLE: &str = "fn main() {\n\tlet greeting = \"héllo\";\n\tprintln!(\"{greeting}, wörld\");\n}\n// e\u{301} 👍🏽 👨‍👩‍👧 end\n";
 
 fn harness() -> Harness<'static, OchrepadApp> {
@@ -41,7 +43,7 @@ fn set(h: &mut Harness<'_, OchrepadApp>, ranges: &[(usize, usize)]) {
 fn snapshot_selection() {
     let mut h = harness();
     set(&mut h, &[(16, 44)]);
-    h.snapshot("selection");
+    util::snapshot(&mut h, "selection");
 }
 
 #[test]
@@ -52,7 +54,7 @@ fn snapshot_multi_cursor() {
         h.key_press_modifiers(Modifiers::COMMAND | Modifiers::ALT, Key::ArrowDown);
         h.run();
     }
-    h.snapshot("multi_cursor");
+    util::snapshot(&mut h, "multi_cursor");
 }
 
 #[test]
@@ -61,7 +63,7 @@ fn snapshot_highlighting() {
     h.state_mut().set_language("Rust");
     h.run();
     set(&mut h, &[(0, 0)]);
-    h.snapshot("highlighting");
+    util::snapshot(&mut h, "highlighting");
 }
 
 #[test]
@@ -78,7 +80,7 @@ fn snapshot_column_selection() {
         },
     );
     h.run();
-    h.snapshot("column_selection");
+    util::snapshot(&mut h, "column_selection");
 }
 
 #[test]
@@ -90,7 +92,7 @@ fn snapshot_split_view() {
     h.state_mut().clone_to_other_view();
     h.run();
     set(&mut h, &[(16, 24)]);
-    h.snapshot("split_view");
+    util::snapshot(&mut h, "split_view");
 }
 
 /// Not a snapshot: renders with the system CJK font to a PNG for a human to

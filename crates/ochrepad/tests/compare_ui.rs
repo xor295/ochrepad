@@ -9,6 +9,8 @@ use ochrepad::compare::CompareId;
 use ochrepad_core::diff::RowKind;
 use ochrepad_core::{Action, BufferId};
 
+mod util;
+
 const LEFT: &str = "fn total(price: u32, qty: u32) -> u32 {\n    let sum = price * qty;\n    sum\n}\n\nfn main() {\n    println!(\"{}\", total(2, 3));\n}\n";
 const RIGHT: &str = "fn total(price: u32, qty: u32) -> u32 {\n    let sum = price * qty + tax;\n    sum\n}\n\n// entry point\nfn main() {\n    println!(\"{}\", total(2, 3));\n}\n";
 
@@ -159,5 +161,5 @@ fn snapshot_compare_view() {
     let (_, _, _) = compared(&mut h);
     h.get_by_label("Next change").click();
     h.run();
-    h.snapshot("compare_view");
+    util::snapshot(&mut h, "compare_view");
 }

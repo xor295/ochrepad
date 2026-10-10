@@ -27,3 +27,6 @@ rustc-ice-*.txt
 **/tests/snapshots/**/*.diff.png
 **/tests/snapshots/**/*.new.png
 **/tests/snapshots/**/*.old.png
+
+# Scratch downloads (e.g. CI artifacts)
+/tmp/
