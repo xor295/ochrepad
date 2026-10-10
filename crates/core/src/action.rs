@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::buffer::BufferId;
 use crate::position::VisualCol;
+use crate::search::SearchQuery;
 use crate::selection::SelectionSet;
 use crate::view::ViewId;
 
@@ -82,6 +83,26 @@ pub enum Action {
     /// adding lines at the end of the document as needed. With several
     /// selections or a non-empty one it behaves like `Paste`.
     PasteBlock(String),
+    /// Select the next (or previous) match after the primary selection.
+    /// Fails with `NotFound` when there is none (macros stop there).
+    Find {
+        query: SearchQuery,
+        backward: bool,
+    },
+    /// Replace the primary selection if it is exactly a match, then find
+    /// the next match.
+    Replace {
+        query: SearchQuery,
+        replacement: String,
+    },
+    /// Replace every match (inside the selections with "in selection") as
+    /// one undo step.
+    ReplaceAll {
+        query: SearchQuery,
+        replacement: String,
+    },
+    /// One selection per match.
+    SelectAllMatches(SearchQuery),
     Undo,
     Redo,
 }
@@ -90,6 +111,8 @@ pub enum Action {
 pub enum ActionError {
     UnknownView(ViewId),
     UnknownBuffer(BufferId),
+    InvalidPattern(String),
+    NotFound,
 }
 
 impl fmt::Display for ActionError {
@@ -97,6 +120,8 @@ impl fmt::Display for ActionError {
         match self {
             ActionError::UnknownView(v) => write!(f, "no view with id {}", v.0),
             ActionError::UnknownBuffer(b) => write!(f, "no buffer with id {}", b.0),
+            ActionError::InvalidPattern(e) => write!(f, "invalid search pattern: {e}"),
+            ActionError::NotFound => f.write_str("no match found"),
         }
     }
 }

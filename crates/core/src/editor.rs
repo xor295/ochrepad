@@ -10,7 +10,7 @@ use crate::action::{Action, ActionError};
 use crate::buffer::{Buffer, BufferId, FileMeta, LineEdit};
 use crate::changeset::{Bias, ChangeSet};
 use crate::history::Transaction;
-use crate::resolve::{Resolved, resolve};
+use crate::resolve::{Resolved, resolve, resolve_search};
 use crate::selection::{Selection, SelectionSet};
 use crate::view::{View, ViewId};
 
@@ -212,58 +212,88 @@ impl Editor {
             Action::Undo => self.undo(view, buffer_id),
             Action::Redo => self.redo(view, buffer_id),
             _ => {
-                let resolved = {
-                    let buffer = &self.buffers[&buffer_id];
-                    resolve(
-                        &action,
-                        &buffer.doc,
-                        &self.views[&view].selections,
-                        self.settings.tab_width,
-                    )
-                };
-                match resolved {
-                    Resolved::Selections(sels) => {
-                        if let Some(b) = self.buffers.get_mut(&buffer_id) {
-                            b.history.break_coalescing();
-                        }
-                        self.set_selections(view, sels);
-                    }
-                    Resolved::Edit {
-                        changes,
-                        after,
-                        kind,
-                    } => {
-                        let now = self.clock.now();
-                        let before = self.views[&view].selections.clone();
-                        let Some(buffer) = self.buffers.get_mut(&buffer_id) else {
-                            return Err(ActionError::UnknownBuffer(buffer_id));
-                        };
-                        let inverse = changes.invert(&buffer.doc);
-                        apply_changes(buffer, &changes);
-                        let rev_before = buffer.revision;
-                        let rev_after = buffer.next_revision;
-                        buffer.next_revision += 1;
-                        buffer.revision = rev_after;
-                        buffer.history.push(
-                            Transaction {
-                                changes: changes.clone(),
-                                inverse,
-                                before,
-                                after: after.clone(),
-                            },
-                            kind,
-                            rev_before,
-                            rev_after,
-                            now,
-                        );
-                        self.set_selections(view, after);
-                        self.map_other_views(buffer_id, view, &changes);
-                    }
-                }
+                let resolved = self.resolve_in(view, buffer_id, &action)??;
+                self.commit(view, buffer_id, resolved)?;
             }
         }
         if let Some(rec) = &mut self.recording {
             rec.push(action);
+        }
+        Ok(())
+    }
+
+    /// Resolves `action` against the view's current state. The outer error
+    /// is a missing view/buffer; the inner one the action's own failure.
+    fn resolve_in(
+        &self,
+        view: ViewId,
+        buffer_id: BufferId,
+        action: &Action,
+    ) -> Result<Result<Resolved, ActionError>, ActionError> {
+        let buffer = self
+            .buffers
+            .get(&buffer_id)
+            .ok_or(ActionError::UnknownBuffer(buffer_id))?;
+        let sels = &self
+            .views
+            .get(&view)
+            .ok_or(ActionError::UnknownView(view))?
+            .selections;
+        Ok(match action {
+            Action::Find { .. }
+            | Action::Replace { .. }
+            | Action::ReplaceAll { .. }
+            | Action::SelectAllMatches(_) => resolve_search(action, &buffer.doc, sels),
+            _ => Ok(resolve(action, &buffer.doc, sels, self.settings.tab_width)),
+        })
+    }
+
+    /// Applies a resolved action: edits the rope, pushes undo, maps other
+    /// views' selections, bumps the revision.
+    fn commit(
+        &mut self,
+        view: ViewId,
+        buffer_id: BufferId,
+        resolved: Resolved,
+    ) -> Result<(), ActionError> {
+        match resolved {
+            Resolved::Selections(sels) => {
+                if let Some(b) = self.buffers.get_mut(&buffer_id) {
+                    b.history.break_coalescing();
+                }
+                self.set_selections(view, sels);
+            }
+            Resolved::Edit {
+                changes,
+                after,
+                kind,
+            } => {
+                let now = self.clock.now();
+                let before = self.views[&view].selections.clone();
+                let Some(buffer) = self.buffers.get_mut(&buffer_id) else {
+                    return Err(ActionError::UnknownBuffer(buffer_id));
+                };
+                let inverse = changes.invert(&buffer.doc);
+                apply_changes(buffer, &changes);
+                let rev_before = buffer.revision;
+                let rev_after = buffer.next_revision;
+                buffer.next_revision += 1;
+                buffer.revision = rev_after;
+                buffer.history.push(
+                    Transaction {
+                        changes: changes.clone(),
+                        inverse,
+                        before,
+                        after: after.clone(),
+                    },
+                    kind,
+                    rev_before,
+                    rev_after,
+                    now,
+                );
+                self.set_selections(view, after);
+                self.map_other_views(buffer_id, view, &changes);
+            }
         }
         Ok(())
     }

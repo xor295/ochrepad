@@ -1,4 +1,4 @@
-Follow PLAN.md; current milestone is M6 (done on branch `m6-column`, awaiting review; next is M7)
+Follow PLAN.md; current milestone is M7 (done on branch `m7-find`, awaiting review; next is M8)
 
 ## Decisions made after M0 (apply when building the editor widget, M3)
 

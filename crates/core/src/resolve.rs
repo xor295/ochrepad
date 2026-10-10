@@ -4,13 +4,16 @@
 
 use unicode_segmentation::UnicodeSegmentation;
 
-use crate::action::{Action, Direction, Motion};
+use crate::action::{Action, ActionError, Direction, Motion};
 use crate::changeset::{Bias, ChangeSet, Edit};
 use crate::history::EditKind;
 use crate::position::{
     ByteOffset, VisualCol, byte_to_visual_col, next_grapheme_boundary, prev_grapheme_boundary,
     visual_col_to_byte, visual_col_to_byte_ceil,
 };
+use std::ops::Range;
+
+use crate::search::{SearchQuery, Searcher};
 use crate::selection::{Rectangle, Selection, SelectionSet};
 use crate::text::Document;
 
@@ -176,7 +179,109 @@ pub(crate) fn resolve(
         Action::CollapseSelections => {
             Resolved::Selections(SelectionSet::caret(sels.primary().head))
         }
-        Action::Undo | Action::Redo => Resolved::Selections(sels.clone()),
+        // Handled by `resolve_search` / `Editor`.
+        Action::Undo
+        | Action::Redo
+        | Action::Find { .. }
+        | Action::Replace { .. }
+        | Action::ReplaceAll { .. }
+        | Action::SelectAllMatches(_) => Resolved::Selections(sels.clone()),
+    }
+}
+
+fn searcher(query: &SearchQuery) -> Result<Searcher, ActionError> {
+    Searcher::new(query).map_err(|e| ActionError::InvalidPattern(e.0))
+}
+
+/// Resolves the search actions, which can fail.
+pub(crate) fn resolve_search(
+    action: &Action,
+    doc: &Document,
+    sels: &SelectionSet,
+) -> Result<Resolved, ActionError> {
+    match action {
+        Action::Find { query, backward } => {
+            let m = searcher(query)?
+                .next_from(doc, sels, *backward)
+                .ok_or(ActionError::NotFound)?;
+            Ok(Resolved::Selections(SelectionSet::single(Selection::new(
+                m.start, m.end,
+            ))))
+        }
+        Action::SelectAllMatches(query) => {
+            let matches = searcher(query)?.find_in(doc, sels);
+            if matches.is_empty() {
+                return Err(ActionError::NotFound);
+            }
+            let ranges = matches
+                .into_iter()
+                .map(|m| Selection::new(m.start, m.end))
+                .collect();
+            Ok(Resolved::Selections(SelectionSet::new(ranges, 0)))
+        }
+        Action::ReplaceAll { query, replacement } => {
+            let s = searcher(query)?;
+            let edits: Vec<Edit> = s
+                .find_in(doc, sels)
+                .into_iter()
+                .map(|m| {
+                    let text = s.expand(doc, m.clone(), replacement);
+                    Edit::new(m.start, m.end, text)
+                })
+                .collect();
+            let changes = ChangeSet::new(doc.len(), edits);
+            if changes.is_empty() {
+                return Ok(Resolved::Selections(sels.clone()));
+            }
+            // Selections keep covering the (replaced) text they covered.
+            let after = SelectionSet::new(
+                sels.ranges()
+                    .iter()
+                    .map(|sel| {
+                        let start = changes.map_position(sel.start(), Bias::Before);
+                        let end = changes.map_position(sel.end(), Bias::After);
+                        if sel.head < sel.anchor {
+                            Selection::new(end, start)
+                        } else {
+                            Selection::new(start, end)
+                        }
+                    })
+                    .collect(),
+                sels.primary_index(),
+            );
+            Ok(Resolved::Edit {
+                changes,
+                after,
+                kind: EditKind::Other,
+            })
+        }
+        Action::Replace { query, replacement } => {
+            let s = searcher(query)?;
+            let select =
+                |m: Range<ByteOffset>| SelectionSet::single(Selection::new(m.start, m.end));
+            let Some((m, text)) = s.replacement_for_selection(doc, sels, replacement) else {
+                // Not on a match: just find the next one.
+                let m = s.next_from(doc, sels, false).ok_or(ActionError::NotFound)?;
+                return Ok(Resolved::Selections(select(m)));
+            };
+            let changes = ChangeSet::new(doc.len(), vec![Edit::new(m.start, m.end, text)]);
+            // One step: the selection afterwards is the next match, found in
+            // the edited text (a rope clone is cheap).
+            let caret = SelectionSet::caret(changes.map_position(m.end, Bias::After));
+            let mut edited = doc.clone();
+            changes.apply(&mut edited);
+            let after = s.next_from(&edited, &caret, false).map_or(caret, select);
+            if changes.is_empty() {
+                return Ok(Resolved::Selections(after));
+            }
+            Ok(Resolved::Edit {
+                changes,
+                after,
+                kind: EditKind::Other,
+            })
+        }
+        // Only search actions are routed here.
+        _ => Ok(Resolved::Selections(sels.clone())),
     }
 }
 

@@ -119,6 +119,15 @@ enum Op {
     Cut,
 }
 
+/// Optional extras drawn over the text.
+#[derive(Default)]
+pub struct Decorations<'a> {
+    /// Syntax highlighting.
+    pub styler: Option<&'a mut dyn LineStyler>,
+    /// Highlights every match of the find panel's pattern.
+    pub find_highlight: Option<&'a ochrepad_core::Searcher>,
+}
+
 /// Shows the editor for `view` filling the available space. `label` names the
 /// file for accessibility.
 pub fn editor_view(
@@ -128,13 +137,13 @@ pub fn editor_view(
     state: &mut EditorViewState,
     keymap: &Keymap,
     label: &str,
-    styler: Option<&mut dyn LineStyler>,
+    decorations: Decorations<'_>,
 ) -> Response {
     let Some(buffer_id) = editor.view(view).map(|v| v.buffer()) else {
         return ui.label("(no view)");
     };
     let rect = ui.available_rect_before_wrap();
-    let id = Id::new(("ochrepad-editor", view.0));
+    let id = editor_id(view);
     ui.advance_cursor_after_rect(rect);
     let response = ui.interact(rect, id, Sense::click_and_drag());
     response.widget_info(|| WidgetInfo::labeled(WidgetType::TextEdit, true, label));
@@ -563,10 +572,29 @@ pub fn editor_view(
     }
 
     paint(
-        ui, editor, view, buffer_id, state, &f, scroll, x_off, h_max, focused, now, tab_width,
-        styler,
+        ui,
+        editor,
+        view,
+        buffer_id,
+        state,
+        &f,
+        Scroll {
+            scroll,
+            x_off,
+            h_max,
+        },
+        focused,
+        now,
+        tab_width,
+        decorations.styler,
+        decorations.find_highlight,
     );
     response
+}
+
+/// The egui id of the editor widget for `view` (it holds keyboard focus).
+pub fn editor_id(view: ViewId) -> Id {
+    Id::new(("ochrepad-editor", view.0))
 }
 
 fn doc_of(editor: &Editor, buffer: ochrepad_core::BufferId) -> &Document {
@@ -710,6 +738,12 @@ fn thumbs(f: &Frame, scroll: f64, x_off: f32, h_max: f32, max_width: f32) -> (Re
     (v, h)
 }
 
+struct Scroll {
+    scroll: f64,
+    x_off: f32,
+    h_max: f32,
+}
+
 #[allow(clippy::too_many_arguments)]
 fn paint(
     ui: &mut Ui,
@@ -718,13 +752,16 @@ fn paint(
     buffer: ochrepad_core::BufferId,
     state: &mut EditorViewState,
     f: &Frame,
-    scroll: f64,
-    x_off: f32,
-    h_max: f32,
+    Scroll {
+        scroll,
+        x_off,
+        h_max,
+    }: Scroll,
     focused: bool,
     now: f64,
     tab_width: usize,
     styler: Option<&mut dyn LineStyler>,
+    find_highlight: Option<&ochrepad_core::Searcher>,
 ) {
     let Some(v) = editor.view(view) else { return };
     let doc = doc_of(editor, buffer);
@@ -746,6 +783,16 @@ fn paint(
     let current_line_bg = visuals.faint_bg_color;
     let sel_bg = visuals.selection.bg_fill;
     let spans = styler.map(|s| s.line_spans(doc, first..last));
+    // Every match of the find panel's pattern on the visible lines.
+    let matches = match find_highlight {
+        Some(s) if first < last => s.find_all(doc, doc.line_start(first)..doc.line_end(last - 1)),
+        _ => Vec::new(),
+    };
+    let match_bg = if visuals.dark_mode {
+        egui::Color32::from_rgba_unmultiplied(255, 190, 0, 55)
+    } else {
+        egui::Color32::from_rgba_unmultiplied(255, 200, 0, 110)
+    };
 
     for line in first..last {
         let y = y0 + (line - first) as f32 * f.line_h;
@@ -782,6 +829,19 @@ fn paint(
         }
         if has_caret {
             text_painter.rect_filled(row, 0.0, current_line_bg);
+        }
+        let from = matches.partition_point(|m| m.end <= line_start && m.start < line_start);
+        for m in matches[from..].iter().take_while(|m| m.start <= line_end) {
+            if m.start == m.end {
+                continue;
+            }
+            let a = m.start.max(line_start).0 - line_start.0;
+            let b = m.end.min(line_end).0 - line_start.0;
+            let r = Rect::from_min_max(
+                Pos2::new(x0 + layout.x_of(a), y),
+                Pos2::new(x0 + layout.x_of(b).max(layout.x_of(a) + 2.0), y + f.line_h),
+            );
+            text_painter.rect_filled(r, 2.0, match_bg);
         }
         for s in on_line {
             if s.is_empty() {

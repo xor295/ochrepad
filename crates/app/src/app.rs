@@ -19,7 +19,10 @@ use ochrepad_fileio as fileio;
 
 use egui_dock::tab_viewer::OnCloseResponse;
 
-use crate::editor_view::{EditorViewState, LineStyler, copy_selection, editor_view};
+use crate::editor_view::{
+    Decorations, EditorViewState, LineStyler, copy_selection, editor_id, editor_view,
+};
+use crate::find_panel::{FindPanel, FindRequest};
 use crate::highlight::Highlighting;
 use crate::keymap::Keymap;
 
@@ -29,6 +32,10 @@ const SAVE_AS: KeyboardShortcut =
     KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::S);
 const SAVE: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::S);
 const CLOSE: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::W);
+const FIND: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::F);
+const REPLACE: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::H);
+const FIND_NEXT: KeyboardShortcut = KeyboardShortcut::new(Modifiers::NONE, Key::F3);
+const FIND_PREV: KeyboardShortcut = KeyboardShortcut::new(Modifiers::SHIFT, Key::F3);
 const NEXT_TAB: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::Tab);
 const PREV_TAB: KeyboardShortcut =
     KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::Tab);
@@ -64,6 +71,7 @@ pub struct OchrepadApp {
     close_sent: bool,
     title: String,
     pub highlighting: Highlighting,
+    pub find: FindPanel,
     /// Visible line range per buffer in the last frame, for highlighting.
     visible: HashMap<BufferId, Range<usize>>,
     /// Whether egui is in dark mode (last frame).
@@ -100,6 +108,7 @@ impl OchrepadApp {
             close_sent: false,
             title: String::new(),
             highlighting: Highlighting::new(Arc::new(ochrepad_syntax::Registry::load())),
+            find: FindPanel::default(),
             visible: HashMap::new(),
             dark: true,
         };
@@ -555,6 +564,27 @@ impl OchrepadApp {
 
         Panel::top("menu").show(ui, |ui| self.menu_bar(ui));
         Panel::bottom("status").show(ui, |ui| self.status_bar(ui));
+        if self.find.open {
+            let requests = Panel::bottom("find")
+                .show(ui, |ui| self.find.ui(ui, &mut self.editor, self.active))
+                .inner;
+            // Escape closes the panel unless the editor has the keyboard
+            // (there it collapses selections).
+            let editor_focused = ui.memory(|m| m.has_focus(editor_id(self.active)));
+            let mut requests = requests;
+            if !editor_focused && ui.input(|i| i.key_pressed(Key::Escape)) {
+                requests.push(FindRequest::Close);
+            }
+            for r in requests {
+                match r {
+                    FindRequest::Close => {
+                        self.find.open = false;
+                        self.view_state_mut().request_focus();
+                    }
+                    FindRequest::Reveal => self.view_state_mut().reveal_caret(),
+                }
+            }
+        }
 
         self.dark = ui.visuals().dark_mode;
         if self
@@ -569,7 +599,9 @@ impl OchrepadApp {
         let mut tab_rects = Vec::new();
         CentralPanel::no_frame().show(ui, |ui| {
             let style = Style::from_egui(ui.style());
+            let find_highlight = self.find.highlighter();
             let mut tabs = Tabs {
+                find_highlight,
                 editor: &mut self.editor,
                 view_states: &mut self.view_states,
                 untitled: &self.untitled,
@@ -668,6 +700,20 @@ impl OchrepadApp {
         if pressed(ui, &SAVE) {
             self.save();
         }
+        if pressed(ui, &FIND) {
+            self.find.open(&self.editor, self.active, false);
+        }
+        if pressed(ui, &REPLACE) {
+            self.find.open(&self.editor, self.active, true);
+        }
+        if pressed(ui, &FIND_PREV) && !self.find.pattern.is_empty() {
+            self.find.find(&mut self.editor, self.active, true);
+            self.view_state_mut().reveal_caret();
+        }
+        if pressed(ui, &FIND_NEXT) && !self.find.pattern.is_empty() {
+            self.find.find(&mut self.editor, self.active, false);
+            self.view_state_mut().reveal_caret();
+        }
         if pressed(ui, &CLOSE) {
             self.close_view(self.active);
         }
@@ -683,6 +729,7 @@ impl OchrepadApp {
         egui::MenuBar::new().ui(ui, |ui| {
             ui.menu_button("File", |ui| self.file_menu(ui));
             ui.menu_button("Edit", |ui| self.edit_menu(ui));
+            ui.menu_button("Search", |ui| self.search_menu(ui));
             ui.menu_button("View", |ui| self.view_menu(ui));
         });
     }
@@ -746,6 +793,26 @@ impl OchrepadApp {
         ui.separator();
         if item(ui, "Select All", "Ctrl+A") {
             self.apply(Action::SelectAll);
+        }
+    }
+
+    fn search_menu(&mut self, ui: &mut Ui) {
+        let item = |ui: &mut Ui, label: &str, shortcut: &str| {
+            ui.add(Button::new(label).shortcut_text(shortcut)).clicked()
+        };
+        if item(ui, "Find…", "Ctrl+F") {
+            self.find.open(&self.editor, self.active, false);
+        }
+        if item(ui, "Replace…", "Ctrl+H") {
+            self.find.open(&self.editor, self.active, true);
+        }
+        if item(ui, "Find Next", "F3") && !self.find.pattern.is_empty() {
+            self.find.find(&mut self.editor, self.active, false);
+            self.view_state_mut().reveal_caret();
+        }
+        if item(ui, "Find Previous", "Shift+F3") && !self.find.pattern.is_empty() {
+            self.find.find(&mut self.editor, self.active, true);
+            self.view_state_mut().reveal_caret();
         }
     }
 
@@ -935,6 +1002,7 @@ impl OchrepadApp {
 
 /// Draws the tabs: one editor per view.
 struct Tabs<'a> {
+    find_highlight: Option<&'a ochrepad_core::Searcher>,
     editor: &'a mut Editor,
     view_states: &'a mut HashMap<ViewId, EditorViewState>,
     untitled: &'a HashMap<BufferId, String>,
@@ -996,7 +1064,10 @@ impl TabViewer for Tabs<'_> {
             state,
             self.keymap,
             &label,
-            styler.as_mut().map(|s| s as &mut dyn LineStyler),
+            Decorations {
+                styler: styler.as_mut().map(|s| s as &mut dyn LineStyler),
+                find_highlight: self.find_highlight,
+            },
         );
     }
 

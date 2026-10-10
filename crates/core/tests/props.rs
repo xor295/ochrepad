@@ -47,6 +47,26 @@ fn motion() -> impl Strategy<Value = Motion> {
     ]
 }
 
+fn search_query() -> impl Strategy<Value = ochrepad_core::SearchQuery> {
+    let pattern = prop_oneof![
+        prop::sample::select(PIECES).prop_map(str::to_owned),
+        prop::sample::select(vec!["^", "$", r"\w+", r"(a)(b)?", "a*", r"\s", "."])
+            .prop_map(str::to_owned),
+    ];
+    (pattern, any::<[bool; 5]>()).prop_map(|(pattern, b)| {
+        ochrepad_core::SearchQuery::new(
+            pattern,
+            ochrepad_core::SearchOptions {
+                regex: b[0],
+                match_case: b[1],
+                whole_word: b[2],
+                wrap: b[3],
+                in_selection: b[4],
+            },
+        )
+    })
+}
+
 fn action() -> impl Strategy<Value = Action> {
     prop_oneof![
         4 => prop::sample::select(PIECES).prop_map(|s| Action::InsertText(s.to_owned())),
@@ -65,6 +85,10 @@ fn action() -> impl Strategy<Value = Action> {
         1 => Just(Action::CollapseSelections),
         1 => text().prop_map(Action::Paste),
         1 => text().prop_map(Action::PasteBlock),
+        2 => (search_query(), text()).prop_map(|(query, replacement)| Action::ReplaceAll { query, replacement }),
+        1 => (search_query(), text()).prop_map(|(query, replacement)| Action::Replace { query, replacement }),
+        1 => (search_query(), any::<bool>()).prop_map(|(query, backward)| Action::Find { query, backward }),
+        1 => search_query().prop_map(Action::SelectAllMatches),
         2 => (0usize..12, 0usize..20, 0usize..12, 0usize..20).prop_map(|(al, ac, hl, hc)| {
             Action::ColumnSelect {
                 anchor_line: al,
@@ -113,7 +137,8 @@ proptest! {
             let rev = t.buffer().revision();
             let had_undo = t.buffer().history().can_undo();
             let is_redo = a == Action::Redo;
-            t.apply(a);
+            // Search actions may fail (no match); that is fine here.
+            let _ = t.ed.apply(t.view, a);
             check(&t)?;
             if !had_undo && !is_redo && t.buffer().revision() != rev {
                 first_edit_sels = Some(before);
@@ -140,7 +165,8 @@ proptest! {
         for a in actions {
             let rev = t.buffer().revision();
             let is_undo = a == Action::Undo;
-            t.apply(a);
+            // Search actions may fail (no match); that is fine here.
+            let _ = t.ed.apply(t.view, a);
             last_was_edit = !is_undo && t.buffer().revision() != rev;
         }
         if !t.buffer().history().can_undo() {
@@ -164,8 +190,14 @@ proptest! {
         let id = t.buffer().id();
         for a in actions {
             let before = t.buffer().doc().line_count() as isize;
-            t.apply(a);
+            // Search actions may fail (no match); that is fine here.
+            let _ = t.ed.apply(t.view, a);
             let edits = t.ed.buffer_mut(id).unwrap().take_line_edits();
+            // Very many edits at once collapse into a conservative
+            // "everything from line N" entry, which carries no line counts.
+            if edits.iter().any(|e| e.is_everything()) {
+                continue;
+            }
             let mut lines = before;
             for e in &edits {
                 prop_assert!(e.start <= e.old_end && (e.old_end as isize) < lines);
