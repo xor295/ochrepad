@@ -10,7 +10,7 @@ use ochrepad_core::{
 use ochrepad_fileio::normalize_line_endings;
 
 use crate::keymap::{EditorCommand, Keymap};
-use crate::layout::{LayoutCache, LineLayout, Styling};
+use crate::layout::{LayoutCache, LineLayout, Styling, visual_col_at_x};
 
 /// Supplies syntax highlighting for visible lines.
 pub trait LineStyler {
@@ -32,6 +32,8 @@ enum DragMode {
     Char,
     Word,
     Line,
+    /// Alt+drag: a rectangle from (line, visual column).
+    Column(usize, ochrepad_core::VisualCol),
 }
 
 struct Drag {
@@ -231,9 +233,18 @@ pub fn editor_view(
                 {
                     ops.push(Op::Apply(Action::InsertText(t)));
                 }
-                Event::Paste(t) => ops.push(Op::Apply(Action::Paste(
-                    normalize_line_endings(&t).into_owned(),
-                ))),
+                Event::Paste(t) => {
+                    let t = normalize_line_endings(&t).into_owned();
+                    let block = ui
+                        .ctx()
+                        .data(|d| d.get_temp::<String>(rect_clip_id()))
+                        .is_some_and(|clip| clip == t);
+                    ops.push(Op::Apply(if block {
+                        Action::PasteBlock(t)
+                    } else {
+                        Action::Paste(t)
+                    }));
+                }
                 Event::Copy => ops.push(Op::Copy),
                 Event::Cut => ops.push(Op::Cut),
                 Event::Ime(ImeEvent::Preedit { text, .. }) => {
@@ -255,12 +266,8 @@ pub fn editor_view(
                 let _ = editor.apply(view, a);
             }
             Op::Copy | Op::Cut => {
-                let text = selected_text(editor, view);
-                if !text.is_empty() {
-                    ui.ctx().copy_text(text);
-                    if matches!(op, Op::Cut) {
-                        let _ = editor.apply(view, Action::InsertText(String::new()));
-                    }
+                if copy_selection(ui.ctx(), editor, view) && matches!(op, Op::Cut) {
+                    let _ = editor.apply(view, Action::InsertText(String::new()));
                 }
             }
         }
@@ -364,8 +371,13 @@ pub fn editor_view(
             ui,
             p,
         );
-        let shift = ui.input(|i| i.modifiers.shift);
+        let mods = ui.input(|i| i.modifiers);
+        let shift = mods.shift;
         let mode = match count {
+            _ if mods.alt => {
+                let (line, col) = line_col_at(&f, scroll, x_off, p);
+                DragMode::Column(line, col)
+            }
             1 => DragMode::Char,
             2 => DragMode::Word,
             _ => DragMode::Line,
@@ -377,10 +389,34 @@ pub fn editor_view(
         } else {
             hit
         };
-        let _ = editor.apply(
-            view,
-            Action::SetSelections(SelectionSet::single(Selection::new(anchor, hit))),
-        );
+        if let DragMode::Column(line, col) = mode {
+            let _ = editor.apply(
+                view,
+                Action::ColumnSelect {
+                    anchor_line: line,
+                    anchor_col: col,
+                    head_line: line,
+                    head_col: col,
+                },
+            );
+        } else if mods.command && count == 1 {
+            // Ctrl+click adds a caret; it becomes the primary.
+            let mut ranges = editor
+                .view(view)
+                .map(|v| v.selections.ranges().to_vec())
+                .unwrap_or_default();
+            ranges.push(Selection::caret(hit));
+            let primary = ranges.len() - 1;
+            let _ = editor.apply(
+                view,
+                Action::SetSelections(SelectionSet::new(ranges, primary)),
+            );
+        } else {
+            let _ = editor.apply(
+                view,
+                Action::SetSelections(SelectionSet::single(Selection::new(anchor, hit))),
+            );
+        }
         match mode {
             DragMode::Word => {
                 let _ = editor.apply(view, Action::SelectWord);
@@ -388,7 +424,7 @@ pub fn editor_view(
             DragMode::Line => {
                 let _ = editor.apply(view, Action::SelectLine);
             }
-            DragMode::Char => {}
+            DragMode::Char | DragMode::Column(..) => {}
         }
         let sel = editor.view(view).map(|v| v.selections.primary().clone());
         let range = sel.map_or((anchor, anchor), |s| {
@@ -398,7 +434,8 @@ pub fn editor_view(
                 (s.start(), s.end())
             }
         });
-        state.drag = Some(Drag {
+        // A Ctrl+click only adds a caret; it does not start a drag.
+        state.drag = (!(mods.command && count == 1 && !mods.alt)).then_some(Drag {
             mode,
             anchor: range,
         });
@@ -436,24 +473,43 @@ pub fn editor_view(
             ui,
             clamped,
         );
+        if let DragMode::Column(anchor_line, anchor_col) = drag.mode {
+            let (head_line, head_col) = line_col_at(&f, scroll, x_off, clamped);
+            let rect = editor.view(view).and_then(|v| v.selections.rect().cloned());
+            if rect.is_none_or(|r| (r.end_line, r.end_col) != (head_line, head_col)) {
+                let _ = editor.apply(
+                    view,
+                    Action::ColumnSelect {
+                        anchor_line,
+                        anchor_col,
+                        head_line,
+                        head_col,
+                    },
+                );
+                state.last_activity = now;
+            }
+        }
         let doc = doc_of(editor, buffer_id);
         let (a0, a1) = drag.anchor;
         let sel = match drag.mode {
-            DragMode::Char => Selection::new(a0, head),
-            DragMode::Word if head < a0 => Selection::new(a1, head),
-            DragMode::Word if head > a1 => Selection::new(a0, head),
-            DragMode::Word => Selection::new(a0, a1),
+            DragMode::Column(..) => None,
+            DragMode::Char => Some(Selection::new(a0, head)),
+            DragMode::Word if head < a0 => Some(Selection::new(a1, head)),
+            DragMode::Word if head > a1 => Some(Selection::new(a0, head)),
+            DragMode::Word => Some(Selection::new(a0, a1)),
             DragMode::Line => {
                 let line = doc.line_of(head);
-                if head >= a0 {
+                Some(if head >= a0 {
                     Selection::new(a0, next_line_start(doc, line).max(a1))
                 } else {
                     Selection::new(a1, doc.line_start(line))
-                }
+                })
             }
         };
         let current = editor.view(view).map(|v| v.selections.ranges().to_vec());
-        if current.as_deref() != Some(std::slice::from_ref(&sel)) {
+        if let Some(sel) = sel
+            && current.as_deref() != Some(std::slice::from_ref(&sel))
+        {
             let _ = editor.apply(view, Action::SetSelections(SelectionSet::single(sel)));
             state.last_activity = now;
         }
@@ -525,7 +581,8 @@ fn next_line_start(doc: &Document, line: usize) -> ByteOffset {
     }
 }
 
-/// Selected text of every non-empty selection, joined with newlines.
+/// Selected text joined with newlines: every non-empty selection, or for a
+/// rectangle every line of it (short lines contribute empty lines).
 pub fn selected_text(editor: &Editor, view: ViewId) -> String {
     let Some(v) = editor.view(view) else {
         return String::new();
@@ -533,13 +590,51 @@ pub fn selected_text(editor: &Editor, view: ViewId) -> String {
     let Some(b) = editor.buffer(v.buffer()) else {
         return String::new();
     };
+    let rect = v.selections.rect().is_some();
+    if rect && v.selections.ranges().iter().all(Selection::is_empty) {
+        return String::new();
+    }
     v.selections
         .ranges()
         .iter()
-        .filter(|s| !s.is_empty())
+        .filter(|s| rect || !s.is_empty())
         .map(|s| b.doc().slice(s.range()))
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// Where the text of the last rectangular copy is remembered, so pasting it
+/// back pastes a block (the clipboard itself carries no such flag in egui).
+fn rect_clip_id() -> Id {
+    Id::new("ochrepad-rect-clip")
+}
+
+/// Copies the selection to the clipboard; returns whether anything was
+/// copied. Rectangular copies are remembered for block paste.
+pub fn copy_selection(ctx: &egui::Context, editor: &Editor, view: ViewId) -> bool {
+    let text = selected_text(editor, view);
+    if text.is_empty() {
+        return false;
+    }
+    let rect = editor
+        .view(view)
+        .is_some_and(|v| v.selections.rect().is_some());
+    ctx.data_mut(|d| {
+        if rect {
+            d.insert_temp(rect_clip_id(), text.clone());
+        } else {
+            d.remove::<String>(rect_clip_id());
+        }
+    });
+    ctx.copy_text(text);
+    true
+}
+
+/// Line and visual column under `p` (columns may lie past the line end).
+fn line_col_at(f: &Frame, scroll: f64, x_off: f32, p: Pos2) -> (usize, ochrepad_core::VisualCol) {
+    let row = ((p.y - f.content.min.y) / f.line_h) as f64 + scroll;
+    let line = (row.max(0.0).floor() as usize).min(f.line_count - 1);
+    (line, visual_col_at_x(p.x - f.text_left() + x_off, f.cell_w))
 }
 
 #[allow(clippy::too_many_arguments)]

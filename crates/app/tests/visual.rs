@@ -65,6 +65,23 @@ fn snapshot_highlighting() {
 }
 
 #[test]
+fn snapshot_column_selection() {
+    let mut h = harness();
+    let app = h.state_mut();
+    let _ = app.editor.apply(
+        app.active_view(),
+        Action::ColumnSelect {
+            anchor_line: 0,
+            anchor_col: ochrepad_core::VisualCol(3),
+            head_line: 4,
+            head_col: ochrepad_core::VisualCol(9),
+        },
+    );
+    h.run();
+    h.snapshot("column_selection");
+}
+
+#[test]
 fn snapshot_split_view() {
     let mut h = harness();
     h.state_mut().set_language("Rust");

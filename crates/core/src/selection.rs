@@ -56,13 +56,33 @@ impl Selection {
 }
 
 /// The rectangle a column selection was made from, kept alongside the set so
-/// rectangular copy/paste and column-keyed sort can use it.
+/// rectangular copy/paste and column-keyed sort can use it. `start_*` is the
+/// anchor corner and `end_*` the head corner (it may be above or left of the
+/// anchor).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Rectangle {
     pub start_line: usize,
     pub end_line: usize,
     pub start_col: VisualCol,
     pub end_col: VisualCol,
+}
+
+impl Rectangle {
+    pub fn top(&self) -> usize {
+        self.start_line.min(self.end_line)
+    }
+
+    pub fn bottom(&self) -> usize {
+        self.start_line.max(self.end_line)
+    }
+
+    pub fn left(&self) -> VisualCol {
+        self.start_col.min(self.end_col)
+    }
+
+    pub fn right(&self) -> VisualCol {
+        self.start_col.max(self.end_col)
+    }
 }
 
 /// Non-empty, sorted, non-overlapping selections plus the primary's index.

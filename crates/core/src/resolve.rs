@@ -4,14 +4,14 @@
 
 use unicode_segmentation::UnicodeSegmentation;
 
-use crate::action::{Action, Motion};
+use crate::action::{Action, Direction, Motion};
 use crate::changeset::{Bias, ChangeSet, Edit};
 use crate::history::EditKind;
 use crate::position::{
     ByteOffset, VisualCol, byte_to_visual_col, next_grapheme_boundary, prev_grapheme_boundary,
-    visual_col_to_byte,
+    visual_col_to_byte, visual_col_to_byte_ceil,
 };
-use crate::selection::{Selection, SelectionSet};
+use crate::selection::{Rectangle, Selection, SelectionSet};
 use crate::text::Document;
 
 pub(crate) enum Resolved {
@@ -59,6 +59,54 @@ pub(crate) fn resolve(
                     Edit::new(s.start(), s.end(), text.as_str())
                 })
             }
+        }
+        Action::ColumnSelect {
+            anchor_line,
+            anchor_col,
+            head_line,
+            head_col,
+        } => {
+            let last = doc.line_count() - 1;
+            Resolved::Selections(column_selection(
+                doc,
+                Rectangle {
+                    start_line: (*anchor_line).min(last),
+                    end_line: (*head_line).min(last),
+                    start_col: *anchor_col,
+                    end_col: *head_col,
+                },
+                tab_width,
+            ))
+        }
+        Action::ColumnExtend(dir) => {
+            let mut r = sels.rect().cloned().unwrap_or_else(|| {
+                let head = sels.primary().head;
+                let line = doc.line_of(head);
+                let col = byte_to_visual_col(doc, head, tab_width);
+                Rectangle {
+                    start_line: line,
+                    end_line: line,
+                    start_col: col,
+                    end_col: col,
+                }
+            });
+            match dir {
+                Direction::Up => r.end_line = r.end_line.saturating_sub(1),
+                Direction::Down => r.end_line = (r.end_line + 1).min(doc.line_count() - 1),
+                Direction::Left => {
+                    r.end_col = step_col(doc, r.end_line, r.end_col, false, tab_width)
+                }
+                Direction::Right => {
+                    r.end_col = step_col(doc, r.end_line, r.end_col, true, tab_width)
+                }
+            }
+            Resolved::Selections(column_selection(doc, r, tab_width))
+        }
+        Action::PasteBlock(text) => {
+            if sels.len() > 1 || !sels.primary().is_empty() {
+                return resolve(&Action::Paste(text.clone()), doc, sels, tab_width);
+            }
+            paste_block(doc, sels.primary().head, text, tab_width)
         }
         Action::SetSelections(set) => {
             let clamp = |p: ByteOffset| {
@@ -251,6 +299,89 @@ fn vertical(
         return (sel.head, Some(goal));
     }
     (visual_col_to_byte(doc, target, goal, tab_width), Some(goal))
+}
+
+/// One selection per line of the rectangle, anchor column to head column;
+/// the primary is on the head line. Each selection stays inside the
+/// rectangle: a tab or wide glyph straddling an edge is left out.
+fn column_selection(doc: &Document, r: Rectangle, tab_width: usize) -> SelectionSet {
+    let ranges = (r.top()..=r.bottom())
+        .map(|line| {
+            let right = visual_col_to_byte(doc, line, r.right(), tab_width);
+            let left = visual_col_to_byte_ceil(doc, line, r.left(), tab_width).min(right);
+            if r.start_col <= r.end_col {
+                Selection::new(left, right)
+            } else {
+                Selection::new(right, left)
+            }
+        })
+        .collect();
+    let primary = r.end_line - r.top();
+    SelectionSet::new(ranges, primary).with_rect(Some(r))
+}
+
+/// The visual column one grapheme left or right of `col` on `line`; past the
+/// end of the line the rectangle keeps growing one column at a time.
+fn step_col(
+    doc: &Document,
+    line: usize,
+    col: VisualCol,
+    right: bool,
+    tab_width: usize,
+) -> VisualCol {
+    let at = visual_col_to_byte(doc, line, col, tab_width);
+    let at_col = byte_to_visual_col(doc, at, tab_width);
+    if right {
+        if at < doc.line_end(line) && at_col == col {
+            byte_to_visual_col(doc, next_grapheme_boundary(doc, at), tab_width)
+        } else {
+            VisualCol(col.0 + 1)
+        }
+    } else if col.0 == 0 {
+        col
+    } else if at_col == col && at > doc.line_start(line) {
+        byte_to_visual_col(doc, prev_grapheme_boundary(doc, at), tab_width)
+    } else {
+        VisualCol(col.0 - 1)
+    }
+}
+
+fn paste_block(doc: &Document, head: ByteOffset, text: &str, tab_width: usize) -> Resolved {
+    let line = doc.line_of(head);
+    let col = byte_to_visual_col(doc, head, tab_width);
+    let body = text.strip_suffix('\n').unwrap_or(text);
+    let mut edits = Vec::new();
+    let mut tail = String::new();
+    for (i, piece) in body.split('\n').enumerate() {
+        let target = line + i;
+        if target < doc.line_count() {
+            let pos = visual_col_to_byte(doc, target, col, tab_width);
+            let have = byte_to_visual_col(doc, pos, tab_width).0;
+            let pad = if pos == doc.line_end(target) {
+                col.0.saturating_sub(have)
+            } else {
+                0
+            };
+            edits.push(Edit::new(pos, pos, format!("{}{piece}", " ".repeat(pad))));
+        } else {
+            tail.push('\n');
+            tail.push_str(&" ".repeat(col.0));
+            tail.push_str(piece);
+        }
+    }
+    if !tail.is_empty() {
+        edits.push(Edit::new(doc.len(), doc.len(), tail));
+    }
+    let changes = ChangeSet::new(doc.len(), edits);
+    let after = SelectionSet::caret(changes.map_position(head, Bias::After));
+    if changes.is_empty() {
+        return Resolved::Selections(after);
+    }
+    Resolved::Edit {
+        changes,
+        after,
+        kind: EditKind::Other,
+    }
 }
 
 fn add_cursor(doc: &Document, sels: &SelectionSet, delta: isize, tab_width: usize) -> Resolved {

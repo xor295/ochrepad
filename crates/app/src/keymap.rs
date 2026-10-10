@@ -2,7 +2,7 @@
 //! follow Notepad++ where it has a binding.
 
 use egui::{Key, Modifiers};
-use ochrepad_core::{Action, Motion};
+use ochrepad_core::{Action, Direction, Motion};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum EditorCommand {
@@ -110,6 +110,22 @@ impl Default for Keymap {
             (Chord::new(Z).cmd(), act(Action::Undo)),
             (Chord::new(Y).cmd(), act(Action::Redo)),
             (Chord::new(Z).cmd().shift(), act(Action::Redo)),
+            (
+                Chord::new(ArrowUp).alt().shift(),
+                act(Action::ColumnExtend(Direction::Up)),
+            ),
+            (
+                Chord::new(ArrowDown).alt().shift(),
+                act(Action::ColumnExtend(Direction::Down)),
+            ),
+            (
+                Chord::new(ArrowLeft).alt().shift(),
+                act(Action::ColumnExtend(Direction::Left)),
+            ),
+            (
+                Chord::new(ArrowRight).alt().shift(),
+                act(Action::ColumnExtend(Direction::Right)),
+            ),
             (Chord::new(ArrowUp).cmd().alt(), act(Action::AddCursorAbove)),
             (
                 Chord::new(ArrowDown).cmd().alt(),

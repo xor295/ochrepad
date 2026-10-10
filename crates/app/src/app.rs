@@ -19,7 +19,7 @@ use ochrepad_fileio as fileio;
 
 use egui_dock::tab_viewer::OnCloseResponse;
 
-use crate::editor_view::{EditorViewState, LineStyler, editor_view, selected_text};
+use crate::editor_view::{EditorViewState, LineStyler, copy_selection, editor_view};
 use crate::highlight::Highlighting;
 use crate::keymap::Keymap;
 
@@ -730,18 +730,11 @@ impl OchrepadApp {
             self.apply(Action::Redo);
         }
         ui.separator();
-        if item(ui, "Cut", "Ctrl+X") {
-            let text = selected_text(&self.editor, self.active);
-            if !text.is_empty() {
-                ui.ctx().copy_text(text);
-                self.apply(Action::InsertText(String::new()));
-            }
+        if item(ui, "Cut", "Ctrl+X") && copy_selection(ui.ctx(), &self.editor, self.active) {
+            self.apply(Action::InsertText(String::new()));
         }
         if item(ui, "Copy", "Ctrl+C") {
-            let text = selected_text(&self.editor, self.active);
-            if !text.is_empty() {
-                ui.ctx().copy_text(text);
-            }
+            copy_selection(ui.ctx(), &self.editor, self.active);
             self.view_state_mut().request_focus();
         }
         if item(ui, "Paste", "Ctrl+V") {
@@ -834,14 +827,16 @@ impl OchrepadApp {
     }
 
     fn status_bar(&mut self, ui: &mut Ui) {
-        let carets = self
-            .editor
-            .view(self.active)
-            .map_or(1, |v| v.selections.len());
+        let (carets, column) = self.editor.view(self.active).map_or((1, false), |v| {
+            (v.selections.len(), v.selections.rect().is_some())
+        });
         let meta = self.buffer().meta.clone();
         ui.horizontal(|ui| {
             ui.label(self.caret_status());
-            if carets > 1 {
+            if column {
+                ui.separator();
+                ui.label(format!("Column selection, {carets} lines"));
+            } else if carets > 1 {
                 ui.separator();
                 ui.label(format!("{carets} selections"));
             }

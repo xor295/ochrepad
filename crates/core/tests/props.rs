@@ -64,6 +64,22 @@ fn action() -> impl Strategy<Value = Action> {
         2 => Just(Action::AddCursorBelow),
         1 => Just(Action::CollapseSelections),
         1 => text().prop_map(Action::Paste),
+        1 => text().prop_map(Action::PasteBlock),
+        2 => (0usize..12, 0usize..20, 0usize..12, 0usize..20).prop_map(|(al, ac, hl, hc)| {
+            Action::ColumnSelect {
+                anchor_line: al,
+                anchor_col: ochrepad_core::VisualCol(ac),
+                head_line: hl,
+                head_col: ochrepad_core::VisualCol(hc),
+            }
+        }),
+        2 => prop::sample::select(vec![
+            ochrepad_core::Direction::Up,
+            ochrepad_core::Direction::Down,
+            ochrepad_core::Direction::Left,
+            ochrepad_core::Direction::Right,
+        ])
+        .prop_map(Action::ColumnExtend),
         1 => prop::collection::vec((0usize..300, 0usize..300), 1..4).prop_map(|v| {
             let ranges = v
                 .into_iter()
@@ -156,6 +172,37 @@ proptest! {
                 lines += e.new_end as isize - e.old_end as isize;
             }
             prop_assert_eq!(lines, t.buffer().doc().line_count() as isize);
+        }
+    }
+
+    /// Every selection of a column selection lies inside the rectangle's
+    /// columns, on its own line of the rectangle.
+    #[test]
+    fn column_selections_stay_inside_the_rectangle(
+        s in text(),
+        (al, ac, hl, hc) in (0usize..12, 0usize..20, 0usize..12, 0usize..20),
+    ) {
+        let mut t = util::setup(&s);
+        t.apply(Action::ColumnSelect {
+            anchor_line: al,
+            anchor_col: ochrepad_core::VisualCol(ac),
+            head_line: hl,
+            head_col: ochrepad_core::VisualCol(hc),
+        });
+        check(&t)?;
+        let sels = t.sels();
+        let rect = sels.rect().cloned().expect("column selection keeps its rectangle");
+        let doc = t.buffer().doc();
+        prop_assert_eq!(sels.len(), rect.bottom() - rect.top() + 1);
+        for (i, sel) in sels.ranges().iter().enumerate() {
+            let line = rect.top() + i;
+            prop_assert_eq!(doc.line_of(sel.start()), line);
+            prop_assert_eq!(doc.line_of(sel.end()), line);
+            let end_col = byte_to_visual_col(doc, sel.end(), 4);
+            prop_assert!(end_col <= rect.right());
+            if !sel.is_empty() {
+                prop_assert!(byte_to_visual_col(doc, sel.start(), 4) >= rect.left());
+            }
         }
     }
 

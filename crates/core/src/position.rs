@@ -153,6 +153,27 @@ pub fn visual_col_to_byte(
     ByteOffset(start.0 + text.len())
 }
 
+/// The first grapheme boundary on `line` whose visual column is `>= col`, or
+/// the line end. Used for the left edge of a rectangle so that a tab or wide
+/// glyph straddling the edge stays outside it.
+pub fn visual_col_to_byte_ceil(
+    doc: &Document,
+    line: usize,
+    col: VisualCol,
+    tab_width: usize,
+) -> ByteOffset {
+    let start = doc.line_start(line);
+    let text = doc.line_text(line);
+    let mut c = 0;
+    for (i, g) in text.grapheme_indices(true) {
+        if c >= col.0 {
+            return ByteOffset(start.0 + i);
+        }
+        c += grapheme_width(g, c, tab_width);
+    }
+    ByteOffset(start.0 + text.len())
+}
+
 /// Width of the whole line in visual columns.
 pub fn line_visual_width(doc: &Document, line: usize, tab_width: usize) -> VisualCol {
     VisualCol(advance(&doc.line_text(line), 0, tab_width))

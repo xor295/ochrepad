@@ -116,6 +116,13 @@ impl LineLayout {
     }
 }
 
+/// The visual column nearest to `x` on the cell grid, including columns past
+/// the end of the line (rectangular selection works in visual columns).
+/// This is the inverse of the `col * cell_w` placement in `LineLayout::build`.
+pub fn visual_col_at_x(x: f32, cell_w: f32) -> ochrepad_core::VisualCol {
+    ochrepad_core::VisualCol((x / cell_w).round().max(0.0) as usize)
+}
+
 /// Which styling a cached layout must have.
 #[derive(Clone, Copy)]
 pub enum Styling<'a> {
