@@ -14,7 +14,9 @@ use egui_dock::{
     AllowedSplits, DockArea, DockState, Node, NodePath, Split, Style, TabIndex, TabViewer,
 };
 use ochrepad_core::position::byte_to_visual_col;
-use ochrepad_core::{Action, Buffer, BufferId, Editor, FileMeta, LineEnding, ViewId};
+use ochrepad_core::{
+    Action, Buffer, BufferId, CaseMode, Editor, FileMeta, LineEnding, SortOptions, ViewId,
+};
 use ochrepad_fileio as fileio;
 
 use egui_dock::tab_viewer::OnCloseResponse;
@@ -793,6 +795,78 @@ impl OchrepadApp {
         ui.separator();
         if item(ui, "Select All", "Ctrl+A") {
             self.apply(Action::SelectAll);
+        }
+        ui.separator();
+        ui.menu_button("Convert Case", |ui| {
+            for (label, shortcut, mode) in [
+                ("UPPERCASE", "Ctrl+Shift+U", CaseMode::Upper),
+                ("lowercase", "Ctrl+U", CaseMode::Lower),
+                ("Title Case", "Alt+U", CaseMode::Title),
+                ("iNVERT cASE", "Ctrl+Alt+U", CaseMode::Invert),
+            ] {
+                if item(ui, label, shortcut) {
+                    self.apply(Action::ConvertCase(mode));
+                }
+            }
+        });
+        ui.menu_button("Line Operations", |ui| self.line_operations_menu(ui));
+    }
+
+    fn line_operations_menu(&mut self, ui: &mut Ui) {
+        let item = |ui: &mut Ui, label: &str, shortcut: &str| {
+            ui.add(Button::new(label).shortcut_text(shortcut)).clicked()
+        };
+        for (label, shortcut, action) in [
+            ("Duplicate Current Line", "Ctrl+D", Action::DuplicateLine),
+            ("Move Up Current Line", "Ctrl+Shift+Up", Action::MoveLinesUp),
+            (
+                "Move Down Current Line",
+                "Ctrl+Shift+Down",
+                Action::MoveLinesDown,
+            ),
+            ("Join Lines", "Ctrl+J", Action::JoinLines),
+            ("Trim Trailing Space", "", Action::TrimTrailingWhitespace),
+        ] {
+            if item(ui, label, shortcut) {
+                self.apply(action);
+            }
+        }
+        ui.separator();
+        let sort = |descending, case_insensitive, numeric, remove_duplicates| {
+            Action::SortLines(SortOptions {
+                descending,
+                case_insensitive,
+                numeric,
+                remove_duplicates,
+            })
+        };
+        for (label, action) in [
+            ("Sort Lines Ascending", sort(false, false, false, false)),
+            ("Sort Lines Descending", sort(true, false, false, false)),
+            (
+                "Sort Lines Ascending (Ignore Case)",
+                sort(false, true, false, false),
+            ),
+            (
+                "Sort Lines Descending (Ignore Case)",
+                sort(true, true, false, false),
+            ),
+            (
+                "Sort Lines as Numbers Ascending",
+                sort(false, false, true, false),
+            ),
+            (
+                "Sort Lines as Numbers Descending",
+                sort(true, false, true, false),
+            ),
+            (
+                "Sort Lines and Remove Duplicates",
+                sort(false, false, false, true),
+            ),
+        ] {
+            if ui.button(label).clicked() {
+                self.apply(action);
+            }
         }
     }
 

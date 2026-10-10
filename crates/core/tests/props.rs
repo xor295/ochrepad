@@ -7,6 +7,11 @@ use ochrepad_core::{Action, ByteOffset, Document, Motion, SelectionSet};
 use proptest::prelude::*;
 
 const PIECES: &[&str] = &[
+    "ß",
+    "İ",
+    "ǅ",
+    "1",
+    "-2.5",
     "a",
     "b",
     "Z",
@@ -85,6 +90,26 @@ fn action() -> impl Strategy<Value = Action> {
         1 => Just(Action::CollapseSelections),
         1 => text().prop_map(Action::Paste),
         1 => text().prop_map(Action::PasteBlock),
+        2 => prop::sample::select(vec![
+            ochrepad_core::CaseMode::Upper,
+            ochrepad_core::CaseMode::Lower,
+            ochrepad_core::CaseMode::Title,
+            ochrepad_core::CaseMode::Invert,
+        ])
+        .prop_map(Action::ConvertCase),
+        1 => any::<[bool; 4]>().prop_map(|b| Action::SortLines(ochrepad_core::SortOptions {
+            descending: b[0],
+            case_insensitive: b[1],
+            numeric: b[2],
+            remove_duplicates: b[3],
+        })),
+        1 => prop::sample::select(vec![
+            Action::TrimTrailingWhitespace,
+            Action::DuplicateLine,
+            Action::MoveLinesUp,
+            Action::MoveLinesDown,
+            Action::JoinLines,
+        ]),
         2 => (search_query(), text()).prop_map(|(query, replacement)| Action::ReplaceAll { query, replacement }),
         1 => (search_query(), text()).prop_map(|(query, replacement)| Action::Replace { query, replacement }),
         1 => (search_query(), any::<bool>()).prop_map(|(query, backward)| Action::Find { query, backward }),

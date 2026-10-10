@@ -11,6 +11,7 @@ mod resolve;
 pub mod search;
 pub mod selection;
 pub mod text;
+pub mod transform;
 pub mod view;
 
 pub use action::{Action, ActionError, Direction, Motion};
@@ -22,4 +23,5 @@ pub use position::{ByteOffset, CharIdx, LineCol, VisualCol};
 pub use search::{SearchError, SearchOptions, SearchQuery, Searcher};
 pub use selection::{Rectangle, Selection, SelectionSet};
 pub use text::Document;
+pub use transform::{CaseMode, SortOptions};
 pub use view::{DisplayMap, IdentityDisplayMap, View, ViewId};

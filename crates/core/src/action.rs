@@ -9,6 +9,7 @@ use crate::buffer::BufferId;
 use crate::position::VisualCol;
 use crate::search::SearchQuery;
 use crate::selection::SelectionSet;
+use crate::transform::{CaseMode, SortOptions};
 use crate::view::ViewId;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -103,6 +104,20 @@ pub enum Action {
     },
     /// One selection per match.
     SelectAllMatches(SearchQuery),
+    /// Convert each selection (or the caret's line) to a case.
+    ConvertCase(CaseMode),
+    /// Sort the selected lines, the rectangle's lines keyed by the text in
+    /// the rectangle, or the whole document when nothing is selected.
+    SortLines(SortOptions),
+    /// Remove trailing spaces and tabs from the selected lines (all lines
+    /// when nothing is selected).
+    TrimTrailingWhitespace,
+    /// Duplicate the caret's line, or each selection.
+    DuplicateLine,
+    MoveLinesUp,
+    MoveLinesDown,
+    /// Join the selected lines (or the caret's line and the next).
+    JoinLines,
     Undo,
     Redo,
 }

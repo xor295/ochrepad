@@ -16,6 +16,7 @@ use std::ops::Range;
 use crate::search::{SearchQuery, Searcher};
 use crate::selection::{Rectangle, Selection, SelectionSet};
 use crate::text::Document;
+use crate::transform;
 
 pub(crate) enum Resolved {
     /// Only the selections change.
@@ -105,6 +106,13 @@ pub(crate) fn resolve(
             }
             Resolved::Selections(column_selection(doc, r, tab_width))
         }
+        Action::ConvertCase(mode) => transform::case(doc, sels, *mode),
+        Action::SortLines(options) => transform::sort(doc, sels, *options, tab_width),
+        Action::TrimTrailingWhitespace => transform::trim_trailing(doc, sels),
+        Action::DuplicateLine => transform::duplicate(doc, sels),
+        Action::MoveLinesUp => transform::move_lines(doc, sels, true),
+        Action::MoveLinesDown => transform::move_lines(doc, sels, false),
+        Action::JoinLines => transform::join(doc, sels),
         Action::PasteBlock(text) => {
             if sels.len() > 1 || !sels.primary().is_empty() {
                 return resolve(&Action::Paste(text.clone()), doc, sels, tab_width);
