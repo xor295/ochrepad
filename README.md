@@ -14,13 +14,14 @@ A fast, native text editor in the spirit of Notepad++, written in Rust with
   open without it.
 - **Column selection and multiple cursors**: Alt+drag or Alt+Shift+arrows for
   a rectangle, Ctrl+click to add a caret, Ctrl+Alt+Up/Down to add one above or
-  below. Rectangular copy and paste work as blocks.
+  below. Rectangular copy and paste work as blocks
+  ([more](docs/column-selection.md)).
 - **Find and replace** with regular expressions, match case, whole word, wrap
   around and in-selection, `$1`/`${name}` in replacements, Count, Select All
   (one caret per match) and Replace All as a single undo step. See
   [docs/find-and-replace.md](docs/find-and-replace.md) for the regex dialect.
 - **Macros**: record, play back once, N times or to the end of the file, save
-  them with a name and a shortcut.
+  them with a name and a shortcut ([more](docs/macros.md)).
 - **Tabs and split screen**: drag tabs into side-by-side or stacked panes, or
   open a second view of the same file; edits show in both.
 - **Compare**: a side-by-side diff of two files (or a file against its saved
@@ -30,14 +31,15 @@ A fast, native text editor in the spirit of Notepad++, written in Rust with
   (PNG, JPEG, WebP, SVG) loaded from the document's folder.
 - **Backups and session restore**: unsaved work is backed up every few seconds
   and comes back, with your tabs and layout, the next time you start. Optional
-  automatic saving of named files.
+  automatic saving of named files ([more](docs/backups-and-session.md)).
 - **Text tools**: UPPER/lower/Title/iNVERT case, sort lines (ascending,
   descending, case-insensitive, numeric, by a column selection), duplicate,
   move, join lines and trim trailing whitespace.
 - **Faithful file handling**: UTF-8, UTF-16 and legacy encodings are detected,
   and files are saved back with the same encoding, BOM and line endings
   (CRLF, LF or CR). Saves are atomic, so a crash never leaves a half-written
-  file. Binary files are refused rather than mangled.
+  file. Binary files are refused rather than mangled
+  ([more](docs/file-handling.md)).
 - **Watches open files**: if another program changes or deletes one, ochrepad
   offers to reload it (or warns you if you have unsaved changes).
 - Preferences for font, size, tabs or spaces, tab width, theme, and backups;
@@ -106,12 +108,13 @@ Everything is stored as JSON in your configuration folder:
 | | Windows | Linux | macOS |
 |---|---|---|---|
 | Settings, keymap, macros, session | `%APPDATA%\ochrepad\config` | `~/.config/ochrepad` | `~/Library/Application Support/ochrepad` |
-| Backups of unsaved work | `%APPDATA%\ochrepad\data` | `~/.local/share/ochrepad` | `~/Library/Application Support/ochrepad` |
+| Backups of unsaved work | `%APPDATA%\ochrepad\data\backup` | `~/.local/share/ochrepad/backup` | `~/Library/Application Support/ochrepad/backup` |
 
 - `settings.json`: the preferences and the recent files list.
 - `keymap.json`: your key bindings. **Settings > Edit Keymap** opens it,
   starting from every default binding, and saving it applies it. Each entry
-  replaces the default binding for its keys; `"command": null` removes one:
+  replaces the default binding for its keys; `"command": null` removes one.
+  [Key bindings](docs/keymap.md) lists every command:
 
   ```json
   [
@@ -121,6 +124,8 @@ Everything is stored as JSON in your configuration folder:
   ```
 - `macros.json`: saved macros and their shortcuts.
 - `session.json`: open tabs, layout, carets and scroll positions.
+
+More about each feature is in [docs/](docs/README.md).
 
 ## Development
 

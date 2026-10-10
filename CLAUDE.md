@@ -51,6 +51,7 @@ These are load-bearing. Check with the user before changing any of them.
 - Dependencies are pinned exactly (`"=x.y.z"`). Ask before adding one. Approved additions since the plan: `image` (jpeg, webp), `winresource` (Windows build-dependency), `resvg` (no default features). All egui-ecosystem crates must stay on the same egui minor version (egui/eframe/egui_kittest 0.36, egui_dock 0.21, egui_commonmark 0.25).
 - egui 0.36 is Ui-first: `App::ui(&mut self, ui, frame)`, and panels show inside a `Ui`. Online examples are often older; check the crate source in `~/.cargo/registry` rather than memory.
 - Match Notepad++ behaviour where it has an opinion (shortcuts, autosave-as-backup, exit without prompting when backups are on).
+- User documentation lives in `docs/` (index: `docs/README.md`; the README links each page). Update the page when you change the behaviour it describes. `crates/ochrepad/tests/docs.rs` fails when a new `Action` variant has no example in `docs/keymap.md`, or when a JSON example in the docs stops parsing.
 
 ## Settled decisions
 
