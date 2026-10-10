@@ -877,42 +877,49 @@ impl OchrepadApp {
 
     fn menu_bar(&mut self, ui: &mut Ui) {
         egui::MenuBar::new().ui(ui, |ui| {
-            ui.menu_button("File", |ui| self.file_menu(ui));
-            ui.menu_button("Edit", |ui| self.edit_menu(ui));
-            ui.menu_button("Search", |ui| self.search_menu(ui));
-            ui.menu_button("Macro", |ui| self.macro_menu(ui));
-            ui.menu_button("Compare", |ui| self.compare_menu(ui));
-            ui.menu_button("View", |ui| self.view_menu(ui));
-            ui.menu_button("Settings", |ui| {
-                if ui.button("Preferences…").clicked() {
-                    self.show_preferences = true;
-                    ui.close();
-                }
-                if ui
-                    .button("Edit Keymap…")
-                    .on_hover_text(
-                        "Opens keymap.json; saving it applies it. Entries replace the default \
-                     binding of their keys; \"command\": null removes one.",
-                    )
-                    .clicked()
-                {
-                    self.edit_keymap();
-                    ui.close();
-                }
-                ui.separator();
-                let s = &mut self.settings;
-                ui.checkbox(&mut s.backups, "Periodic backup and session snapshot")
-                    .on_hover_text(
-                        "Every few seconds, unsaved text is backed up; on exit the open \
-                         tabs are remembered and unsaved work comes back next time.",
-                    );
-                ui.checkbox(&mut s.write_through, "Save files automatically")
-                    .on_hover_text(
-                        "Also save files that have a name, on the backup timer and when \
-                         the window loses focus.",
-                    );
-            });
+            let titles = [
+                ui.menu_button("File", |ui| self.file_menu(ui)).response,
+                ui.menu_button("Edit", |ui| self.edit_menu(ui)).response,
+                ui.menu_button("Search", |ui| self.search_menu(ui)).response,
+                ui.menu_button("Macro", |ui| self.macro_menu(ui)).response,
+                ui.menu_button("Compare", |ui| self.compare_menu(ui))
+                    .response,
+                ui.menu_button("View", |ui| self.view_menu(ui)).response,
+                ui.menu_button("Settings", |ui| self.settings_menu(ui))
+                    .response,
+            ];
+            switch_menu_on_hover(ui, &titles);
         });
+    }
+
+    fn settings_menu(&mut self, ui: &mut Ui) {
+        if ui.button("Preferences…").clicked() {
+            self.show_preferences = true;
+            ui.close();
+        }
+        if ui
+            .button("Edit Keymap…")
+            .on_hover_text(
+                "Opens keymap.json; saving it applies it. Entries replace the default \
+                 binding of their keys; \"command\": null removes one.",
+            )
+            .clicked()
+        {
+            self.edit_keymap();
+            ui.close();
+        }
+        ui.separator();
+        let s = &mut self.settings;
+        ui.checkbox(&mut s.backups, "Periodic backup and session snapshot")
+            .on_hover_text(
+                "Every few seconds, unsaved text is backed up; on exit the open \
+                 tabs are remembered and unsaved work comes back next time.",
+            );
+        ui.checkbox(&mut s.write_through, "Save files automatically")
+            .on_hover_text(
+                "Also save files that have a name, on the backup timer and when \
+                 the window loses focus.",
+            );
     }
 
     fn file_menu(&mut self, ui: &mut Ui) {
@@ -1626,6 +1633,25 @@ fn buffer_name(editor: &Editor, untitled: &HashMap<BufferId, String>, buffer: Bu
             || "untitled".to_owned(),
             |n| n.to_string_lossy().into_owned(),
         )
+}
+
+/// As in desktop menu bars: while one menu is open, hovering another title
+/// opens that one (egui's `MenuBar` opens its menus only on click).
+fn switch_menu_on_hover(ui: &Ui, titles: &[egui::Response]) {
+    let ctx = ui.ctx();
+    let ids: Vec<Id> = titles
+        .iter()
+        .map(egui::Popup::default_response_id)
+        .collect();
+    if !ids.iter().any(|id| egui::Popup::is_id_open(ctx, *id)) {
+        return;
+    }
+    for (title, id) in titles.iter().zip(ids) {
+        if title.hovered() && !egui::Popup::is_id_open(ctx, id) {
+            egui::Popup::open_id(ctx, id);
+            ctx.request_repaint();
+        }
+    }
 }
 
 fn canonical(path: &Path) -> PathBuf {
