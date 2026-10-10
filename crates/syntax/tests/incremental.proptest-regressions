@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc c86afe26157691a73dbc1c36b65310d3d9306a76c2c66e35749c3f413ac4d4df # shrinks to initial = "x{{xxr#\"fn {\"xx{{/*///*/*fn x漢r#\"r#\"漢fn {xx/*r#\"漢xxxx漢x/*/*漢r#\"x/*/*xx\nxx\n\n/*{/*\"#\n//{x/*\nx/*fn {//r#\"\nx\"x\n*/x\n{\"#xx{{/*\"#r#\"\n\n/*x/*/*\nfn fn /*fn /*x\"\nfn \nx/*x漢xr#\"xx/*{x漢/*\"r#\"fn /*x/*x/*r#\"/*x/*/*/*x漢xx/*\nxxxx/*/*/*\"/*fn /*xx{x{/*/*xfn {", steps = [Work(11), Delete(17648010179663234308, 2), Work(3), Delete(4106096081626284825, 8)], interval = 1, catch_up = 0
+cc 5453e700c3d7c60b0f444925aa16a6acbf066513e5cb89ea850eee2213f0512e # shrinks to initial = "fn fn /*/*x\"\"\"x\"\nxxxfn x\nfn xxfn xx/*xxxfn \"\n\"x\"xfn x/*xfn x/*/*/*/*x/*\"fn \"\nxfn \"xfn fn \"\"\"\"xfn {fn fn {x/*\"x/*xxfn \"fn x\nx/*fn /*fn fn \"xx/*fn x\"xx/*/*fn xxx/*xfn \nx漢xx\nr#\"fn \nxx\nfn fn fn {", steps = [Insert(7162413087, "{"), Delete(3020875430728320544, 7), Delete(11062682540450780601, 5), Insert(8938826920700085, "/*漢"), Insert(6869510566063601287, "fn fn {"), Insert(0, "\""), Insert(178854533599546, "{fn \""), Delete(6003099147749400737, 9), Work(9), Insert(863077691869180, "\n"), Work(7), Look(4764610687780438747)], interval = 4, catch_up = 0

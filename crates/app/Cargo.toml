@@ -1,0 +1,27 @@
+[package]
+name = "ochrepad"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+eframe = "=0.36.2"
+egui = "=0.36.2"
+egui_commonmark = { version = "=0.25.0", features = ["better_syntax_highlighting", "svg"] }
+egui_dock = { version = "=0.21.1", features = ["serde"] }
+image = { version = "=0.25.10", default-features = false, features = ["jpeg", "webp"] }
+notify = "=8.2.0"
+ochrepad-core = { version = "0.1.0", path = "../core" }
+ochrepad-fileio = { version = "0.1.0", path = "../fileio" }
+ochrepad-syntax = { version = "0.1.0", path = "../syntax" }
+rfd = "=0.17.2"
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.151"
+unicode-segmentation = "=1.13.3"
+
+[dev-dependencies]
+egui_kittest = { version = "=0.36.2", features = ["wgpu", "snapshot"] }
+tempfile = "=3.27.0"
+
+[features]
+# Expose the egui inspection protocol (PLAN 6); run with EGUI_INSPECTION=1.
+dev-inspect = ["eframe/inspection"]
