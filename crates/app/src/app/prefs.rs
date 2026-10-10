@@ -89,6 +89,9 @@ impl OchrepadApp {
         if self.applied_settings.as_ref() == Some(&self.settings) {
             return;
         }
+        if self.applied_settings.is_none() {
+            crate::theme::install(ui.ctx());
+        }
         self.applied_settings = Some(self.settings.clone());
         let s = self.settings.clone();
         self.editor.settings.tab_width = s.tab_width;
@@ -132,6 +135,8 @@ impl OchrepadApp {
         let mut open = true;
         let themes = ochrepad_syntax::Registry::theme_names();
         egui::Window::new("Preferences")
+            .pivot(Align2::CENTER_CENTER)
+            .default_pos(ui.ctx().content_rect().center())
             .open(&mut open)
             .resizable(false)
             .collapsible(false)

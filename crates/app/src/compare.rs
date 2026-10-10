@@ -202,19 +202,8 @@ impl Compare {
         })
     }
 
-    /// Draws the compare view filling `ui`.
-    pub fn show(
-        &mut self,
-        ui: &mut Ui,
-        editor: &Editor,
-        name: &dyn Fn(BufferId) -> String,
-        id: CompareId,
-    ) {
-        let now = ui.input(|i| i.time);
-        if let Some(wait) = self.refresh(editor, now) {
-            ui.ctx()
-                .request_repaint_after(std::time::Duration::from_secs_f64(wait));
-        }
+    /// The names, the summary and the previous/next buttons.
+    fn toolbar(&mut self, ui: &mut Ui, name: &dyn Fn(BufferId) -> String) {
         ui.horizontal(|ui| {
             ui.label(format!(
                 "{}  |  {}",
@@ -235,6 +224,24 @@ impl Compare {
                 self.next_change();
             }
         });
+    }
+
+    /// Draws the compare view filling `ui`.
+    pub fn show(
+        &mut self,
+        ui: &mut Ui,
+        editor: &Editor,
+        name: &dyn Fn(BufferId) -> String,
+        id: CompareId,
+    ) {
+        let now = ui.input(|i| i.time);
+        if let Some(wait) = self.refresh(editor, now) {
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_secs_f64(wait));
+        }
+        egui::Frame::new()
+            .inner_margin(egui::Margin::symmetric(8, 4))
+            .show(ui, |ui| self.toolbar(ui, name));
         let (Some(a), Some(b)) = (self.left.doc(editor), self.right.doc(editor)) else {
             ui.label("A compared file was closed.");
             return;
@@ -283,14 +290,15 @@ impl Compare {
         self.scroll = self.scroll.clamp(0.0, max_scroll);
 
         let visuals = ui.visuals().clone();
-        // Row tints, and stronger versions of the same hues for changed words
+        // Row tints (changed is blue, so it never looks like the ochre
+        // selection), and stronger versions of the same hues for changed words
         // and the overview strip. (Built from straight RGB: Color32 stores
         // premultiplied values, so a weak tint cannot be made strong again.)
         let alpha = if visuals.dark_mode { 45 } else { 60 };
         let hue = |kind: RowKind| match kind {
             RowKind::Removed => (225, 70, 70),
             RowKind::Added => (60, 185, 90),
-            _ => (230, 170, 40),
+            _ => (80, 145, 235),
         };
         let tint = |kind: RowKind, a: u8| {
             let (r, g, b) = hue(kind);
@@ -318,7 +326,7 @@ impl Compare {
             let gutter_w = (digits + 1) as f32 * cell_w + PAD;
             let gutter = Rect::from_min_size(half.min, Vec2::new(gutter_w, half.height()));
             let text_rect = Rect::from_min_max(Pos2::new(gutter.max.x, half.min.y), half.max);
-            painter.rect_filled(gutter, 0.0, visuals.faint_bg_color);
+            painter.rect_filled(gutter, 0.0, visuals.extreme_bg_color);
             let text_painter = painter.with_clip_rect(text_rect.intersect(painter.clip_rect()));
             let gutter_painter = painter.with_clip_rect(gutter);
             let x0 = text_rect.min.x + PAD - self.x_off;

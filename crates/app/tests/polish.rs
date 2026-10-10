@@ -287,3 +287,28 @@ fn our_own_saves_do_not_ask() {
     assert!(!asked, "saving our own file is not an external change");
     assert_eq!(std::fs::read_to_string(&file).unwrap(), "edit v1\n");
 }
+
+#[test]
+fn hovering_another_menu_title_switches_menus() {
+    let d = Dirs::new();
+    let mut h = app(&d);
+    h.get_by_label("Edit").hover();
+    h.run();
+    assert!(
+        h.query_by_label_contains("Undo").is_none(),
+        "hovering alone opens nothing"
+    );
+    h.get_by_label("File").click();
+    h.run();
+    h.get_by_label_contains("Open…");
+    h.get_by_label("Edit").hover();
+    h.run();
+    h.get_by_label_contains("Undo");
+    assert!(
+        h.query_by_label_contains("Open…").is_none(),
+        "the File menu closed"
+    );
+    h.get_by_label("Settings").hover();
+    h.run();
+    h.get_by_label("Preferences…");
+}

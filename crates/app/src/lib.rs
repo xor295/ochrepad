@@ -9,8 +9,10 @@ pub mod fonts;
 pub mod highlight;
 pub mod keymap;
 pub mod layout;
+pub mod logo;
 pub mod macro_ui;
 pub mod preview;
 pub mod settings;
+pub mod theme;
 
 pub use app::OchrepadApp;

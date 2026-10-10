@@ -307,3 +307,51 @@ fn selection_api_round_trip() {
     h.run();
     assert_eq!(sels(&h), vec![(0, 2)]);
 }
+
+/// Screen position on `line` in the line-number gutter.
+fn gutter_pos(h: &Harness<'_, OchrepadApp>, line: usize) -> Pos2 {
+    let p = cell_pos(h, line, 0.0);
+    Pos2::new(h.get_by_label("Editor: new 1").rect().min.x + 6.0, p.y)
+}
+
+#[test]
+fn clicking_a_line_number_selects_the_line() {
+    let mut h = with_text("one\ntwo\nthree\nfour");
+    let p = gutter_pos(&h, 1);
+    click(&mut h, p, Modifiers::NONE);
+    assert_eq!(sels(&h), vec![(4, 8)], "line 2 with its newline");
+    // Shift+click extends by whole lines, both ways.
+    let p = gutter_pos(&h, 2);
+    click(&mut h, p, Modifiers::SHIFT);
+    assert_eq!(sels(&h), vec![(4, 14)]);
+    // Back above the first line: lines 1 and 2, keeping line 2.
+    let p = gutter_pos(&h, 0);
+    click(&mut h, p, Modifiers::SHIFT);
+    assert_eq!(sels(&h), vec![(8, 0)]);
+    // From a plain caret, Shift+click extends from the caret.
+    let p = cell_pos(&h, 2, 2.0);
+    click(&mut h, p, Modifiers::NONE);
+    let p = gutter_pos(&h, 3);
+    click(&mut h, p, Modifiers::SHIFT);
+    assert_eq!(sels(&h), vec![(10, 18)]);
+    // The last line has no newline.
+    let p = gutter_pos(&h, 3);
+    click(&mut h, p, Modifiers::NONE);
+    assert_eq!(sels(&h), vec![(14, 18)]);
+}
+
+#[test]
+fn dragging_down_the_line_numbers_selects_lines() {
+    let mut h = with_text("one\ntwo\nthree\nfour");
+    let a = gutter_pos(&h, 0);
+    let b = gutter_pos(&h, 2);
+    press(&mut h, a, true, Modifiers::NONE);
+    h.step();
+    for i in 1..=4 {
+        h.event(Event::PointerMoved(a + (b - a) * (i as f32 / 4.0)));
+        h.step();
+    }
+    press(&mut h, b, false, Modifiers::NONE);
+    h.run();
+    assert_eq!(sels(&h), vec![(0, 14)]);
+}

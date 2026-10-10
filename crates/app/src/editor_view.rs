@@ -382,7 +382,12 @@ pub fn editor_view(
         );
         let mods = ui.input(|i| i.modifiers);
         let shift = mods.shift;
+        // A click on a line number selects the whole line (and dragging
+        // extends by lines); Shift+click extends the selection by lines.
+        let in_gutter = f.gutter.contains(p);
+        let prev = editor.view(view).map(|v| v.selections.primary().clone());
         let mode = match count {
+            _ if in_gutter => DragMode::Line,
             _ if mods.alt => {
                 let (line, col) = line_col_at(&f, scroll, x_off, p);
                 DragMode::Column(line, col)
@@ -408,7 +413,7 @@ pub fn editor_view(
                     head_col: col,
                 },
             );
-        } else if mods.command && count == 1 {
+        } else if mods.command && count == 1 && !in_gutter {
             // Ctrl+click adds a caret; it becomes the primary.
             let mut ranges = editor
                 .view(view)
@@ -436,15 +441,43 @@ pub fn editor_view(
             DragMode::Char | DragMode::Column(..) => {}
         }
         let sel = editor.view(view).map(|v| v.selections.primary().clone());
-        let range = sel.map_or((anchor, anchor), |s| {
+        let mut range = sel.clone().map_or((anchor, anchor), |s| {
             if mode == DragMode::Char {
                 (anchor, anchor)
             } else {
                 (s.start(), s.end())
             }
         });
+        if in_gutter
+            && shift
+            && let (Some(prev), Some(line)) = (prev, sel)
+        {
+            // Extend from where the previous selection started: if it is
+            // whole lines, from the line at its anchor end (as a line drag
+            // keeps the line it started on), else from its anchor.
+            let doc = doc_of(editor, buffer_id);
+            let at_line_start = |b: ByteOffset| b == doc.line_start(doc.line_of(b));
+            let whole_lines = !prev.is_empty()
+                && at_line_start(prev.start())
+                && (at_line_start(prev.end()) || prev.end() == doc.len());
+            let a = prev.anchor;
+            let (a0, a1) = if !whole_lines {
+                (a, a)
+            } else if a < prev.head {
+                (a, next_line_start(doc, doc.line_of(a)))
+            } else {
+                (doc.line_start(doc.line_of(ByteOffset(a.0 - 1))), a)
+            };
+            let new = if line.start() >= a0 {
+                Selection::new(a0, line.end().max(a1))
+            } else {
+                Selection::new(a1, line.start())
+            };
+            let _ = editor.apply(view, Action::SetSelections(SelectionSet::single(new)));
+            range = (a0, a1);
+        }
         // A Ctrl+click only adds a caret; it does not start a drag.
-        state.drag = (!(mods.command && count == 1 && !mods.alt)).then_some(Drag {
+        state.drag = (in_gutter || !(mods.command && count == 1 && !mods.alt)).then_some(Drag {
             mode,
             anchor: range,
         });
@@ -811,8 +844,8 @@ fn paint(
     let gutter_painter = painter.with_clip_rect(f.gutter.intersect(painter.clip_rect()));
 
     painter.rect_filled(f.content, 0.0, visuals.extreme_bg_color);
-    painter.rect_filled(f.gutter, 0.0, visuals.faint_bg_color);
-    painter.rect_filled(f.vbar.union(f.hbar), 0.0, visuals.faint_bg_color);
+    painter.rect_filled(f.gutter, 0.0, visuals.extreme_bg_color);
+    painter.rect_filled(f.vbar.union(f.hbar), 0.0, visuals.extreme_bg_color);
 
     let first = scroll.floor() as usize;
     let y0 = f.content.min.y - scroll.fract() as f32 * f.line_h;
@@ -827,11 +860,8 @@ fn paint(
         Some(s) if first < last => s.find_all(doc, doc.line_start(first)..doc.line_end(last - 1)),
         _ => Vec::new(),
     };
-    let match_bg = if visuals.dark_mode {
-        egui::Color32::from_rgba_unmultiplied(255, 190, 0, 55)
-    } else {
-        egui::Color32::from_rgba_unmultiplied(255, 200, 0, 110)
-    };
+    let match_bg = crate::theme::match_bg(&visuals);
+    let accent = crate::theme::accent(&visuals);
 
     for line in first..last {
         let y = y0 + (line - first) as f32 * f.line_h;
@@ -907,7 +937,7 @@ fn paint(
             (line + 1).to_string(),
             f.font.clone(),
             if has_caret {
-                text_color
+                accent
             } else {
                 visuals.weak_text_color()
             },
@@ -962,7 +992,7 @@ fn paint(
 
     // Scrollbars.
     let (v_thumb, h_thumb) = thumbs(f, scroll, x_off, h_max, state.max_width);
-    let thumb_color = visuals.widgets.inactive.bg_fill;
+    let thumb_color = visuals.widgets.hovered.bg_fill;
     painter.rect_filled(v_thumb.shrink(2.0), 3.0, thumb_color);
     if h_max > 0.0 {
         painter.rect_filled(h_thumb.shrink(2.0), 3.0, thumb_color);

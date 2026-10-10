@@ -6,3 +6,4 @@ Follow PLAN.md; current milestone is M13 (done on branch `m13-polish`, awaiting 
 - Emoji: clip each grapheme to its grid slot (`VisualCol` width × cell width). egui does not compose modifier/ZWJ sequences, so e.g. 👨‍👩‍👧 draws as several glyphs and would otherwise overflow.
 - Scrolling: do not use egui `ScrollArea` for the editor. Keep scroll as first visible line + fractional offset (f32 pixel offsets lose precision for large files).
 - The core crate lives in `crates/core` but the package is `ochrepad-core`, since a crate named `core` clashes with Rust's built-in `core`.
+- Windows exe icon: `winresource` (build-dependency, Windows hosts only, approved after M13). `build.rs` generates the .ico from `crates/app/src/logo.rs`, the same code that draws the window icon.

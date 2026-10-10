@@ -10,9 +10,7 @@ use egui::{
     Button, CentralPanel, Id, Key, KeyboardShortcut, Modal, Modifiers, Panel, Ui, ViewportCommand,
     WidgetText,
 };
-use egui_dock::{
-    AllowedSplits, DockArea, DockState, Node, NodePath, Split, Style, TabIndex, TabViewer,
-};
+use egui_dock::{AllowedSplits, DockArea, DockState, Node, NodePath, Split, TabIndex, TabViewer};
 use ochrepad_core::position::byte_to_visual_col;
 use ochrepad_core::{
     Action, Buffer, BufferId, CaseMode, Editor, FileMeta, LineEnding, SortOptions, ViewId,
@@ -663,8 +661,17 @@ impl OchrepadApp {
         }
         self.process_exit_queue();
 
-        Panel::top("menu").show(ui, |ui| self.menu_bar(ui));
-        Panel::bottom("status").show(ui, |ui| self.status_bar(ui));
+        let bar = |ui: &Ui, y: i8| {
+            egui::Frame::new()
+                .fill(ui.visuals().panel_fill)
+                .inner_margin(egui::Margin::symmetric(8, y))
+        };
+        Panel::top("menu")
+            .frame(bar(ui, 3))
+            .show(ui, |ui| self.menu_bar(ui));
+        Panel::bottom("status")
+            .frame(bar(ui, 2))
+            .show(ui, |ui| self.status_bar(ui));
         if self.find.open {
             let requests = Panel::bottom("find")
                 .show(ui, |ui| self.find.ui(ui, &mut self.editor, self.active))
@@ -699,7 +706,7 @@ impl OchrepadApp {
         let mut commands = Vec::new();
         let mut tab_rects = Vec::new();
         CentralPanel::no_frame().show(ui, |ui| {
-            let style = Style::from_egui(ui.style());
+            let style = crate::theme::dock_style(ui.style());
             let find_highlight = self.find.highlighter();
             let mut tabs = Tabs {
                 font_size: self.settings.font_size,
@@ -726,6 +733,8 @@ impl OchrepadApp {
                 .show_leaf_collapse_buttons(false)
                 .show_inside(ui, &mut tabs);
         });
+        self.paint_tab_accents(ui, &tab_rects);
+        let tab_rects: Vec<egui::Rect> = tab_rects.iter().map(|(_, r, _)| *r).collect();
         self.new_tab_on_tab_bar_double_click(ui, &tab_rects);
         if let Some((_, Tab::Editor(view))) = self.dock.find_active_focused()
             && *view != self.active
@@ -776,6 +785,28 @@ impl OchrepadApp {
             ui.ctx()
                 .send_viewport_cmd(ViewportCommand::Title(title.clone()));
             self.title = title;
+        }
+    }
+
+    /// The ochre line on each pane's active tab (egui_dock has no such
+    /// option), drawn over the tab bar after the dock.
+    fn paint_tab_accents(&mut self, ui: &Ui, tab_rects: &[(Tab, egui::Rect, egui::LayerId)]) {
+        // Before any pane was clicked, the focused one is the active editor's.
+        let focused = self
+            .dock
+            .find_active_focused()
+            .map_or(Tab::Editor(self.active), |(_, t)| *t);
+        for (_, leaf) in self.dock.iter_leaves() {
+            let Some(active) = leaf.tabs.get(leaf.active.0) else {
+                continue;
+            };
+            if let Some((_, rect, layer)) = tab_rects.iter().find(|(t, _, _)| t == active) {
+                crate::theme::paint_tab_accent(
+                    &ui.ctx().layer_painter(*layer),
+                    *rect,
+                    focused == *active,
+                );
+            }
         }
     }
 
@@ -877,42 +908,49 @@ impl OchrepadApp {
 
     fn menu_bar(&mut self, ui: &mut Ui) {
         egui::MenuBar::new().ui(ui, |ui| {
-            ui.menu_button("File", |ui| self.file_menu(ui));
-            ui.menu_button("Edit", |ui| self.edit_menu(ui));
-            ui.menu_button("Search", |ui| self.search_menu(ui));
-            ui.menu_button("Macro", |ui| self.macro_menu(ui));
-            ui.menu_button("Compare", |ui| self.compare_menu(ui));
-            ui.menu_button("View", |ui| self.view_menu(ui));
-            ui.menu_button("Settings", |ui| {
-                if ui.button("Preferences…").clicked() {
-                    self.show_preferences = true;
-                    ui.close();
-                }
-                if ui
-                    .button("Edit Keymap…")
-                    .on_hover_text(
-                        "Opens keymap.json; saving it applies it. Entries replace the default \
-                     binding of their keys; \"command\": null removes one.",
-                    )
-                    .clicked()
-                {
-                    self.edit_keymap();
-                    ui.close();
-                }
-                ui.separator();
-                let s = &mut self.settings;
-                ui.checkbox(&mut s.backups, "Periodic backup and session snapshot")
-                    .on_hover_text(
-                        "Every few seconds, unsaved text is backed up; on exit the open \
-                         tabs are remembered and unsaved work comes back next time.",
-                    );
-                ui.checkbox(&mut s.write_through, "Save files automatically")
-                    .on_hover_text(
-                        "Also save files that have a name, on the backup timer and when \
-                         the window loses focus.",
-                    );
-            });
+            let titles = [
+                ui.menu_button("File", |ui| self.file_menu(ui)).response,
+                ui.menu_button("Edit", |ui| self.edit_menu(ui)).response,
+                ui.menu_button("Search", |ui| self.search_menu(ui)).response,
+                ui.menu_button("Macro", |ui| self.macro_menu(ui)).response,
+                ui.menu_button("Compare", |ui| self.compare_menu(ui))
+                    .response,
+                ui.menu_button("View", |ui| self.view_menu(ui)).response,
+                ui.menu_button("Settings", |ui| self.settings_menu(ui))
+                    .response,
+            ];
+            switch_menu_on_hover(ui, &titles);
         });
+    }
+
+    fn settings_menu(&mut self, ui: &mut Ui) {
+        if ui.button("Preferences…").clicked() {
+            self.show_preferences = true;
+            ui.close();
+        }
+        if ui
+            .button("Edit Keymap…")
+            .on_hover_text(
+                "Opens keymap.json; saving it applies it. Entries replace the default \
+                 binding of their keys; \"command\": null removes one.",
+            )
+            .clicked()
+        {
+            self.edit_keymap();
+            ui.close();
+        }
+        ui.separator();
+        let s = &mut self.settings;
+        ui.checkbox(&mut s.backups, "Periodic backup and session snapshot")
+            .on_hover_text(
+                "Every few seconds, unsaved text is backed up; on exit the open \
+                 tabs are remembered and unsaved work comes back next time.",
+            );
+        ui.checkbox(&mut s.write_through, "Save files automatically")
+            .on_hover_text(
+                "Also save files that have a name, on the backup timer and when \
+                 the window loses focus.",
+            );
     }
 
     fn file_menu(&mut self, ui: &mut Ui) {
@@ -1470,7 +1508,7 @@ struct Tabs<'a> {
     visible: &'a mut HashMap<BufferId, Range<usize>>,
     commands: &'a mut Vec<TabCommand>,
     /// Tab buttons drawn this frame (to tell the empty tab bar apart).
-    tab_rects: &'a mut Vec<egui::Rect>,
+    tab_rects: &'a mut Vec<(Tab, egui::Rect, egui::LayerId)>,
 }
 
 impl TabViewer for Tabs<'_> {
@@ -1584,7 +1622,8 @@ impl TabViewer for Tabs<'_> {
     }
 
     fn on_tab_button(&mut self, tab: &mut Tab, response: &egui::Response) {
-        self.tab_rects.push(response.rect);
+        self.tab_rects
+            .push((*tab, response.rect, response.layer_id));
         // egui_dock gives tab buttons no accessibility info.
         let title = self.title(tab).text().to_owned();
         response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &title));
@@ -1626,6 +1665,25 @@ fn buffer_name(editor: &Editor, untitled: &HashMap<BufferId, String>, buffer: Bu
             || "untitled".to_owned(),
             |n| n.to_string_lossy().into_owned(),
         )
+}
+
+/// As in desktop menu bars: while one menu is open, hovering another title
+/// opens that one (egui's `MenuBar` opens its menus only on click).
+fn switch_menu_on_hover(ui: &Ui, titles: &[egui::Response]) {
+    let ctx = ui.ctx();
+    let ids: Vec<Id> = titles
+        .iter()
+        .map(egui::Popup::default_response_id)
+        .collect();
+    if !ids.iter().any(|id| egui::Popup::is_id_open(ctx, *id)) {
+        return;
+    }
+    for (title, id) in titles.iter().zip(ids) {
+        if title.hovered() && !egui::Popup::is_id_open(ctx, id) {
+            egui::Popup::open_id(ctx, id);
+            ctx.request_repaint();
+        }
+    }
 }
 
 fn canonical(path: &Path) -> PathBuf {
