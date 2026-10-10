@@ -566,6 +566,7 @@ impl OchrepadApp {
         self.visible.clear();
 
         let mut commands = Vec::new();
+        let mut tab_rects = Vec::new();
         CentralPanel::no_frame().show(ui, |ui| {
             let style = Style::from_egui(ui.style());
             let mut tabs = Tabs {
@@ -577,6 +578,7 @@ impl OchrepadApp {
                 focus_request: &mut self.focus_request,
                 visible: &mut self.visible,
                 commands: &mut commands,
+                tab_rects: &mut tab_rects,
             };
             DockArea::new(&mut self.dock)
                 .id(Id::new("ochrepad-dock"))
@@ -588,6 +590,7 @@ impl OchrepadApp {
                 .show_leaf_collapse_buttons(false)
                 .show_inside(ui, &mut tabs);
         });
+        self.new_tab_on_tab_bar_double_click(ui, &tab_rects);
         if let Some((_, view)) = self.dock.find_active_focused()
             && *view != self.active
         {
@@ -619,6 +622,35 @@ impl OchrepadApp {
             ui.ctx()
                 .send_viewport_cmd(ViewportCommand::Title(title.clone()));
             self.title = title;
+        }
+    }
+
+    /// Double-clicking the empty part of a pane's tab bar opens a new tab in
+    /// that pane, as in Notepad++. egui_dock has no hook for this, so the
+    /// click is matched against the tab-bar strip (leaf rect above its body)
+    /// minus the tab buttons drawn this frame.
+    fn new_tab_on_tab_bar_double_click(&mut self, ui: &Ui, tab_rects: &[egui::Rect]) {
+        let Some(p) = ui.input(|i| {
+            i.pointer
+                .button_double_clicked(egui::PointerButton::Primary)
+                .then(|| i.pointer.interact_pos())
+                .flatten()
+        }) else {
+            return;
+        };
+        if tab_rects.iter().any(|r| r.contains(p)) {
+            return;
+        }
+        let pane = self.dock.iter_leaves().find_map(|(path, leaf)| {
+            let bar = egui::Rect::from_min_max(
+                leaf.rect.min,
+                egui::pos2(leaf.rect.max.x, leaf.viewport.min.y),
+            );
+            bar.contains(p).then_some(path)
+        });
+        if let Some(path) = pane {
+            self.dock.set_focused_node_and_surface(path);
+            self.new_file();
         }
     }
 
@@ -916,6 +948,8 @@ struct Tabs<'a> {
     focus_request: &'a mut Option<ViewId>,
     visible: &'a mut HashMap<BufferId, Range<usize>>,
     commands: &'a mut Vec<TabCommand>,
+    /// Tab buttons drawn this frame (to tell the empty tab bar apart).
+    tab_rects: &'a mut Vec<egui::Rect>,
 }
 
 impl TabViewer for Tabs<'_> {
@@ -984,6 +1018,7 @@ impl TabViewer for Tabs<'_> {
     }
 
     fn on_tab_button(&mut self, tab: &mut ViewId, response: &egui::Response) {
+        self.tab_rects.push(response.rect);
         // egui_dock gives tab buttons no accessibility info.
         let title = self.title(tab).text().to_owned();
         response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &title));

@@ -242,3 +242,59 @@ fn each_view_keeps_its_own_scroll_position() {
     assert_eq!(first(clone), 0);
     assert!(first(original) > 400, "original still shows the end");
 }
+
+fn double_click(h: &mut Harness<'_, OchrepadApp>, pos: egui::Pos2) {
+    h.event(Event::PointerMoved(pos));
+    for _ in 0..2 {
+        for pressed in [true, false] {
+            h.event(Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: Modifiers::NONE,
+            });
+            h.step();
+        }
+    }
+    h.run();
+}
+
+#[test]
+fn double_clicking_the_empty_tab_bar_opens_a_new_tab() {
+    let mut h = harness();
+    let tab = h.get_by_label("new 1").rect();
+    // On the tab itself: nothing new.
+    double_click(&mut h, tab.center());
+    assert_eq!(names(&h), vec!["new 1"]);
+    // Let egui's multi-click window pass so the next pair is a fresh double-click.
+    h.run_steps(60);
+    // On the empty bar to its right: a new tab, which takes the keyboard.
+    double_click(&mut h, egui::pos2(tab.max.x + 150.0, tab.center().y));
+    assert_eq!(names(&h), vec!["new 1", "new 2"]);
+    assert_eq!(active_name(&h), "new 2");
+    typ(&mut h, "x");
+    assert_eq!(text_of(&h, h.state().active_view()), "x");
+}
+
+#[test]
+fn double_clicking_a_panes_tab_bar_adds_the_tab_to_that_pane() {
+    let mut h = harness();
+    let left = h.state().active_view();
+    h.state_mut().clone_to_other_view();
+    h.run();
+    // Double-click the left pane's empty tab bar.
+    let left_tab = h
+        .get_all_by_label("new 1")
+        .map(|n| n.rect())
+        .min_by(|a, b| a.min.x.total_cmp(&b.min.x))
+        .unwrap();
+    double_click(
+        &mut h,
+        egui::pos2(left_tab.max.x + 60.0, left_tab.center().y),
+    );
+    let new = h.state().active_view();
+    let app = h.state();
+    let pane_of = |v| app.dock.find_tab(&v).map(|p| p.node);
+    assert_eq!(pane_of(new), pane_of(left), "new tab is in the left pane");
+    assert_eq!(app.buffer_name(app.buffer_id()), "new 2");
+}
