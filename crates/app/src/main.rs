@@ -1,3 +1,7 @@
+// A GUI program on Windows: no console window behind it in release builds.
+// (`--bench` output still reaches a pipe or file, e.g. `> bench.txt`.)
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 use std::path::PathBuf;
 use std::time::Instant;
 
