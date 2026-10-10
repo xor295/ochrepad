@@ -1,0 +1,14 @@
+[package]
+name = "ochrepad-fileio"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+chardetng = "=1.0.0"
+encoding_rs = "=0.8.42"
+ochrepad-core = { version = "0.1.0", path = "../core" }
+tempfile = "=3.27.0"
+
+[dev-dependencies]
+proptest = "=1.11.0"
+tempfile = "=3.27.0"
