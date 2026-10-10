@@ -6,11 +6,13 @@ edition = "2024"
 [dependencies]
 eframe = "=0.36.2"
 egui = "=0.36.2"
-egui_dock = "=0.21.1"
+egui_dock = { version = "=0.21.1", features = ["serde"] }
 ochrepad-core = { version = "0.1.0", path = "../core" }
 ochrepad-fileio = { version = "0.1.0", path = "../fileio" }
 ochrepad-syntax = { version = "0.1.0", path = "../syntax" }
 rfd = "=0.17.2"
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.151"
 unicode-segmentation = "=1.13.3"
 
 [dev-dependencies]

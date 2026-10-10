@@ -68,6 +68,11 @@ fn main() -> eframe::Result {
             let mut app = OchrepadApp::new();
             if let Some(dir) = ochrepad_fileio::config_dir() {
                 app.set_macro_file(dir.join("macros.json"));
+                if let Some(data) = ochrepad_fileio::data_dir()
+                    && !bench
+                {
+                    app.set_storage(&dir, &data);
+                }
             }
             for path in paths {
                 let t = Instant::now();

@@ -121,8 +121,21 @@ impl Buffer {
 
     /// Records that the current state is what is on disk.
     pub fn mark_saved(&mut self) {
-        self.saved_revision = self.revision;
+        self.mark_saved_at(self.revision);
+    }
+
+    /// Records that `revision` is what is on disk (a background save of an
+    /// earlier state finished; the buffer stays dirty if it changed since).
+    pub fn mark_saved_at(&mut self, revision: Revision) {
+        self.saved_revision = revision;
         self.history.break_coalescing();
+    }
+
+    /// Marks the buffer as differing from disk, e.g. when its text was
+    /// restored from a backup snapshot.
+    pub fn mark_modified(&mut self) {
+        // No reachable revision has this value.
+        self.saved_revision = Revision::MAX;
     }
 
     /// How the lines changed since the last call, in the order the edits

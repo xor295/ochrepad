@@ -1,4 +1,4 @@
-Follow PLAN.md; current milestone is M9 (done on branch `m9-macros`, awaiting review; next is M10)
+Follow PLAN.md; current milestone is M10 (done on branch `m10-autosave`, awaiting review; next is M11)
 
 ## Decisions made after M0 (apply when building the editor widget, M3)
 

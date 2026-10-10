@@ -1034,6 +1034,7 @@ dependencies = [
  "duplicate",
  "egui",
  "paste",
+ "serde",
  "thiserror 2.0.21",
 ]
 
@@ -2503,6 +2504,8 @@ dependencies = [
  "ochrepad-fileio",
  "ochrepad-syntax",
  "rfd",
+ "serde",
+ "serde_json",
  "tempfile",
  "unicode-segmentation",
 ]

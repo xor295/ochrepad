@@ -24,6 +24,10 @@ use egui_dock::tab_viewer::OnCloseResponse;
 use crate::editor_view::{
     Decorations, EditorViewState, LineStyler, copy_selection, editor_id, editor_view,
 };
+mod autosave;
+
+pub use autosave::{AutosaveSettings, Session, SessionBuffer, SessionTab};
+
 use crate::find_panel::{FindPanel, FindRequest};
 use crate::highlight::Highlighting;
 use crate::keymap::Keymap;
@@ -80,6 +84,7 @@ pub struct OchrepadApp {
     pub highlighting: Highlighting,
     pub find: FindPanel,
     pub macros: Macros,
+    persist: autosave::Persist,
     /// Visible line range per buffer in the last frame, for highlighting.
     visible: HashMap<BufferId, Range<usize>>,
     /// Whether egui is in dark mode (last frame).
@@ -118,6 +123,7 @@ impl OchrepadApp {
             highlighting: Highlighting::new(Arc::new(ochrepad_syntax::Registry::load())),
             find: FindPanel::default(),
             macros: Macros::default(),
+            persist: autosave::Persist::default(),
             visible: HashMap::new(),
             dark: true,
         };
@@ -340,16 +346,10 @@ impl OchrepadApp {
         if !has_path {
             return self.save_buffer_as_dialog(buffer);
         }
-        let Some(b) = self.editor.buffer_mut(buffer) else {
+        let Some(path) = self.editor.buffer(buffer).and_then(|b| b.meta.path.clone()) else {
             return false;
         };
-        match fileio::save_buffer(b) {
-            Ok(()) => true,
-            Err(e) => {
-                self.message = Some(format!("Could not save:\n{e}"));
-                false
-            }
-        }
+        self.submit_save(buffer, path)
     }
 
     pub fn save_as(&mut self) -> bool {
@@ -366,27 +366,15 @@ impl OchrepadApp {
         self.save_buffer_to(buffer, &path)
     }
 
-    /// Saves the active buffer to `path` (Save As without the dialog).
+    /// Saves the active buffer to `path` (Save As without the dialog). The
+    /// write happens in the background; the buffer takes the path and is
+    /// marked clean when it finishes.
     pub fn save_to(&mut self, path: &Path) -> bool {
         self.save_buffer_to(self.buffer_id(), path)
     }
 
     fn save_buffer_to(&mut self, buffer: BufferId, path: &Path) -> bool {
-        let Some(b) = self.editor.buffer_mut(buffer) else {
-            return false;
-        };
-        match fileio::save_buffer_as(b, path) {
-            Ok(()) => {
-                self.untitled.remove(&buffer);
-                // A new name may mean a new language, as in Notepad++.
-                self.attach_highlighting(buffer);
-                true
-            }
-            Err(e) => {
-                self.message = Some(format!("Could not save {}:\n{e}", path.display()));
-                false
-            }
-        }
+        self.submit_save(buffer, path.to_path_buf())
     }
 
     // --- Closing -----------------------------------------------------------------
@@ -409,6 +397,10 @@ impl OchrepadApp {
     /// Starts the exit sequence: asks about each dirty buffer in tab order;
     /// cancelling any prompt cancels the exit. Tabs stay open throughout.
     pub fn request_exit(&mut self) {
+        if self.snapshots_active() {
+            self.exit_with_snapshots();
+            return;
+        }
         self.exiting = true;
         let mut dirty = Vec::new();
         for v in self.tabs() {
@@ -453,6 +445,8 @@ impl OchrepadApp {
             self.ask_about(buffer);
             return;
         }
+        self.write_session();
+        self.flush_disk();
         self.close_confirmed = true;
     }
 
@@ -469,6 +463,9 @@ impl OchrepadApp {
                 continue;
             };
             let last_view = self.editor.views_of(buffer).count() == 1;
+            if last_view && self.is_saving(buffer) {
+                return;
+            }
             if last_view && !self.may_discard(buffer) {
                 if self.confirming != Some(view) {
                     self.confirming = Some(view);
@@ -498,6 +495,8 @@ impl OchrepadApp {
         if let Some(buffer) = buffer
             && self.editor.views_of(buffer).next().is_none()
         {
+            // Closed without saving: its backup goes too.
+            self.delete_snapshot(buffer);
             self.editor.remove_buffer(buffer);
             self.discard_approved.remove(&buffer);
             self.highlighting.detach(buffer);
@@ -577,15 +576,12 @@ impl OchrepadApp {
 
     /// Draws the whole application into `ui`.
     pub fn show(&mut self, ui: &mut Ui) {
+        self.poll_disk(ui);
         self.shortcuts(ui);
         if ui.input(|i| i.viewport().close_requested()) && !self.close_confirmed {
             ui.ctx().send_viewport_cmd(ViewportCommand::CancelClose);
-            if self.editor.buffers().any(Buffer::is_dirty) {
-                if !self.exiting {
-                    self.request_exit();
-                }
-            } else {
-                self.close_confirmed = true;
+            if !self.exiting {
+                self.request_exit();
             }
         }
         if self.exit_queue.is_empty() || !self.exiting {
@@ -670,6 +666,7 @@ impl OchrepadApp {
             }
         }
 
+        self.autosave_tick(ui);
         self.dialogs(ui);
         if let Some((source, repeat)) = self.macros.dialogs(ui) {
             self.play_macro(source, repeat);
@@ -789,6 +786,19 @@ impl OchrepadApp {
             ui.menu_button("Search", |ui| self.search_menu(ui));
             ui.menu_button("Macro", |ui| self.macro_menu(ui));
             ui.menu_button("View", |ui| self.view_menu(ui));
+            ui.menu_button("Settings", |ui| {
+                let s = &mut self.persist.settings;
+                ui.checkbox(&mut s.snapshots, "Periodic backup and session snapshot")
+                    .on_hover_text(
+                        "Every few seconds, unsaved text is backed up; on exit the open \
+                         tabs are remembered and unsaved work comes back next time.",
+                    );
+                ui.checkbox(&mut s.write_through, "Save files automatically")
+                    .on_hover_text(
+                        "Also save files that have a name, on the backup timer and when \
+                         the window loses focus.",
+                    );
+            });
         });
     }
 

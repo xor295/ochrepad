@@ -11,6 +11,8 @@ use std::path::{Path, PathBuf};
 use encoding_rs::{EncoderResult, Encoding, UTF_8, UTF_16BE, UTF_16LE};
 use ochrepad_core::{Buffer, BufferId, Editor, FileMeta, LineEnding};
 
+pub mod worker;
+
 /// How many leading bytes are checked for NUL when deciding a file is binary.
 const BINARY_SNIFF_LEN: usize = 8 * 1024;
 
@@ -301,6 +303,12 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
 /// e.g. `%APPDATA%\ochrepad\config` on Windows.
 pub fn config_dir() -> Option<PathBuf> {
     directories::ProjectDirs::from("", "", "ochrepad").map(|d| d.config_dir().to_path_buf())
+}
+
+/// The per-user data directory (backup snapshots), e.g.
+/// `%APPDATA%\ochrepad\data` on Windows.
+pub fn data_dir() -> Option<PathBuf> {
+    directories::ProjectDirs::from("", "", "ochrepad").map(|d| d.data_dir().to_path_buf())
 }
 
 /// Reads a JSON file; `Ok(None)` if it does not exist.
