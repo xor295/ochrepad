@@ -1,6 +1,6 @@
 # ochrepad
 
-A Notepad++-style text editor in Rust on egui/eframe 0.36. Version 1 is feature-complete: every milestone of the original plan (M0–M13) is done. Work now is maintenance, polish and new features. `PLAN.md` is the original design brief, kept for its rationale; this file is the current guide.
+A Notepad++-style text editor in Rust on egui/eframe 0.36. Version 1 is feature-complete: every milestone of the original plan (M0–M13) is done. Work now is maintenance, polish and new features. `docs/design/PLAN.md` is the original design brief, kept for its rationale; this file is the current guide.
 
 ## Commands
 
@@ -91,5 +91,4 @@ Word wrap, code folding, RTL/bidi text, proportional editor fonts and ligatures,
 ## Open ideas (not started)
 
 - Allow only http(s) when a preview link is clicked (other schemes currently go to the browser).
-- Release profile size options (`strip`, `lto`) — measured 20.2 → 17.7 MB; the user hasn't decided.
 - macOS: system UI font (a variable font) and testing on Linux/macOS generally.
