@@ -25,8 +25,11 @@ use crate::editor_view::{
     Decorations, EditorViewState, LineStyler, copy_selection, editor_id, editor_view,
 };
 mod autosave;
+mod external;
+mod prefs;
 
 pub use autosave::{AutosaveSettings, Session, SessionBuffer, SessionTab};
+pub use external::DiskChange;
 
 use crate::compare::{Compare, CompareId, CompareSide, Compares};
 use crate::find_panel::{FindPanel, FindRequest};
@@ -34,6 +37,7 @@ use crate::highlight::Highlighting;
 use crate::keymap::Keymap;
 use crate::macro_ui::{MacroSource, Macros};
 use crate::preview::Previews;
+use crate::settings::{AppSettings, ThemeChoice};
 
 const NEW: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::N);
 const OPEN: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::O);
@@ -105,6 +109,17 @@ pub struct OchrepadApp {
     pub find: FindPanel,
     pub macros: Macros,
     persist: autosave::Persist,
+    external: external::External,
+    /// User settings; changes are applied every frame and saved.
+    pub settings: AppSettings,
+    saved_settings: Option<AppSettings>,
+    applied_settings: Option<AppSettings>,
+    settings_file: Option<PathBuf>,
+    keymap_file: Option<PathBuf>,
+    applied_theme: Option<ThemeChoice>,
+    applied_font: String,
+    font_choices: Vec<(String, PathBuf)>,
+    pub show_preferences: bool,
     /// Visible line range per buffer in the last frame, for highlighting.
     visible: HashMap<BufferId, Range<usize>>,
     /// Whether egui is in dark mode (last frame).
@@ -146,6 +161,16 @@ impl OchrepadApp {
             find: FindPanel::default(),
             macros: Macros::default(),
             persist: autosave::Persist::default(),
+            external: external::External::default(),
+            settings: AppSettings::default(),
+            saved_settings: None,
+            applied_settings: None,
+            settings_file: None,
+            keymap_file: None,
+            applied_theme: None,
+            applied_font: String::new(),
+            font_choices: crate::fonts::monospace_choices(),
+            show_preferences: false,
             visible: HashMap::new(),
             dark: true,
         };
@@ -302,6 +327,8 @@ impl OchrepadApp {
         .then_some(self.active);
         let buffer = self.editor.add_buffer(&decoded.text, decoded.meta);
         self.attach_highlighting(buffer);
+        self.record_disk_stamp(buffer);
+        self.settings.add_recent(canonical(path));
         self.add_tab(buffer);
         if let Some(old) = replace {
             self.close_now(old);
@@ -620,7 +647,10 @@ impl OchrepadApp {
 
     /// Draws the whole application into `ui`.
     pub fn show(&mut self, ui: &mut Ui) {
+        self.apply_settings(ui);
         self.poll_disk(ui);
+        self.watch_files(ui);
+        self.drag_and_drop(ui);
         self.shortcuts(ui);
         if ui.input(|i| i.viewport().close_requested()) && !self.close_confirmed {
             ui.ctx().send_viewport_cmd(ViewportCommand::CancelClose);
@@ -672,6 +702,7 @@ impl OchrepadApp {
             let style = Style::from_egui(ui.style());
             let find_highlight = self.find.highlighter();
             let mut tabs = Tabs {
+                font_size: self.settings.font_size,
                 compares: &mut self.compares,
                 previews: &mut self.previews,
                 find_highlight,
@@ -714,6 +745,8 @@ impl OchrepadApp {
 
         self.autosave_tick(ui);
         self.dialogs(ui);
+        self.external_dialog(ui);
+        self.preferences_window(ui);
         if let Some((source, repeat)) = self.macros.dialogs(ui) {
             self.play_macro(source, repeat);
         }
@@ -851,8 +884,24 @@ impl OchrepadApp {
             ui.menu_button("Compare", |ui| self.compare_menu(ui));
             ui.menu_button("View", |ui| self.view_menu(ui));
             ui.menu_button("Settings", |ui| {
-                let s = &mut self.persist.settings;
-                ui.checkbox(&mut s.snapshots, "Periodic backup and session snapshot")
+                if ui.button("Preferences…").clicked() {
+                    self.show_preferences = true;
+                    ui.close();
+                }
+                if ui
+                    .button("Edit Keymap…")
+                    .on_hover_text(
+                        "Opens keymap.json; saving it applies it. Entries replace the default \
+                     binding of their keys; \"command\": null removes one.",
+                    )
+                    .clicked()
+                {
+                    self.edit_keymap();
+                    ui.close();
+                }
+                ui.separator();
+                let s = &mut self.settings;
+                ui.checkbox(&mut s.backups, "Periodic backup and session snapshot")
                     .on_hover_text(
                         "Every few seconds, unsaved text is backed up; on exit the open \
                          tabs are remembered and unsaved work comes back next time.",
@@ -876,6 +925,7 @@ impl OchrepadApp {
         if item(ui, "Open…", "Ctrl+O") {
             self.open_dialog();
         }
+        self.recent_files_menu(ui);
         if item(ui, "Save", "Ctrl+S") {
             self.save();
         }
@@ -1241,28 +1291,18 @@ impl OchrepadApp {
             self.cycle_tab(false);
         }
         ui.separator();
-        let dark = ui.visuals().dark_mode;
-        if ui.radio(dark, "Dark mode").clicked() {
-            ui.ctx().set_theme(egui::ThemePreference::Dark);
-        }
-        if ui.radio(!dark, "Light mode").clicked() {
-            ui.ctx().set_theme(egui::ThemePreference::Light);
-        }
+        let theme = &mut self.settings.theme;
+        ui.radio_value(theme, ThemeChoice::System, "System theme");
+        ui.radio_value(theme, ThemeChoice::Dark, "Dark mode");
+        ui.radio_value(theme, ThemeChoice::Light, "Light mode");
         ui.menu_button("Syntax theme", |ui| {
             egui::ScrollArea::vertical()
                 .max_height(400.0)
                 .show(ui, |ui| {
-                    let current = self.highlighting.theme_override.clone();
-                    if ui
-                        .radio(current.is_none(), "Automatic (follows dark/light)")
-                        .clicked()
-                    {
-                        self.highlighting.theme_override = None;
-                    }
+                    let current = &mut self.settings.syntax_theme;
+                    ui.radio_value(current, None, "Automatic (follows dark/light)");
                     for name in ochrepad_syntax::Registry::theme_names() {
-                        if ui.radio(current.as_deref() == Some(name), name).clicked() {
-                            self.highlighting.theme_override = Some(name.to_owned());
-                        }
+                        ui.radio_value(current, Some(name.to_owned()), name);
                     }
                 });
         });
@@ -1417,6 +1457,7 @@ impl OchrepadApp {
 
 /// Draws the tabs: one editor per view, Markdown previews and comparisons.
 struct Tabs<'a> {
+    font_size: f32,
     compares: &'a mut Compares,
     previews: &'a mut Previews,
     find_highlight: Option<&'a ochrepad_core::Searcher>,
@@ -1507,6 +1548,7 @@ impl TabViewer for Tabs<'_> {
             buffer_name(self.editor, self.untitled, buffer)
         );
         let state = self.view_states.entry(view).or_default();
+        state.font_size = self.font_size;
         if *self.focus_request == Some(view) {
             state.request_focus();
             *self.focus_request = None;

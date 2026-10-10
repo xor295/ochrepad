@@ -47,6 +47,9 @@ pub enum Action {
     /// Like `InsertText`, but when there are several selections and the text
     /// has exactly that many lines, each selection gets one line.
     Paste(String),
+    /// Tab key: a tab character, or spaces to the next tab stop when the
+    /// editor is set to indent with spaces.
+    InsertTab,
     /// Newline plus the current line's leading whitespace (auto-indent).
     InsertNewline,
     DeleteBackward,

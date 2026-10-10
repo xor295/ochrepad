@@ -13,6 +13,7 @@ use crate::position::{
 };
 use std::ops::Range;
 
+use crate::editor::Settings;
 use crate::search::{SearchQuery, Searcher};
 use crate::selection::{Rectangle, Selection, SelectionSet};
 use crate::text::Document;
@@ -33,9 +34,23 @@ pub(crate) fn resolve(
     action: &Action,
     doc: &Document,
     sels: &SelectionSet,
-    tab_width: usize,
+    settings: &Settings,
 ) -> Resolved {
+    let tab_width = settings.tab_width;
     match action {
+        Action::InsertTab => {
+            // A tab character, or spaces up to the next tab stop.
+            edit_each(doc, sels, EditKind::Other, |_, s| {
+                let text = if settings.use_spaces {
+                    let tw = tab_width.max(1);
+                    let col = byte_to_visual_col(doc, s.start(), tab_width).0;
+                    " ".repeat(tw - col % tw)
+                } else {
+                    "\t".to_owned()
+                };
+                Edit::new(s.start(), s.end(), text)
+            })
+        }
         Action::InsertText(text) => {
             let kind = if sels.ranges().iter().all(Selection::is_empty)
                 && text != "\n"
@@ -115,7 +130,7 @@ pub(crate) fn resolve(
         Action::JoinLines => transform::join(doc, sels),
         Action::PasteBlock(text) => {
             if sels.len() > 1 || !sels.primary().is_empty() {
-                return resolve(&Action::Paste(text.clone()), doc, sels, tab_width);
+                return resolve(&Action::Paste(text.clone()), doc, sels, settings);
             }
             paste_block(doc, sels.primary().head, text, tab_width)
         }

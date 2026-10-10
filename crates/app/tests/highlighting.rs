@@ -84,9 +84,10 @@ fn language_picker_changes_the_language() {
 #[test]
 fn large_files_are_not_highlighted() {
     let mut h = harness();
-    h.state_mut().highlighting.size_limit = 16;
-    let _dir = open(&mut h, "big.rs", "fn main() { let x = 1; }\n");
-    h.get_by_label("Highlighting off: file larger than 16 bytes");
+    h.state_mut().settings.highlight_limit_mb = 1;
+    let big = "fn main() { let x = 1; }\n".repeat(45_000); // just over 1 MB
+    let _dir = open(&mut h, "big.rs", &big);
+    h.get_by_label("Highlighting off: file larger than 1 MB");
     assert_eq!(colors(&mut h, 0), 0);
 }
 

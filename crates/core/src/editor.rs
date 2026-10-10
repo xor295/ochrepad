@@ -10,6 +10,7 @@ use crate::action::{Action, ActionError};
 use crate::buffer::{Buffer, BufferId, FileMeta, LineEdit};
 use crate::changeset::{Bias, ChangeSet};
 use crate::history::Transaction;
+use crate::position::{ByteOffset, byte_to_line_col, line_col_to_byte};
 use crate::resolve::{Resolved, resolve, resolve_search};
 use crate::selection::{Selection, SelectionSet};
 use crate::view::{View, ViewId};
@@ -56,11 +57,16 @@ impl Clock for ManualClock {
 #[derive(Clone, Debug)]
 pub struct Settings {
     pub tab_width: usize,
+    /// The Tab key inserts spaces instead of a tab character.
+    pub use_spaces: bool,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { tab_width: 4 }
+        Self {
+            tab_width: 4,
+            use_spaces: false,
+        }
     }
 }
 
@@ -259,7 +265,7 @@ impl Editor {
             | Action::Replace { .. }
             | Action::ReplaceAll { .. }
             | Action::SelectAllMatches(_) => resolve_search(action, &buffer.doc, sels),
-            _ => Ok(resolve(action, &buffer.doc, sels, self.settings.tab_width)),
+            _ => Ok(resolve(action, &buffer.doc, sels, &self.settings)),
         })
     }
 
@@ -309,6 +315,62 @@ impl Editor {
                 self.set_selections(view, after);
                 self.map_other_views(buffer_id, view, &changes);
             }
+        }
+        Ok(())
+    }
+
+    /// Replaces a buffer's text with `text` read from disk (an external
+    /// change), as one undoable step; carets keep their line and column.
+    /// The buffer takes `meta` and is marked saved.
+    pub fn reload_buffer(
+        &mut self,
+        buffer: BufferId,
+        text: &str,
+        meta: FileMeta,
+    ) -> Result<(), ActionError> {
+        let view = self
+            .views_of(buffer)
+            .next()
+            .map(View::id)
+            .ok_or(ActionError::UnknownBuffer(buffer))?;
+        let b = self
+            .buffers
+            .get(&buffer)
+            .ok_or(ActionError::UnknownBuffer(buffer))?;
+        if b.doc.to_string() != text {
+            let new_doc = crate::text::Document::new(text);
+            let remap = |p: ByteOffset| {
+                let lc = byte_to_line_col(&b.doc, p);
+                let mut q = line_col_to_byte(&new_doc, lc);
+                while !new_doc.is_char_boundary(q) {
+                    q.0 -= 1;
+                }
+                q
+            };
+            let after = self.views[&view]
+                .selections
+                .map(|s| Selection::new(remap(s.anchor), remap(s.head)));
+            let changes = ChangeSet::new(
+                b.doc.len(),
+                vec![crate::changeset::Edit::new(
+                    ByteOffset(0),
+                    b.doc.len(),
+                    text,
+                )],
+            );
+            self.commit(
+                view,
+                buffer,
+                Resolved::Edit {
+                    changes,
+                    after,
+                    kind: crate::history::EditKind::Other,
+                },
+            )?;
+        }
+        if let Some(b) = self.buffers.get_mut(&buffer) {
+            b.meta = meta;
+            b.mark_saved();
         }
         Ok(())
     }

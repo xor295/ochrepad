@@ -1,4 +1,4 @@
-Follow PLAN.md; current milestone is M12 (done on branch `m12-diff`, awaiting review; next is M13)
+Follow PLAN.md; current milestone is M13 (done on branch `m13-polish`, awaiting review; this was the last milestone in the plan)
 
 ## Decisions made after M0 (apply when building the editor widget, M3)
 

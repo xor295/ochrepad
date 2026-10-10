@@ -102,6 +102,9 @@ impl OchrepadApp {
     /// Uses `config_dir` for `session.json` and `data_dir/backup` for
     /// snapshots, and restores the last session.
     pub fn set_storage(&mut self, config_dir: &Path, data_dir: &Path) {
+        self.load_config(config_dir);
+        // Backups follow the loaded settings before the session comes back.
+        self.persist.settings.snapshots = self.settings.backups;
         self.persist.session_file = Some(config_dir.join("session.json"));
         self.persist.backup_dir = Some(data_dir.join("backup"));
         self.restore_session();
@@ -193,17 +196,28 @@ impl OchrepadApp {
         b.mark_saved_at(revision);
         let renamed = b.meta.path.as_deref() != Some(path.as_path());
         if renamed {
-            b.meta.path = Some(path);
+            b.meta.path = Some(path.clone());
         }
         let clean = !b.is_dirty();
         if renamed {
             self.untitled.remove(&buffer);
             // A new name may mean a new language, as in Notepad++.
             self.attach_highlighting(buffer);
+            self.settings.add_recent(super::canonical(&path));
         }
         if clean {
             self.delete_snapshot(buffer);
         }
+        self.record_disk_stamp(buffer);
+        if self.is_keymap_file(&path) {
+            self.reload_keymap();
+        }
+    }
+
+    /// Writes a small config file (settings) in the background.
+    pub(super) fn write_config(&mut self, path: PathBuf, bytes: Vec<u8>) {
+        let tag = self.persist.worker.submit(Job::Write { path, bytes });
+        self.persist.pending.insert(tag, PendingJob::Other);
     }
 
     /// Removes `buffer`'s backup snapshot, if it has one.
@@ -443,6 +457,7 @@ impl OchrepadApp {
             };
             if let Some(b) = buffer {
                 self.attach_highlighting(b);
+                self.record_disk_stamp(b);
                 if let Some(language) = &sb.language {
                     let dark = self.dark;
                     if let Some(buf) = self.editor.buffer_mut(b) {

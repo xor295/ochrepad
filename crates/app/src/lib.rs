@@ -11,5 +11,6 @@ pub mod keymap;
 pub mod layout;
 pub mod macro_ui;
 pub mod preview;
+pub mod settings;
 
 pub use app::OchrepadApp;

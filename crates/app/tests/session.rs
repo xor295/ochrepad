@@ -33,7 +33,7 @@ fn dirs() -> Dirs {
 fn app(d: &Dirs) -> Harness<'static, OchrepadApp> {
     let mut app = OchrepadApp::new();
     app.set_storage(&d.config, &d.data);
-    app.autosave_settings().interval_secs = 0.5;
+    app.settings.autosave_secs = 0.5;
     let mut h = Harness::builder()
         .with_size(Vec2::new(900.0, 600.0))
         .with_step_dt(1.0 / 60.0)
@@ -242,7 +242,7 @@ fn write_through_saves_files_on_the_timer() {
     let a = d.files.join("a.txt");
     write(&a, "start");
     let mut h = app(&d);
-    h.state_mut().autosave_settings().write_through = true;
+    h.state_mut().settings.write_through = true;
     h.state_mut().open_path(&a);
     h.run();
     key(&mut h, Modifiers::COMMAND, Key::End);
@@ -275,7 +275,7 @@ fn typing_during_a_background_save_keeps_the_buffer_dirty() {
 fn with_backups_off_exit_asks_as_before() {
     let d = dirs();
     let mut h = app(&d);
-    h.state_mut().autosave_settings().snapshots = false;
+    h.state_mut().settings.backups = false;
     typ(&mut h, "unsaved");
     h.state_mut().request_exit();
     h.run();

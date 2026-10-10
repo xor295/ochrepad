@@ -52,6 +52,12 @@ fn motion() -> impl Strategy<Value = Motion> {
     ]
 }
 
+/// Short replacement text: Replace All over every character with a long
+/// replacement grows the document exponentially across a sequence.
+fn short_text() -> impl Strategy<Value = String> {
+    prop::collection::vec(prop::sample::select(PIECES), 0..3).prop_map(|v| v.concat())
+}
+
 fn search_query() -> impl Strategy<Value = ochrepad_core::SearchQuery> {
     let pattern = prop_oneof![
         prop::sample::select(PIECES).prop_map(str::to_owned),
@@ -110,8 +116,8 @@ fn action() -> impl Strategy<Value = Action> {
             Action::MoveLinesDown,
             Action::JoinLines,
         ]),
-        2 => (search_query(), text()).prop_map(|(query, replacement)| Action::ReplaceAll { query, replacement }),
-        1 => (search_query(), text()).prop_map(|(query, replacement)| Action::Replace { query, replacement }),
+        2 => (search_query(), short_text()).prop_map(|(query, replacement)| Action::ReplaceAll { query, replacement }),
+        1 => (search_query(), short_text()).prop_map(|(query, replacement)| Action::Replace { query, replacement }),
         1 => (search_query(), any::<bool>()).prop_map(|(query, backward)| Action::Find { query, backward }),
         1 => search_query().prop_map(Action::SelectAllMatches),
         2 => (0usize..12, 0usize..20, 0usize..12, 0usize..20).prop_map(|(al, ac, hl, hc)| {

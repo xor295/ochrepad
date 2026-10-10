@@ -322,3 +322,34 @@ fn set_selections_clamps_into_the_document() {
     // 1 is inside 'é' and snaps back to 0; 99 clamps to the end.
     assert_eq!(t.show(), "^éx|");
 }
+
+#[test]
+fn tab_inserts_a_tab_or_spaces_to_the_next_stop() {
+    let mut t = setup("|x");
+    t.apply(Action::InsertTab);
+    assert_eq!(t.show(), "\t|x");
+    let mut t = setup("|x\nab|y");
+    t.ed.settings.use_spaces = true;
+    t.apply(Action::InsertTab);
+    // Column 0 gets four spaces; column 2 gets two.
+    assert_eq!(t.show(), "    |x\nab  |y");
+}
+
+#[test]
+fn reload_replaces_the_text_keeps_the_caret_and_is_undoable() {
+    let mut t = setup("one\ntwo\nth|ree");
+    t.typ("X");
+    let id = t.buffer().id();
+    let meta = FileMeta {
+        encoding: "UTF-16LE".into(),
+        ..FileMeta::default()
+    };
+    t.ed.reload_buffer(id, "ONE\nTWO\nTHREE\nFOUR", meta)
+        .unwrap();
+    assert_eq!(t.show(), "ONE\nTWO\nTHR|EE\nFOUR", "same line and column");
+    assert!(!t.buffer().is_dirty());
+    assert_eq!(t.buffer().meta.encoding, "UTF-16LE");
+    t.apply(Action::Undo);
+    assert_eq!(t.text(), "one\ntwo\nthXree");
+    assert!(t.buffer().is_dirty());
+}

@@ -45,11 +45,78 @@ fn cjk_candidates() -> Vec<PathBuf> {
     out
 }
 
+/// Monospace fonts installed on this system, as (name, path).
+pub fn monospace_choices() -> Vec<(String, PathBuf)> {
+    let candidates: Vec<(&str, PathBuf)> = if cfg!(windows) {
+        let root = std::env::var_os("SystemRoot")
+            .map_or_else(|| PathBuf::from(r"C:\Windows"), PathBuf::from)
+            .join("Fonts");
+        [
+            ("Consolas", "consola.ttf"),
+            ("Cascadia Mono", "CascadiaMono.ttf"),
+            ("Cascadia Code", "CascadiaCode.ttf"),
+            ("Courier New", "cour.ttf"),
+            ("Lucida Console", "lucon.ttf"),
+        ]
+        .into_iter()
+        .map(|(n, f)| (n, root.join(f)))
+        .collect()
+    } else if cfg!(target_os = "macos") {
+        [
+            ("Menlo", "/System/Library/Fonts/Menlo.ttc"),
+            ("Monaco", "/System/Library/Fonts/Monaco.ttf"),
+            ("Courier New", "/Library/Fonts/Courier New.ttf"),
+        ]
+        .into_iter()
+        .map(|(n, f)| (n, PathBuf::from(f)))
+        .collect()
+    } else {
+        [
+            (
+                "DejaVu Sans Mono",
+                "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+            ),
+            (
+                "Liberation Mono",
+                "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf",
+            ),
+            (
+                "Noto Sans Mono",
+                "/usr/share/fonts/truetype/noto/NotoSansMono-Regular.ttf",
+            ),
+        ]
+        .into_iter()
+        .map(|(n, f)| (n, PathBuf::from(f)))
+        .collect()
+    };
+    candidates
+        .into_iter()
+        .filter(|(_, p)| p.exists())
+        .map(|(n, p)| (n.to_owned(), p))
+        .collect()
+}
+
 /// Installs egui's default fonts plus the first system CJK font found.
 /// Returns the CJK font's path, or `None` if there is none (CJK text then
 /// renders as boxes, still on the grid).
 pub fn install(ctx: &egui::Context) -> Option<PathBuf> {
+    install_with(ctx, None)
+}
+
+/// Like [`install`], with `monospace` (a font file) used for the editor
+/// ahead of the built-in monospace font.
+pub fn install_with(ctx: &egui::Context, monospace: Option<&std::path::Path>) -> Option<PathBuf> {
     let mut defs = FontDefinitions::default();
+    if let Some(bytes) = monospace.and_then(|p| std::fs::read(p).ok()) {
+        defs.font_data.insert(
+            "user-mono".to_owned(),
+            Arc::new(FontData::from_owned(bytes)),
+        );
+        defs.families
+            .entry(FontFamily::Monospace)
+            .or_default()
+            .insert(0, "user-mono".to_owned());
+    }
     let found = cjk_candidates()
         .into_iter()
         .find_map(|p| std::fs::read(&p).ok().map(|bytes| (p, bytes)));
