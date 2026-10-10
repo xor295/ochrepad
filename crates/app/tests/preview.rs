@@ -179,15 +179,68 @@ fn write_png(path: &Path) {
     std::fs::write(path, out).unwrap();
 }
 
+/// Writes `flag.jpg`, `flag.webp` and `flag.svg` into `dir`.
+fn write_other_formats(dir: &Path) {
+    let img = image::RgbImage::from_fn(32, 24, |_, y| {
+        if y < 12 {
+            image::Rgb([40, 170, 70])
+        } else {
+            image::Rgb([240, 200, 40])
+        }
+    });
+    img.save_with_format(dir.join("flag.jpg"), image::ImageFormat::Jpeg)
+        .unwrap();
+    img.save_with_format(dir.join("flag.webp"), image::ImageFormat::WebP)
+        .unwrap();
+    std::fs::write(
+        dir.join("flag.svg"),
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="32" height="24">
+<rect width="32" height="12" fill="#8040c0"/><circle cx="16" cy="18" r="6" fill="#40c0c0"/></svg>"##,
+    )
+    .unwrap();
+}
+
+#[test]
+fn jpeg_webp_and_svg_images_load() {
+    let tmp = tempfile::tempdir().unwrap();
+    write_other_formats(tmp.path());
+    let file = tmp.path().join("doc.md");
+    std::fs::write(&file, "![a](flag.jpg) ![b](flag.webp) ![c](flag.svg)\n").unwrap();
+    let mut h = harness(OchrepadApp::new());
+    h.state_mut().open_path(&file);
+    h.state_mut().open_preview();
+    h.run();
+    let base = ochrepad::preview::base_uri(Some(&file));
+    for name in ["flag.jpg", "flag.webp", "flag.svg"] {
+        let uri = format!("{base}{name}");
+        let mut ready = false;
+        for _ in 0..500 {
+            match h.ctx.try_load_image(&uri, egui::SizeHint::default()) {
+                Ok(egui::load::ImagePoll::Ready { image }) => {
+                    assert!(image.width() > 0 && image.height() > 0);
+                    ready = true;
+                    break;
+                }
+                Ok(egui::load::ImagePoll::Pending { .. }) => {
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                Err(e) => panic!("{name}: {e}"),
+            }
+        }
+        assert!(ready, "{name} did not load");
+    }
+}
+
 #[test]
 fn snapshot_with_a_relative_image() {
     let tmp = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(tmp.path().join("img")).unwrap();
     write_png(&tmp.path().join("img").join("flag.png"));
+    write_other_formats(&tmp.path().join("img"));
     let file = tmp.path().join("doc.md");
     std::fs::write(
         &file,
-        "# Title\n\nA list:\n\n- one\n- **two**\n\n![flag](img/flag.png)\n\n```rust\nfn main() {}\n```\n",
+        "# Title\n\nA list:\n\n- one\n- **two**\n\n![flag](img/flag.png) ![jpeg](img/flag.jpg) ![webp](img/flag.webp) ![svg](img/flag.svg)\n\n```rust\nfn main() {}\n```\n",
     )
     .unwrap();
     let mut h = Harness::builder()
