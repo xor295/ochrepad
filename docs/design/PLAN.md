@@ -54,12 +54,12 @@ A Cargo workspace. The `core` crate must not depend on egui, so the editing logi
 ochrepad/
   Cargo.toml            # [workspace]
   crates/
-    core/               # no egui, no filesystem: text, positions, selections,
+    ochrepad-core/      # no egui, no filesystem: text, positions, selections,
                         # actions, transactions, undo, macros, search, transforms, diff
-    syntax/             # syntect wrapper + highlight checkpoint cache
-    fileio/             # load/save, encoding & line-ending detection, atomic writes,
+    ochrepad-syntax/    # syntect wrapper + highlight checkpoint cache
+    ochrepad-fileio/    # load/save, encoding & line-ending detection, atomic writes,
                         # autosave snapshots, session restore, config dir
-    app/                # eframe binary: editor widget, dock/tabs, menus, panels,
+    ochrepad/           # eframe binary: editor widget, dock/tabs, menus, panels,
                         # markdown preview, diff view
 ```
 
@@ -143,7 +143,7 @@ Only lines in the viewport (plus a small margin) are laid out. Scrolling is virt
 
 ## 4. Dependencies
 
-Use `cargo add` so you get the current versions, then pin them. Do **not** rely on memory for egui APIs: egui 0.34 moved the app entry point from `Context` to a whole-app `Ui`, and much online example code predates that. Check docs.rs for the exact version in `Cargo.lock`.
+Use `cargo add` so you get the current versions, then pin them. Do **not** rely on memory for egui APIs: egui 0.34 moved the app entry point from `Context` to a whole-app `Ui`, and much online example code predates that. Check docs.rs for the exact version in `../../Cargo.lock`.
 
 The egui-ecosystem crates must all target the same egui minor version. At the time of writing that is egui/eframe 0.36, with `egui_dock` 0.21 and `egui_commonmark` 0.25. If one lags, hold everything at the newest egui version all of them support.
 

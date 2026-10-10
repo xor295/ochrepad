@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-ochrepad-core = { version = "0.1.0", path = "../core" }
+ochrepad-core = { version = "0.1.0", path = "../ochrepad-core" }
 syntect = { version = "=5.3.0", default-features = false, features = ["default-fancy"] }
 two-face = { version = "=0.5.2", default-features = false, features = ["syntect-default-fancy"] }
 

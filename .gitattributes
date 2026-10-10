@@ -1,2 +1,2 @@
-crates/fileio/tests/fixtures/** -text
+crates/ochrepad-fileio/tests/fixtures/** -text
 *.png binary

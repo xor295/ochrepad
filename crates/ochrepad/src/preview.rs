@@ -2,7 +2,8 @@
 //!
 //! A preview is bound to a buffer. It re-renders 200 ms after the buffer
 //! stops changing, and resolves relative image paths against the file's
-//! directory. Scroll syncing with the editor is out of scope for v1.
+//! directory. Images load only from this machine (see `safe_images`).
+//! Scroll syncing with the editor is out of scope for v1.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -57,6 +58,7 @@ impl Previews {
 
     /// Draws the preview of `buffer` filling `ui`.
     pub fn show(&mut self, ui: &mut Ui, buffer: &Buffer) {
+        crate::safe_images::install(ui);
         let p = self.map.entry(buffer.id()).or_default();
         let now = ui.input(|i| i.time);
         let revision = buffer.revision();
