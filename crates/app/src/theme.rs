@@ -1,7 +1,6 @@
 //! The look of ochrepad: warm neutral greys (charcoal in dark mode, paper in
-//! light mode) with ochre (#CC7722) as the one accent colour, a taller tab
-//! bar, and the logo (a pad with lines of text) for the menu bar and the
-//! window icon.
+//! light mode) with ochre (#CC7722) as the one accent colour, and a taller
+//! tab bar.
 
 use egui::epaint::Shadow;
 use egui::{
@@ -9,7 +8,11 @@ use egui::{
 };
 
 /// The accent colour.
-pub const OCHRE: Color32 = Color32::from_rgb(0xCC, 0x77, 0x22);
+pub const OCHRE: Color32 = Color32::from_rgb(
+    crate::logo::OCHRE[0],
+    crate::logo::OCHRE[1],
+    crate::logo::OCHRE[2],
+);
 
 /// The colours one theme is built from.
 struct Palette {
@@ -244,105 +247,11 @@ pub fn paint_tab_accent(painter: &Painter, tab: Rect, focused_pane: bool) {
     painter.rect_filled(line, CornerRadius::same(1), color);
 }
 
-// --- Logo ------------------------------------------------------------------------
-
-/// Cream lines of text on the pad.
-const PAPER: Color32 = Color32::from_rgb(0xFF, 0xF3, 0xE2);
-
-/// The logo in the unit square: the pad (rounded square, corner radius) and
-/// its lines of text (each a capsule: rect, radius).
-fn logo_shapes() -> ((Rect, f32), [(Rect, f32); 3]) {
-    let pad = (
-        Rect::from_min_max(Pos2::new(0.03, 0.03), Pos2::new(0.97, 0.97)),
-        0.24,
-    );
-    let h = 0.1;
-    let line = |y: f32, len: f32| {
-        (
-            Rect::from_min_size(Pos2::new(0.24, y - h / 2.0), Vec2::new(len, h)),
-            h / 2.0,
-        )
-    };
-    (pad, [line(0.34, 0.52), line(0.5, 0.36), line(0.66, 0.46)])
-}
-
-/// Draws the logo into `rect` (a square).
-pub fn paint_logo(painter: &Painter, rect: Rect) {
-    let map = |r: Rect| {
-        Rect::from_min_max(
-            rect.min + r.min.to_vec2() * rect.size(),
-            rect.min + r.max.to_vec2() * rect.size(),
-        )
-    };
-    let s = rect.width();
-    let (pad, lines) = logo_shapes();
-    painter.rect_filled(map(pad.0), pad.1 * s, OCHRE);
-    for (r, radius) in lines {
-        painter.rect_filled(map(r), radius * s, PAPER);
-    }
-}
-
-/// The logo as a window icon (`size` × `size` pixels, antialiased).
+/// The logo as a window icon (`size` × `size` pixels).
 pub fn icon(size: u32) -> egui::IconData {
-    fn inside((r, radius): (Rect, f32), p: Pos2) -> bool {
-        let inner = r.shrink(radius);
-        let dx = (inner.left() - p.x).max(p.x - inner.right()).max(0.0);
-        let dy = (inner.top() - p.y).max(p.y - inner.bottom()).max(0.0);
-        dx * dx + dy * dy <= radius * radius
-    }
-    const SS: u32 = 4; // samples per axis
-    let (pad, lines) = logo_shapes();
-    let mut rgba = Vec::with_capacity((size * size * 4) as usize);
-    for y in 0..size {
-        for x in 0..size {
-            let (mut on_pad, mut on_line) = (0u32, 0u32);
-            for sy in 0..SS {
-                for sx in 0..SS {
-                    let p = Pos2::new(
-                        (x as f32 + (sx as f32 + 0.5) / SS as f32) / size as f32,
-                        (y as f32 + (sy as f32 + 0.5) / SS as f32) / size as f32,
-                    );
-                    if inside(pad, p) {
-                        on_pad += 1;
-                        if lines.iter().any(|&l| inside(l, p)) {
-                            on_line += 1;
-                        }
-                    }
-                }
-            }
-            let n = (SS * SS) as f32;
-            let t = if on_pad == 0 {
-                0.0
-            } else {
-                on_line as f32 / on_pad as f32
-            };
-            let mix = |a: u8, b: u8| (f32::from(a) * (1.0 - t) + f32::from(b) * t).round() as u8;
-            rgba.extend_from_slice(&[
-                mix(OCHRE.r(), PAPER.r()),
-                mix(OCHRE.g(), PAPER.g()),
-                mix(OCHRE.b(), PAPER.b()),
-                (on_pad as f32 / n * 255.0).round() as u8,
-            ]);
-        }
-    }
     egui::IconData {
-        rgba,
+        rgba: crate::logo::rgba(size),
         width: size,
         height: size,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn icon_is_ochre_with_transparent_corners_and_cream_lines() {
-        let icon = icon(64);
-        assert_eq!(icon.rgba.len(), 64 * 64 * 4);
-        let px = |x: usize, y: usize| &icon.rgba[(y * 64 + x) * 4..(y * 64 + x) * 4 + 4];
-        assert_eq!(px(0, 0)[3], 0, "rounded corner is transparent");
-        assert_eq!(px(58, 40), &[OCHRE.r(), OCHRE.g(), OCHRE.b(), 255]);
-        assert_eq!(px(20, 22), &[PAPER.r(), PAPER.g(), PAPER.b(), 255]);
     }
 }

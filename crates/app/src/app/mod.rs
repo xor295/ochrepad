@@ -908,9 +908,6 @@ impl OchrepadApp {
 
     fn menu_bar(&mut self, ui: &mut Ui) {
         egui::MenuBar::new().ui(ui, |ui| {
-            let (logo, _) = ui.allocate_exact_size(egui::Vec2::splat(16.0), egui::Sense::hover());
-            crate::theme::paint_logo(ui.painter(), logo);
-            ui.add_space(2.0);
             let titles = [
                 ui.menu_button("File", |ui| self.file_menu(ui)).response,
                 ui.menu_button("Edit", |ui| self.edit_menu(ui)).response,

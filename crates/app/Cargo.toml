@@ -18,6 +18,10 @@ serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.151"
 unicode-segmentation = "=1.13.3"
 
+# Embeds the icon in the Windows executable (build.rs).
+[target.'cfg(windows)'.build-dependencies]
+winresource = { version = "=0.1.31", default-features = false }
+
 [dev-dependencies]
 egui_kittest = { version = "=0.36.2", features = ["wgpu", "snapshot"] }
 tempfile = "=3.27.0"
