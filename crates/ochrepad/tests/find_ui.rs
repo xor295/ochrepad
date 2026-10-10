@@ -5,6 +5,8 @@ use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
 use ochrepad::OchrepadApp;
 
+mod util;
+
 fn with_text(text: &str) -> Harness<'static, OchrepadApp> {
     let mut h = Harness::builder()
         .with_size(Vec2::new(1000.0, 600.0))
@@ -167,5 +169,5 @@ fn matches_are_highlighted_on_screen() {
     key(&mut h, Modifiers::COMMAND, Key::Home);
     find_for(&mut h, "total");
     key(&mut h, Modifiers::NONE, Key::Enter);
-    h.snapshot("find_highlights");
+    util::snapshot(&mut h, "find_highlights");
 }
