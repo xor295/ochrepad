@@ -1,3 +1,18 @@
 [workspace]
 resolver = "3"
 members = ["crates/*"]
+
+# Shared by every crate. The four crates are released together with one
+# version; set it here.
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT"
+repository = "https://github.com/xor295/ochrepad"
+
+# The internal crates, pinned to the exact version they are released with.
+[workspace.dependencies]
+ochrepad-core = { version = "=0.1.0", path = "crates/ochrepad-core" }
+ochrepad-fileio = { version = "=0.1.0", path = "crates/ochrepad-fileio" }
+ochrepad-syntax = { version = "=0.1.0", path = "crates/ochrepad-syntax" }
