@@ -1,10 +1,16 @@
 [package]
 name = "ochrepad-syntax"
-version = "0.1.0"
-edition = "2024"
+description = "Incremental syntect highlighting for the ochrepad text editor (internal; no stable API)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords = ["syntax-highlighting", "syntect"]
+categories = ["text-editors"]
 
 [dependencies]
-ochrepad-core = { version = "0.1.0", path = "../ochrepad-core" }
+ochrepad-core.workspace = true
 syntect = { version = "=5.3.0", default-features = false, features = ["default-fancy"] }
 two-face = { version = "=0.5.2", default-features = false, features = ["syntect-default-fancy"] }
 

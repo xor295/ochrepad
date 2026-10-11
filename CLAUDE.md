@@ -25,12 +25,15 @@ The release exe is locked while it runs, so `cargo build --release` fails with "
 
 ## Releasing
 
-`.github/workflows/release.yml` runs when a `v*` tag is pushed. It checks the tag matches the version in `crates/ochrepad/Cargo.toml`, builds `ochrepad-vX.Y.Z-windows-x86_64.zip` (windows-latest) and `ochrepad-vX.Y.Z-linux-x86_64.tar.gz` (ubuntu-22.04, for older glibc), each with README, LICENSE and CHANGELOG; attests their build provenance; and creates a **draft** GitHub release with `SHA256SUMS.txt` and the version's `CHANGELOG.md` section as notes. Steps for a release:
+`.github/workflows/release.yml` runs when a `v*` tag is pushed. It checks the tag matches the version in the root `Cargo.toml`, builds `ochrepad-vX.Y.Z-windows-x86_64.zip` (windows-latest) and `ochrepad-vX.Y.Z-linux-x86_64.tar.gz` (ubuntu-22.04, for older glibc), each with README, LICENSE and CHANGELOG; attests their build provenance; and creates a **draft** GitHub release with `SHA256SUMS.txt` and the version's `CHANGELOG.md` section as notes. Steps for a release:
 
-1. Set `version` in all four crates' `Cargo.toml` (they move together) and run `cargo check` to update `Cargo.lock`.
+1. The four crates share one version. Set it in the root `Cargo.toml` twice: `[workspace.package] version`, and the `=X.Y.Z` pins on the internal crates in `[workspace.dependencies]`. Then run `cargo check` to update `Cargo.lock`.
 2. In `CHANGELOG.md`, move the entries from `[Unreleased]` into a `## [X.Y.Z] - YYYY-MM-DD` section, and add its compare link at the bottom.
 3. Commit, merge to `main`, then `git tag vX.Y.Z && git push origin vX.Y.Z` (the user pushes).
 4. Check the draft release's files and notes on GitHub, then publish it.
+5. Publish to crates.io from the tagged commit: `cargo publish --workspace --dry-run`, then `cargo publish --workspace` (the user runs it). This publishes the internal crates first. A version can be yanked but never replaced, so check the dry run.
+
+Package metadata (description, license, repository, keywords) lives in `[workspace.package]` and each crate's `[package]`. The internal crates have to be on crates.io for `cargo install ochrepad` to work. Their descriptions say they have no stable API.
 
 Keep `CHANGELOG.md`'s `[Unreleased]` section up to date as user-visible changes land; it is written for people downloading the release. Releases are unsigned (see Open ideas).
 
