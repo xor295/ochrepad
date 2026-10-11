@@ -50,6 +50,23 @@ A fast, native text editor in the spirit of Notepad++, written in Rust with
 Not included (by design, for now): word wrap, code folding, right-to-left
 text, proportional fonts, plugins and language servers.
 
+## Download
+
+ochrepad runs on Windows and Linux (x86-64). Download the latest version from
+the [releases page](https://github.com/xor295/ochrepad/releases):
+
+- **Windows**: `ochrepad-<version>-windows-x86_64.zip`. Unzip it anywhere and
+  run `ochrepad.exe`; there is nothing to install. The program isn't signed
+  yet, so the first time, Windows SmartScreen may say it "protected your
+  PC": choose **More info**, then **Run anyway**.
+- **Linux**: `ochrepad-<version>-linux-x86_64.tar.gz`. Extract it and run
+  `ochrepad`. It needs an X11 or Wayland desktop with Vulkan or OpenGL
+  drivers, and runs on distributions as old as Ubuntu 22.04.
+
+Each release lists SHA-256 checksums, and every download carries a signed
+record that it was built by this repository's release workflow; the release
+notes say how to check it.
+
 ## Building
 
 You need a recent stable [Rust toolchain](https://rustup.rs) (1.88 or newer).
@@ -81,8 +98,8 @@ sudo apt-get install libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev lib
 To run it you need an X11 or Wayland desktop with Vulkan or OpenGL drivers.
 File dialogs go through the XDG desktop portal.
 
-ochrepad is developed on Windows 11. CI builds and tests it on Windows, Linux
-and macOS, but it has had little hands-on use on Linux and macOS so far.
+ochrepad is developed on Windows 11; CI builds and tests every change on
+Windows and Linux. macOS is not supported.
 
 ## Keyboard shortcuts
 
@@ -115,10 +132,10 @@ size above which highlighting is turned off.
 
 Everything is stored as JSON in your configuration folder:
 
-| | Windows | Linux | macOS |
-|---|---|---|---|
-| Settings, keymap, macros, session | `%APPDATA%\ochrepad\config` | `~/.config/ochrepad` | `~/Library/Application Support/ochrepad` |
-| Backups of unsaved work | `%APPDATA%\ochrepad\data\backup` | `~/.local/share/ochrepad/backup` | `~/Library/Application Support/ochrepad/backup` |
+| | Windows | Linux |
+|---|---|---|
+| Settings, keymap, macros, session | `%APPDATA%\ochrepad\config` | `~/.config/ochrepad` |
+| Backups of unsaved work | `%APPDATA%\ochrepad\data\backup` | `~/.local/share/ochrepad/backup` |
 
 - `settings.json`: the preferences and the recent files list.
 - `keymap.json`: your key bindings. **Settings > Edit Keymap** opens it,

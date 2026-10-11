@@ -30,8 +30,8 @@ command it runs:
 ### Writing keys
 
 Modifiers come first, joined with `+`: `Ctrl`, `Alt` and `Shift`, in any
-order, any case. `Cmd` and `Command` mean the same as `Ctrl` (they are the
-Command key on macOS). Then one key:
+order, any case (`Cmd` and `Command` are also accepted for `Ctrl`). Then
+one key:
 
 | | Names |
 |---|---|

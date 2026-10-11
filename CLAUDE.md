@@ -19,9 +19,20 @@ cargo run -p ochrepad --features dev-inspect                  # egui inspection 
 
 A change is done when fmt, clippy (`-D warnings`) and `cargo test --workspace` pass. Commit at green; the user pushes.
 
-CI (`.github/workflows/ci.yml`) runs the same checks on Windows, Linux and macOS for pull requests and pushes to `main`. Failed snapshot tests upload their `.new.png`/`.diff.png` images as an artifact. Linux and macOS are only exercised there, so check those runs after platform-sensitive changes (paths, fonts, file watching, rendering). To catch compile errors locally first: `cargo clippy --workspace --all-targets --target x86_64-unknown-linux-gnu -- -D warnings` (and `aarch64-apple-darwin`); both targets are installed. Actions are pinned to commit SHAs with the tag in a comment; when updating one, pick a release at least two weeks old.
+Supported platforms are Windows and Linux (x86-64); macOS is not supported. CI (`.github/workflows/ci.yml`) runs the same checks on both for pull requests and pushes to `main`. Failed snapshot tests upload their `.new.png`/`.diff.png` images as an artifact. Linux is only exercised there, so check that run after platform-sensitive changes (paths, fonts, file watching, rendering). To catch Linux compile errors locally first: `cargo clippy --workspace --all-targets --target x86_64-unknown-linux-gnu -- -D warnings` (the target is installed). Actions are pinned to commit SHAs with the tag in a comment; when updating one, pick a release at least two weeks old.
 
 The release exe is locked while it runs, so `cargo build --release` fails with "Access is denied" if the user has ochrepad open. That is not a build error.
+
+## Releasing
+
+`.github/workflows/release.yml` runs when a `v*` tag is pushed. It checks the tag matches the version in `crates/ochrepad/Cargo.toml`, builds `ochrepad-vX.Y.Z-windows-x86_64.zip` (windows-latest) and `ochrepad-vX.Y.Z-linux-x86_64.tar.gz` (ubuntu-22.04, for older glibc), each with README, LICENSE and CHANGELOG; attests their build provenance; and creates a **draft** GitHub release with `SHA256SUMS.txt` and the version's `CHANGELOG.md` section as notes. Steps for a release:
+
+1. Set `version` in all four crates' `Cargo.toml` (they move together) and run `cargo check` to update `Cargo.lock`.
+2. In `CHANGELOG.md`, move the entries from `[Unreleased]` into a `## [X.Y.Z] - YYYY-MM-DD` section, and add its compare link at the bottom.
+3. Commit, merge to `main`, then `git tag vX.Y.Z && git push origin vX.Y.Z` (the user pushes).
+4. Check the draft release's files and notes on GitHub, then publish it.
+
+Keep `CHANGELOG.md`'s `[Unreleased]` section up to date as user-visible changes land; it is written for people downloading the release. Releases are unsigned (see Open ideas).
 
 ## Layout
 
@@ -57,7 +68,7 @@ These are load-bearing. Check with the user before changing any of them.
 
 ## Settled decisions
 
-- **Fonts**: a CJK fallback font is loaded from the system (else tofu stays on the grid). Menus use the system UI font (Segoe UI on Windows; Linux candidates; egui's font on macOS). The editor font is a choice among installed monospace fonts, or the built-in Hack.
+- **Fonts**: a CJK fallback font is loaded from the system (else tofu stays on the grid). Menus use the system UI font (Segoe UI on Windows; a list of common sans fonts on Linux). The editor font is a choice among installed monospace fonts, or the built-in Hack.
 - **Regex**: Rust `regex` syntax through `regex-cursor` (no lookaround or backreferences), documented in `docs/find-and-replace.md`. A `fancy-regex` fallback can be added behind the `Matcher` trait.
 - **Look** (`theme.rs`): warm charcoal and paper palettes with ochre `#CC7722` accents (caret, selection, focus, current line number, active tab line, hovered split divider). Find matches are teal and changed compare rows blue, so they never look like the selection. The tab bar is 32 px tall.
 - **Logo**: `logo.rs` is dependency-free and shared by the window icon and `build.rs` (included by path), which generates the `.ico` for `winresource`. A failed embed is a warning, not an error.
@@ -93,4 +104,5 @@ Word wrap, code folding, RTL/bidi text, proportional editor fonts and ligatures,
 ## Open ideas (not started)
 
 - Allow only http(s) when a preview link is clicked (other schemes currently go to the browser).
-- macOS: system UI font (a variable font) and testing on Linux/macOS generally.
+- Linux packaging beyond the tarball: a `.desktop` file and icon, AppImage or .deb.
+- Code signing: SignPath Foundation (free for open source) or Azure Artifact Signing; apply after the first release.

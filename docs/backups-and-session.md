@@ -15,7 +15,6 @@ unsaved changes is copied to the backup folder:
 |---|---|
 | Windows | `%APPDATA%\ochrepad\data\backup` |
 | Linux | `~/.local/share/ochrepad/backup` |
-| macOS | `~/Library/Application Support/ochrepad/backup` |
 
 A backup is two files: the text (`<id>.txt`, UTF-8) and its details
 (`<id>.json`: the file's path, encoding, line endings and language). Only tabs
@@ -65,8 +64,7 @@ endings, and is replaced in one step (see [File handling](file-handling.md)).
 
 The list of open tabs and the layout are kept in `session.json` in the
 configuration folder (`%APPDATA%\ochrepad\config` on Windows,
-`~/.config/ochrepad` on Linux, `~/Library/Application Support/ochrepad` on
-macOS). It is updated on the backup timer and when ochrepad exits.
+`~/.config/ochrepad` on Linux). It is updated on the backup timer and when ochrepad exits.
 Markdown previews and comparisons are not part of the session; reopen them
 from the menus.
 

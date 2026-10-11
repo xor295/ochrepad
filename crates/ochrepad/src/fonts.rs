@@ -22,15 +22,6 @@ fn cjk_candidates() -> Vec<PathBuf> {
         ] {
             out.push(root.join("Fonts").join(name));
         }
-    } else if cfg!(target_os = "macos") {
-        for p in [
-            "/System/Library/Fonts/PingFang.ttc",
-            "/System/Library/Fonts/Hiragino Sans GB.ttc",
-            "/System/Library/Fonts/AppleSDGothicNeo.ttc",
-            "/Library/Fonts/Arial Unicode.ttf",
-        ] {
-            out.push(PathBuf::from(p));
-        }
     } else {
         for p in [
             "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
@@ -47,14 +38,12 @@ fn cjk_candidates() -> Vec<PathBuf> {
 }
 
 /// The system UI font (static fonts only), used ahead of egui's built-in
-/// proportional font. None on macOS: its UI font is a variable font.
+/// proportional font.
 fn ui_font_candidates() -> Vec<PathBuf> {
     if cfg!(windows) {
         let root = std::env::var_os("SystemRoot")
             .map_or_else(|| PathBuf::from(r"C:\Windows"), PathBuf::from);
         vec![root.join("Fonts").join("segoeui.ttf")]
-    } else if cfg!(target_os = "macos") {
-        Vec::new()
     } else {
         [
             "/usr/share/fonts/truetype/inter/Inter-Regular.ttf",
@@ -85,15 +74,6 @@ pub fn monospace_choices() -> Vec<(String, PathBuf)> {
         ]
         .into_iter()
         .map(|(n, f)| (n, root.join(f)))
-        .collect()
-    } else if cfg!(target_os = "macos") {
-        [
-            ("Menlo", "/System/Library/Fonts/Menlo.ttc"),
-            ("Monaco", "/System/Library/Fonts/Monaco.ttf"),
-            ("Courier New", "/Library/Fonts/Courier New.ttf"),
-        ]
-        .into_iter()
-        .map(|(n, f)| (n, PathBuf::from(f)))
         .collect()
     } else {
         [
