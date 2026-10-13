@@ -20,6 +20,12 @@ people downloading the release.
 - Ctrl+F and Ctrl+H select the search text, so you can type a new search
   straight away even when the find panel is already open.
 
+### Fixed
+
+- Symbols such as ✓ and ✗ showed as boxes. A system symbol font (Segoe UI
+  Symbol on Windows, DejaVu Sans Mono on Linux) is now used for characters
+  the editor font lacks.
+
 ## [0.1.0] - 2026-10-10
 
 The first release, for Windows and Linux.

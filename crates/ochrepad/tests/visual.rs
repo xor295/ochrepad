@@ -111,7 +111,7 @@ fn render_with_system_fonts() {
     let font = ochrepad::fonts::install(&h.ctx);
     println!("CJK font: {font:?}");
     h.event(Event::Paste(format!(
-        "{SAMPLE}漢字かな交じり|after\n\tx漢x\n"
+        "{SAMPLE}漢字かな交じり|after\n\tx漢x ✓ ✗ → ≠\n"
     )));
     h.run();
     set(&mut h, &[(0, 2), (60, 60), (100, 108)]);
