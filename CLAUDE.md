@@ -1,6 +1,6 @@
 # ochrepad
 
-A Notepad++-style text editor in Rust on egui/eframe 0.36. Version 1 is feature-complete: every milestone of the original plan (M0–M13) is done. Work now is maintenance, polish and new features. `docs/design/PLAN.md` is the original design brief, kept for its rationale; this file is the current guide.
+A Notepad++-style text editor in Rust on egui/eframe 0.36. Version 1 is feature-complete: every milestone of the original plan (M0–M13) is done. Work now is maintenance, polish and new features. `docs/design/PLAN_v0.1.0.md` is the original design brief, kept for its rationale; this file is the current guide.
 
 ## Commands
 
