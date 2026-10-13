@@ -1,7 +1,9 @@
 # Find and replace
 
 Open the panel with **Ctrl+F** (find) or **Ctrl+H** (find and replace). A one-line
-selection becomes the search text. **Enter** / **F3** finds the next match,
+selection becomes the search text. The search text is selected each time, so
+pressing **Ctrl+F** and typing always starts a new search, even if the panel
+was already open. **Enter** / **F3** finds the next match,
 **Shift+Enter** / **Shift+F3** the previous one, **Esc** closes the panel.
 
 Options:
@@ -18,6 +20,13 @@ Options:
 
 **Select All** turns every match into a selection, so typing edits them all.
 **Replace All** is a single undo step.
+
+## Smart highlighting
+
+Selecting text on one line highlights every other place the same text appears,
+as in Notepad++, so you can scan for it without opening the panel. The match is
+exact: case-sensitive, and not limited to whole words. Blank selections and
+selections over several lines are not highlighted.
 
 ## Regular expression dialect
 

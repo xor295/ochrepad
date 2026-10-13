@@ -5,7 +5,8 @@ use egui::{
     Stroke, Ui, Vec2, WidgetInfo, WidgetType,
 };
 use ochrepad_core::{
-    Action, ByteOffset, Document, Editor, Motion, Selection, SelectionSet, ViewId,
+    Action, ByteOffset, Document, Editor, Motion, SearchOptions, SearchQuery, Searcher, Selection,
+    SelectionSet, ViewId,
 };
 use ochrepad_fileio::normalize_line_endings;
 
@@ -59,6 +60,8 @@ pub struct EditorViewState {
     max_width: f32,
     reveal_caret: bool,
     request_focus: bool,
+    /// The selected text and its searcher, for smart highlighting.
+    smart: Option<(String, Option<Searcher>)>,
 }
 
 impl Default for EditorViewState {
@@ -74,6 +77,7 @@ impl Default for EditorViewState {
             max_width: 0.0,
             reveal_caret: true,
             request_focus: false,
+            smart: None,
         }
     }
 }
@@ -665,6 +669,45 @@ pub(crate) fn paint_line_text(
 }
 
 /// The egui id of the editor widget for `view` (it holds keyboard focus).
+/// Longest selection, in bytes, that smart highlighting searches for.
+const SMART_MAX_LEN: usize = 1024;
+
+/// The searcher for smart highlighting, as in Notepad++: when the primary
+/// selection is non-blank text on one line, every exact (case-sensitive)
+/// occurrence of it is highlighted. The searcher is rebuilt only when the
+/// selected text changes.
+fn smart_searcher<'s>(
+    cache: &'s mut Option<(String, Option<Searcher>)>,
+    doc: &Document,
+    sels: &SelectionSet,
+) -> Option<&'s Searcher> {
+    let sel = sels.primary();
+    let range = sel.range();
+    if sel.is_empty()
+        || range.end.0 - range.start.0 > SMART_MAX_LEN
+        || doc.line_of(range.start) != doc.line_of(range.end)
+    {
+        *cache = None;
+        return None;
+    }
+    let text = doc.slice(range);
+    if text.trim().is_empty() {
+        *cache = None;
+        return None;
+    }
+    if cache.as_ref().is_none_or(|(t, _)| *t != text) {
+        let query = SearchQuery::new(
+            text.clone(),
+            SearchOptions {
+                match_case: true,
+                ..SearchOptions::default()
+            },
+        );
+        *cache = Some((text, Searcher::new(&query).ok()));
+    }
+    cache.as_ref().and_then(|(_, s)| s.as_ref())
+}
+
 pub fn editor_id(view: ViewId) -> Id {
     Id::new(("ochrepad-editor", view.0))
 }
@@ -861,6 +904,12 @@ fn paint(
         _ => Vec::new(),
     };
     let match_bg = crate::theme::match_bg(&visuals);
+    // Smart highlighting: other occurrences of the selected text.
+    let smart = match smart_searcher(&mut state.smart, doc, &v.selections) {
+        Some(s) if first < last => s.find_all(doc, doc.line_start(first)..doc.line_end(last - 1)),
+        _ => Vec::new(),
+    };
+    let smart_bg = crate::theme::smart_highlight_bg(&visuals);
     let accent = crate::theme::accent(&visuals);
 
     for line in first..last {
@@ -911,6 +960,20 @@ fn paint(
                 Pos2::new(x0 + layout.x_of(b).max(layout.x_of(a) + 2.0), y + f.line_h),
             );
             text_painter.rect_filled(r, 2.0, match_bg);
+        }
+        let from = smart.partition_point(|m| m.end <= line_start && m.start < line_start);
+        for m in smart[from..].iter().take_while(|m| m.start <= line_end) {
+            // The selection itself is already marked.
+            if on_line.clone().any(|s| s.range() == *m) {
+                continue;
+            }
+            let a = m.start.max(line_start).0 - line_start.0;
+            let b = m.end.min(line_end).0 - line_start.0;
+            let r = Rect::from_min_max(
+                Pos2::new(x0 + layout.x_of(a), y),
+                Pos2::new(x0 + layout.x_of(b), y + f.line_h),
+            );
+            text_painter.rect_filled(r, 2.0, smart_bg);
         }
         for s in on_line {
             if s.is_empty() {
@@ -998,4 +1061,42 @@ fn paint(
         painter.rect_filled(h_thumb.shrink(2.0), 3.0, thumb_color);
     }
     state.cache.retain_near(first, last.max(first + 1));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn smart_matches(text: &str, anchor: usize, head: usize) -> Vec<(usize, usize)> {
+        let doc = Document::new(text);
+        let sels = SelectionSet::new(
+            vec![Selection::new(ByteOffset(anchor), ByteOffset(head))],
+            0,
+        );
+        let mut cache = None;
+        smart_searcher(&mut cache, &doc, &sels)
+            .map(|s| s.find_all(&doc, ByteOffset(0)..ByteOffset(text.len())))
+            .unwrap_or_default()
+            .into_iter()
+            .map(|m| (m.start.0, m.end.0))
+            .collect()
+    }
+
+    #[test]
+    fn smart_highlight_finds_every_exact_occurrence() {
+        // Any substring, not just whole words, and case-sensitive.
+        assert_eq!(
+            smart_matches("cat Cat concat cat", 0, 3),
+            vec![(0, 3), (11, 14), (15, 18)]
+        );
+        // A backward selection works the same; regex characters are literal.
+        assert_eq!(smart_matches("a.b axb a.b", 3, 0), vec![(0, 3), (8, 11)]);
+    }
+
+    #[test]
+    fn smart_highlight_ignores_carets_blanks_and_multi_line_selections() {
+        assert!(smart_matches("cat cat", 2, 2).is_empty());
+        assert!(smart_matches("a  b  c", 1, 3).is_empty());
+        assert!(smart_matches("cat\ncat\n", 0, 4).is_empty());
+    }
 }

@@ -8,6 +8,18 @@ adds features and a patch version fixes bugs).
 Each release's section becomes its GitHub release notes, so write it for
 people downloading the release.
 
+## [Unreleased]
+
+### Added
+
+- Smart highlighting: selecting text highlights its other occurrences, as in
+  Notepad++.
+
+### Changed
+
+- Ctrl+F and Ctrl+H select the search text, so you can type a new search
+  straight away even when the find panel is already open.
+
 ## [0.1.0] - 2026-10-10
 
 The first release, for Windows and Linux.

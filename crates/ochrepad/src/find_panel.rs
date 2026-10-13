@@ -2,6 +2,7 @@
 //! go through recordable `Action`s; counting and highlighting use the core
 //! `Searcher` directly.
 
+use egui::text::{CCursor, CCursorRange};
 use egui::{Id, Key, RichText, TextEdit, Ui};
 use ochrepad_core::{Action, ActionError, Editor, SearchOptions, SearchQuery, Searcher, ViewId};
 
@@ -166,15 +167,23 @@ impl FindPanel {
         let field_width = (ui.available_width() * 0.4).clamp(120.0, 360.0);
         ui.horizontal_wrapped(|ui| {
             ui.label("Find:");
-            let field = ui.add(
-                TextEdit::singleline(&mut self.pattern)
-                    .id(field_id())
-                    .desired_width(field_width)
-                    .hint_text("text or regex"),
-            );
+            let mut output = TextEdit::singleline(&mut self.pattern)
+                .id(field_id())
+                .desired_width(field_width)
+                .hint_text("text or regex")
+                .show(ui);
+            // Ctrl+F / Ctrl+H select the whole pattern, as in Notepad++, so
+            // typing replaces it whether or not the panel was already open.
             if std::mem::take(&mut self.focus_field) {
-                field.request_focus();
+                output.response.request_focus();
+                let end = CCursor::new(self.pattern.chars().count());
+                output
+                    .state
+                    .cursor
+                    .set_char_range(Some(CCursorRange::two(CCursor::new(0), end)));
+                output.state.store(ui.ctx(), field_id());
             }
+            let field = output.response;
             if field.changed() {
                 self.message = None;
             }

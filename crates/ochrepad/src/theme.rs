@@ -166,6 +166,14 @@ pub fn match_bg(visuals: &Visuals) -> Color32 {
     }
 }
 
+/// Background of smart-highlighted text (other occurrences of the
+/// selection): a faint ochre, so it reads as a lighter echo of the selection
+/// and stays distinct from the teal find matches.
+pub fn smart_highlight_bg(visuals: &Visuals) -> Color32 {
+    let alpha = if visuals.dark_mode { 40 } else { 34 };
+    Color32::from_rgba_unmultiplied(OCHRE.r(), OCHRE.g(), OCHRE.b(), alpha)
+}
+
 /// The dock (tab bar, split separators, drop overlay).
 pub fn dock_style(style: &Style) -> egui_dock::Style {
     let v = &style.visuals;
