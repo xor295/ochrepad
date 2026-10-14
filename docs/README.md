@@ -12,8 +12,9 @@ menu item to explain:
   endings, invisible characters, indent guides), the document map, word
   wrap, and folding (where blocks can be folded, the shortcuts, how folded
   text behaves).
-- [Working with logs](logs.md): filtering lines, highlight rules for log
-  levels, and following a file as it grows (tail -f).
+- [Logs and large files](logs.md): filtering lines, highlight rules for log
+  levels, following a file as it grows (tail -f), and the read-only viewer
+  that opens files of any size at once.
 - [Working in a folder](workspace.md): opening a folder, the file tree in
   the sidebar, ignored files, and creating and renaming files.
 - [Macros](macros.md): what gets recorded, running a macro to the end of the
@@ -21,7 +22,8 @@ menu item to explain:
 - [Text tools](text-tools.md): formatting and checking JSON, Base64 and URL
   encoding, and hashes.
 - [Editing lines, blanks and columns](editing.md): Notepad++'s line and
-  blank operations, the Column Editor, the tab menu, and full screen.
+  blank operations, the Column Editor, the tab menu, full screen, and
+  closing brackets as you type.
 - [Key bindings](keymap.md): the `keymap.json` format and every command you
   can bind.
 - [Backups, sessions and files changed elsewhere](backups-and-session.md):
@@ -29,5 +31,3 @@ menu item to explain:
   reloading files other programs change.
 - [How ochrepad reads and writes files](file-handling.md): encodings, line
   endings, which files are refused, and atomic saves.
-- [Logs and large files](logs.md): the read-only viewer that opens files of
-  any size at once.
