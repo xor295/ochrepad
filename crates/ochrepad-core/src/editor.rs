@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 use crate::action::{Action, ActionError};
 use crate::buffer::{Buffer, BufferId, FileMeta, LineEdit};
 use crate::changeset::{Bias, ChangeSet};
+use crate::display::DisplayMap;
 use crate::history::Transaction;
 use crate::position::{ByteOffset, byte_to_line_col, line_col_to_byte};
 use crate::resolve::{Resolved, resolve, resolve_search};
@@ -255,17 +256,20 @@ impl Editor {
             .buffers
             .get(&buffer_id)
             .ok_or(ActionError::UnknownBuffer(buffer_id))?;
-        let sels = &self
+        let v = self
             .views
             .get(&view)
-            .ok_or(ActionError::UnknownView(view))?
-            .selections;
+            .ok_or(ActionError::UnknownView(view))?;
+        let sels = &v.selections;
         Ok(match action {
             Action::Find { .. }
             | Action::Replace { .. }
             | Action::ReplaceAll { .. }
             | Action::SelectAllMatches(_) => resolve_search(action, &buffer.doc, sels),
-            _ => Ok(resolve(action, &buffer.doc, sels, &self.settings)),
+            _ => {
+                let rows = DisplayMap::new(&buffer.doc, v, self.settings.tab_width);
+                Ok(resolve(action, &buffer.doc, sels, &self.settings, &rows))
+            }
         })
     }
 

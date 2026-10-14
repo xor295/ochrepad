@@ -10,8 +10,12 @@ pub struct ViewId(pub u64);
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct ScrollPos {
+    /// The top row: `first_sub` is the row within `first_line` (see
+    /// [`crate::display`]).
     pub first_line: usize,
-    /// Fraction of a line scrolled past `first_line`, in `[0, 1)`.
+    #[serde(default)]
+    pub first_sub: usize,
+    /// Fraction of the top row scrolled past, in `[0, 1)`.
     pub line_fraction: f32,
     /// Horizontal offset in pixels.
     pub x_offset: f32,
@@ -41,32 +45,5 @@ impl View {
 
     pub fn buffer(&self) -> BufferId {
         self.buffer
-    }
-}
-
-/// Maps document lines to display rows. Views never assume line N is row N;
-/// word wrap and diff alignment will provide other implementations.
-pub trait DisplayMap {
-    fn row_count(&self, line_count: usize) -> usize;
-    fn line_to_row(&self, line: usize) -> usize;
-    /// The document line shown on `row`, or `None` for a filler row.
-    fn row_to_line(&self, row: usize) -> Option<usize>;
-}
-
-/// v1: one row per line.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct IdentityDisplayMap;
-
-impl DisplayMap for IdentityDisplayMap {
-    fn row_count(&self, line_count: usize) -> usize {
-        line_count
-    }
-
-    fn line_to_row(&self, line: usize) -> usize {
-        line
-    }
-
-    fn row_to_line(&self, row: usize) -> Option<usize> {
-        Some(row)
     }
 }

@@ -1,6 +1,6 @@
 # ochrepad
 
-A Notepad++-style text editor in Rust on egui/eframe 0.36. Version 1 is feature-complete: every milestone of the original plan (M0–M13) is done. Work now is maintenance, polish and new features. `docs/design/PLAN_v0.1.0.md` is the original design brief, kept for its rationale; this file is the current guide.
+A Notepad++-style text editor in Rust on egui/eframe 0.36. Version 1 is feature-complete: every milestone of the original plan (M0–M13) is done. Work now is maintenance, polish and new features. `docs/design/PLAN_v0.1.0.md` is the original design brief, kept for its rationale; `docs/design/PLAN_v0.2.0.md` is the plan for 0.2.0 (folding, word wrap, document map, cross-file search, folder workspace), worked through in steps N1–N10; this file is the current guide.
 
 ## Commands
 
@@ -41,7 +41,7 @@ Keep `CHANGELOG.md`'s `[Unreleased]` section up to date as user-visible changes 
 
 | Crate (folder = package) | Contents |
 |---|---|
-| `crates/ochrepad-core` | Text model and all editing. **No egui and no filesystem access.** `text` (ropey wrapper, the only place that touches ropey), `position` (newtypes and conversions, the only place that knows tabs, graphemes and display widths), `selection`, `changeset`, `action` + `resolve` (Action → Transaction), `history` (undo), `buffer`, `view`, `editor` (`Editor::apply`, macro playback, reload), `search` (regex-cursor behind a `Matcher` trait), `transform` (case, sort, line ops), `macros`, `diff` (similar; aligned rows, `SideMap` DisplayMap). |
+| `crates/ochrepad-core` | Text model and all editing. **No egui and no filesystem access.** `text` (ropey wrapper, the only place that touches ropey), `position` (newtypes and conversions, the only place that knows tabs, graphemes and display widths), `selection`, `changeset`, `action` + `resolve` (Action → Transaction), `history` (undo), `buffer`, `view`, `display` (`RowPos`, `DisplayMap`: a view's lines → display rows), `editor` (`Editor::apply`, macro playback, reload), `search` (regex-cursor behind a `Matcher` trait), `transform` (case, sort, line ops), `macros`, `diff` (similar; aligned rows, `SideMap`). |
 | `crates/ochrepad-fileio` | Load (BOM, strict UTF-8, chardetng fallback, UTF-16, binary refusal, line-ending detection and LF normalization) and save (re-encode with the original encoding, BOM and ending, atomic temp file + rename). `worker`: the background thread that does **all** disk writes. Config and data dirs (`directories`), JSON helpers, snapshot files. |
 | `crates/ochrepad-syntax` | syntect (pure-Rust `default-fancy` regex) + two-face syntaxes and themes. Language detection, and a per-buffer incremental highlighter with `(ParseState, HighlightState)` checkpoints every 128 lines that re-highlights until a checkpoint converges. |
 | `crates/ochrepad` | The app. `app/mod.rs`: `OchrepadApp` (dock of `Tab::{Editor, Preview, Compare}`, menus, open/save/close, dialogs, status bar, `Tabs` TabViewer). `app/autosave.rs`: snapshots, session, write-through, async save bookkeeping. `app/external.rs`: notify watcher and reload prompts. `app/prefs.rs`: settings, keymap file, recent files, drag and drop. `editor_view.rs`: the editor widget (input, hit testing, painting, scrolling). `layout.rs`: `LineLayout` and `paint_line_text`. `highlight.rs`, `find_panel.rs`, `macro_ui.rs`, `compare.rs`, `preview.rs`, `safe_images.rs`, `keymap.rs`, `settings.rs`, `theme.rs`, `logo.rs`, `fonts.rs`. `build.rs` embeds the icon on Windows. |
@@ -56,8 +56,8 @@ These are load-bearing. Check with the user before changing any of them.
 - Dirty means `revision != saved_revision`, so undoing back to the save makes the tab clean again. Typing coalesces into one undo step; macro playback, Replace All and every transform are one step each.
 - **Line endings are LF inside.** `fileio` normalizes on load and restores on save. Nothing outside `fileio` looks at `\r`. Mixed endings are saved as the dominant one, with a status-bar note.
 - **One layout for paint and hit test.** `LineLayout` holds the x of every grapheme boundary; painting, carets, selections and clicks all use it, and the compare view reuses it. Never compute x positions in a second place. Monospace grid: x = `VisualCol × cell width`; wide and fallback glyphs are placed individually on the grid, and emoji are clipped to their cells.
-- **Line ↔ row mapping goes through `DisplayMap`.** It is the identity for editors and `SideMap` for diffs, and it is the seam for future word wrap.
-- The editor widget does its own virtual scrolling (first line + fraction). Do not use egui `ScrollArea` for it: f32 pixel offsets lose precision in big files.
+- **Line ↔ row mapping goes through `core::display::DisplayMap`.** Rows are addressed relative to their line (`RowPos { line, sub }`); there is no global row index, so nothing has to wrap a whole file. The editor widget scrolls, paints and hit-tests through it, and vertical motions (`Up`/`Down`/`PageUp`/`PageDown`, add cursor above/below) resolve through it in core, so macros move by rows in whatever view plays them. It is the identity until folding and wrap land. Compare views use `diff::SideMap` instead, a global-row map with filler rows.
+- The editor widget does its own virtual scrolling (top row as `first_line` + `first_sub`, plus a fraction; the scrollbar works in visible lines). Do not use egui `ScrollArea` for it: f32 pixel offsets lose precision in big files.
 
 ## Working rules
 

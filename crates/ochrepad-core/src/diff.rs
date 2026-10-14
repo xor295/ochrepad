@@ -2,8 +2,10 @@
 //!
 //! The result is a list of aligned rows: each row shows a line of the left
 //! document, a line of the right one, or both. A missing side is a filler
-//! row, so equal text stays side by side. [`SideMap`] exposes one side's
-//! rows as a [`DisplayMap`].
+//! row, so equal text stays side by side. [`SideMap`] maps one side's lines
+//! to those rows. (Editor views map lines to rows with
+//! [`crate::display::DisplayMap`]; a compare view has filler rows and
+//! neither folds nor wraps, so it keeps this simpler global-row map.)
 
 use std::ops::Range;
 use std::time::Duration;
@@ -11,7 +13,6 @@ use std::time::Duration;
 use similar::{Algorithm, ChangeTag, DiffOp, TextDiff};
 
 use crate::text::Document;
-use crate::view::DisplayMap;
 
 /// Give up refining a diff after this long and report a coarser one.
 pub const DIFF_TIMEOUT: Duration = Duration::from_secs(2);
@@ -178,12 +179,12 @@ pub struct SideMap<'a> {
     pub side: Side,
 }
 
-impl DisplayMap for SideMap<'_> {
-    fn row_count(&self, _line_count: usize) -> usize {
+impl SideMap<'_> {
+    pub fn row_count(&self) -> usize {
         self.diff.rows.len()
     }
 
-    fn line_to_row(&self, line: usize) -> usize {
+    pub fn line_to_row(&self, line: usize) -> usize {
         let of = |r: &DiffRow| match self.side {
             Side::Left => r.left,
             Side::Right => r.right,
@@ -195,7 +196,8 @@ impl DisplayMap for SideMap<'_> {
             .unwrap_or(self.diff.rows.len())
     }
 
-    fn row_to_line(&self, row: usize) -> Option<usize> {
+    /// The document line shown on `row`, or `None` for a filler row.
+    pub fn row_to_line(&self, row: usize) -> Option<usize> {
         let r = self.diff.rows.get(row)?;
         match self.side {
             Side::Left => r.left,
@@ -289,7 +291,7 @@ mod tests {
             diff: &d,
             side: Side::Right,
         };
-        assert_eq!(left.row_count(2), 3);
+        assert_eq!(left.row_count(), 3);
         assert_eq!(
             (0..3).map(|r| left.row_to_line(r)).collect::<Vec<_>>(),
             vec![Some(0), None, Some(1)]
