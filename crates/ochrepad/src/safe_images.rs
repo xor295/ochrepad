@@ -375,7 +375,7 @@ fn decode_raster(bytes: &[u8], max_side: usize) -> Result<ColorImage, String> {
     Ok(ColorImage::from_rgba_unmultiplied(size, rgba.as_raw()).with_source_size(source))
 }
 
-/// PNG, JPEG, WebP and BMP images for the preview, decoded with
+/// PNG, JPEG and WebP images for the preview, decoded with
 /// [`decode_raster`]'s limits (in place of `egui_extras`' loader, which
 /// decodes at any size).
 #[derive(Default)]
@@ -555,13 +555,13 @@ mod tests {
         );
         assert_eq!(image.source_size, Vec2::new(9000.0, 30.0));
         assert!(decode_raster(b"not an image", 8192).is_err());
-        // Every format the preview offers decodes.
+        // Every format the preview offers decodes. (BMP is not one: only
+        // the Windows build has it, because the clipboard crate wants it.)
         let small = image::RgbImage::new(32, 24);
         for format in [
             image::ImageFormat::Png,
             image::ImageFormat::Jpeg,
             image::ImageFormat::WebP,
-            image::ImageFormat::Bmp,
         ] {
             let mut bytes = Vec::new();
             small

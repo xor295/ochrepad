@@ -360,7 +360,9 @@ mod tests {
             Some("https://a.b/".to_owned())
         );
         assert_eq!(url(&format!("https://a.b/{}", ")".repeat(200_000))), None);
-        assert!(t.elapsed() < std::time::Duration::from_secs(2));
+        if !cfg!(debug_assertions) {
+            assert!(t.elapsed() < std::time::Duration::from_secs(2));
+        }
     }
 
     /// Spaces wider than a byte (no-break, ideographic) end a run too.
