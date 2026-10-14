@@ -114,6 +114,8 @@ pub struct EditorViewState {
     map_drag: Option<f32>,
     /// The line the last right-click was on (the context menu acts on it).
     pub context_line: Option<usize>,
+    /// The file the context menu offers to open, once it has looked.
+    pub context_file: Option<Option<crate::editor_menu::FileAt>>,
     /// Paste to (Replace) Bookmarked Lines asked for the clipboard at this
     /// time: the paste that answers goes to the bookmarked lines.
     paste_to_bookmarks: Option<f64>,
@@ -129,6 +131,7 @@ impl Default for EditorViewState {
             map_cache: Default::default(),
             map_drag: None,
             context_line: None,
+            context_file: None,
             paste_to_bookmarks: None,
             cache: LayoutCache::default(),
             font_size: 14.0,
@@ -673,6 +676,7 @@ pub fn editor_view(
     if secondary && response.contains_pointer() {
         // On a scrollbar or the map: the menu has no line to act on.
         state.context_line = None;
+        state.context_file = None;
     }
     if secondary
         && state.bar_drag.is_none()
