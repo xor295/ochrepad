@@ -136,6 +136,18 @@ Motions for `MoveCursor`:
 | `{"Action": "SelectToMatchingBracket"}` | Selects from the bracket beside the caret to its match, both included (Ctrl+Alt+B). |
 | `{"Action": {"GoToLine": {"line": 10, "column": 1}}}` | Moves the caret to a line and column, both counted from 1 as in the status bar. Ctrl+G asks for them. |
 
+### Text tools
+
+These work on every selection, or on the whole document when nothing is
+selected; see [Text tools](text-tools.md).
+
+| Command | Does |
+|---|---|
+| `{"Action": {"FormatJson": {"indent": null}}}` | Formats JSON with one member or element per line, indented like the document. Give an indent to use another: `{"FormatJson": {"indent": {"use_spaces": true, "width": 2}}}`. |
+| `{"Action": "MinifyJson"}` | Removes the blank space between JSON tokens. |
+| `{"Action": {"Encode": "Base64"}}` | Encodes as `"Base64"` or as URL percent-encoding (`"Url"`). |
+| `{"Action": {"Decode": "Url"}}` | Decodes `"Base64"` or `"Url"`; refused when the text is not valid or does not decode to UTF-8 text. |
+
 ### Folding
 
 Fold commands change only what the editor shows: they are not undo steps and

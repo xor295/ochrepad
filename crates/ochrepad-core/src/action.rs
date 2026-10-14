@@ -5,10 +5,11 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use crate::buffer::BufferId;
+use crate::buffer::{BufferId, Indent};
 use crate::position::VisualCol;
 use crate::search::SearchQuery;
 use crate::selection::SelectionSet;
+use crate::text_tools::{Codec, InvalidJson};
 use crate::transform::{CaseMode, SortOptions};
 use crate::view::ViewId;
 
@@ -183,6 +184,23 @@ pub enum Action {
     GoToMatchingBracket,
     /// Select from the bracket beside the caret to its match, both included.
     SelectToMatchingBracket,
+    /// Pretty-print the JSON in each selection, or the whole document when
+    /// nothing is selected: one member or element per line, indented with
+    /// `indent` (the document's indentation when `None`). Key order,
+    /// numbers and strings are kept exactly. Fails on invalid JSON.
+    FormatJson {
+        #[serde(default)]
+        indent: Option<Indent>,
+    },
+    /// Remove the whitespace between the JSON tokens of each selection (or
+    /// the whole document).
+    MinifyJson,
+    /// Encode each selection, or the whole document when nothing is
+    /// selected, as UTF-8 with the document's line endings.
+    Encode(Codec),
+    /// Decode each selection (or the whole document). Fails when it is not
+    /// valid or the bytes are not UTF-8 text.
+    Decode(Codec),
     Undo,
     Redo,
 }
@@ -197,6 +215,10 @@ pub enum ActionError {
     ReadOnly,
     /// The language has no comment markers ochrepad knows.
     NoCommentSyntax,
+    /// The JSON is not valid (boxed to keep errors small).
+    InvalidJson(Box<InvalidJson>),
+    /// The text cannot be decoded; the message says why.
+    Decode(String),
 }
 
 impl fmt::Display for ActionError {
@@ -210,6 +232,12 @@ impl fmt::Display for ActionError {
             ActionError::NoCommentSyntax => {
                 f.write_str("no comment markers are known for this language")
             }
+            ActionError::InvalidJson(e) => write!(
+                f,
+                "invalid JSON on line {}, column {}: {}",
+                e.line, e.column, e.message
+            ),
+            ActionError::Decode(message) => f.write_str(message),
         }
     }
 }

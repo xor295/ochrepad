@@ -3,7 +3,8 @@
 mod util;
 
 use ochrepad_core::position::{byte_to_visual_col, next_grapheme_boundary, visual_col_to_byte};
-use ochrepad_core::{Action, ByteOffset, Document, Motion, SelectionSet};
+use ochrepad_core::text_tools::{format_json, minify_json, validate_json};
+use ochrepad_core::{Action, ByteOffset, Codec, Document, Indent, Motion, SelectionSet};
 use proptest::prelude::*;
 
 const PIECES: &[&str] = &[
@@ -169,7 +170,64 @@ fn action() -> impl Strategy<Value = Action> {
             Just(Action::GoToMatchingBracket),
             Just(Action::SelectToMatchingBracket),
         ],
+        // Text tools, and JSON for them to work on.
+        1 => prop::sample::select(vec!["[1,2]", "{\"a\":[]}", " ", "\"x\"", ",", "{", "]"])
+            .prop_map(|s| Action::InsertText(s.to_owned())),
+        1 => prop_oneof![
+            prop::option::of((any::<bool>(), 1usize..5)).prop_map(|i| Action::FormatJson {
+                indent: i.map(|(use_spaces, width)| ochrepad_core::Indent { use_spaces, width }),
+            }),
+            Just(Action::MinifyJson),
+            prop::sample::select(vec![Codec::Base64, Codec::Url]).prop_map(Action::Encode),
+            prop::sample::select(vec![Codec::Base64, Codec::Url]).prop_map(Action::Decode),
+        ],
     ]
+}
+
+/// Random JSON values, with blank space between tokens.
+fn json_value() -> impl Strategy<Value = String> {
+    let leaf = prop_oneof![
+        prop::sample::select(vec![
+            "null",
+            "true",
+            "false",
+            "-0.5e3",
+            "0",
+            "12.25",
+            "\"\"",
+            "\"a b\"",
+            "\"\\\"q\\u00e9\\n\"",
+            "\"漢👍\"",
+        ])
+        .prop_map(str::to_owned),
+        (0u32..1000).prop_map(|n| n.to_string()),
+    ];
+    leaf.prop_recursive(4, 32, 4, |inner| {
+        prop_oneof![
+            prop::collection::vec(inner.clone(), 0..4)
+                .prop_map(|v| format!("[ {} ]", v.join(" ,\n"))),
+            prop::collection::vec(inner, 0..4).prop_map(|v| {
+                let members: Vec<String> = v
+                    .iter()
+                    .enumerate()
+                    .map(|(i, x)| format!("\"k{i}\" :\t{x}"))
+                    .collect();
+                format!("{{{}}}", members.join(","))
+            }),
+        ]
+    })
+}
+
+/// Strings of JSON tokens and near-tokens, mostly invalid.
+fn json_ish() -> impl Strategy<Value = String> {
+    prop::collection::vec(
+        prop::sample::select(vec![
+            "{", "}", "[", "]", ":", ",", "\"a\"", "\"", "\\", "1", "-", "0", ".", " ", "\n",
+            "true", "nul", "x", "\t",
+        ]),
+        0..20,
+    )
+    .prop_map(|v| v.concat())
 }
 
 fn check(t: &util::T) -> Result<(), TestCaseError> {
@@ -396,6 +454,31 @@ proptest! {
 
 proptest! {
     #![proptest_config(ProptestConfig { cases: 2000, ..ProptestConfig::default() })]
+
+    /// Formatting and minifying change only the blank space between tokens:
+    /// each undoes the other, and the value read back is the same.
+    #[test]
+    fn json_format_and_minify_keep_the_value(
+        json in json_value(),
+        width in 1usize..5,
+        tabs in any::<bool>(),
+    ) {
+        let indent = Indent { use_spaces: !tabs, width };
+        let pretty = format_json(&json, indent).unwrap();
+        let min = minify_json(&json).unwrap();
+        prop_assert_eq!(minify_json(&pretty).unwrap(), min.clone());
+        prop_assert_eq!(format_json(&min, indent).unwrap(), pretty.clone());
+        let value = |s: &str| serde_json::from_str::<serde_json::Value>(s).unwrap();
+        prop_assert_eq!(value(&pretty), value(&json));
+    }
+
+    /// Our validator accepts exactly what serde_json accepts.
+    #[test]
+    fn json_validation_agrees_with_serde_json(s in json_ish()) {
+        let ours = validate_json(&s).is_ok();
+        let theirs = serde_json::from_str::<serde::de::IgnoredAny>(&s).is_ok();
+        prop_assert_eq!(ours, theirs, "{:?}", s);
+    }
 
     /// The aligned rows list every line of each side exactly once, in
     /// order; equal rows have equal text; hunks cover exactly the non-equal

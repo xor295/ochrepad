@@ -17,6 +17,7 @@ mod resolve;
 pub mod search;
 pub mod selection;
 pub mod text;
+pub mod text_tools;
 pub mod transform;
 pub mod view;
 
@@ -32,5 +33,6 @@ pub use position::{ByteOffset, CharIdx, LineCol, VisualCol};
 pub use search::{SearchError, SearchOptions, SearchQuery, Searcher};
 pub use selection::{Rectangle, Selection, SelectionSet};
 pub use text::Document;
+pub use text_tools::Codec;
 pub use transform::{CaseMode, SortOptions};
 pub use view::{View, ViewId};

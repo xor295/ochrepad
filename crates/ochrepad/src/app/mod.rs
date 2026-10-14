@@ -25,6 +25,7 @@ mod document;
 mod external;
 mod prefs;
 mod search;
+mod tools;
 mod workspace;
 
 pub use autosave::{AutosaveSettings, Session, SessionBuffer, SessionTab};
@@ -124,6 +125,8 @@ pub struct OchrepadApp {
     status_note: Option<(String, f64)>,
     /// The Go to Line dialog's field, while it is open.
     go_to_line: Option<String>,
+    /// The hash dialog (Text Tools > Hashes), while it is open.
+    hashes: Option<tools::HashDialog>,
     pub macros: Macros,
     persist: autosave::Persist,
     external: external::External,
@@ -183,6 +186,7 @@ impl OchrepadApp {
             now: 0.0,
             status_note: None,
             go_to_line: None,
+            hashes: None,
             macros: Macros::default(),
             persist: autosave::Persist::default(),
             external: external::External::default(),
@@ -817,6 +821,7 @@ impl OchrepadApp {
         self.replace_all_dialog(ui);
         self.new_entry_dialog(ui);
         self.go_to_line_dialog(ui);
+        self.hash_dialog(ui);
         self.external_dialog(ui);
         self.preferences_window(ui);
         if let Some((source, repeat)) = self.macros.dialogs(ui) {
@@ -1140,6 +1145,7 @@ impl OchrepadApp {
             }
         });
         ui.menu_button("Line Operations", |ui| self.line_operations_menu(ui));
+        ui.menu_button("Text Tools", |ui| self.text_tools_menu(ui));
     }
 
     fn line_operations_menu(&mut self, ui: &mut Ui) {
@@ -1944,9 +1950,13 @@ fn new_file_meta() -> FileMeta {
 }
 
 impl OchrepadApp {
-    /// Shows `error` in the status bar for a few seconds.
+    /// Shows `error` in the status bar for a few seconds (invalid JSON in
+    /// a message, with the caret moved to it).
     fn note(&mut self, error: &ochrepad_core::ActionError) {
         use ochrepad_core::ActionError;
+        if self.json_error(error) {
+            return;
+        }
         let text = match error {
             ActionError::UnknownView(_) | ActionError::UnknownBuffer(_) => return,
             ActionError::NotFound => "Not found".to_owned(),

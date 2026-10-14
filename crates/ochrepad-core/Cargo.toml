@@ -10,9 +10,13 @@ keywords = ["text-editor", "rope", "multi-cursor", "undo"]
 categories = ["text-editors"]
 
 [dependencies]
+# md-5, sha1 and sha2: the hashes of the text tools (text_tools.rs).
+md-5 = { version = "=0.11.0", default-features = false }
 regex-cursor = { version = "=0.1.5", default-features = false, features = ["perf-inline"] }
 ropey = { version = "=1.6.1", default-features = false, features = ["simd"] }
 serde = { version = "=1.0.229", features = ["derive"] }
+sha1 = { version = "=0.11.0", default-features = false }
+sha2 = { version = "=0.11.0", default-features = false }
 similar = "=3.2.0"
 unicode-segmentation = "=1.13.3"
 unicode-width = "=0.2.2"

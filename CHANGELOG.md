@@ -29,6 +29,13 @@ people downloading the release.
   indentation, change the line endings, reopen a file with another encoding,
   or save it in another encoding (characters that encoding cannot store are
   listed, and nothing changes).
+- Edit > Text Tools: Format, Minify and Validate JSON (object key order,
+  numbers and strings are kept exactly; invalid JSON is reported with its
+  line and column, and the caret moves there), Base64 and URL
+  encode/decode, and a dialog with the MD5, SHA-1 and SHA-256 hashes of the
+  selection or the document. They work on each selection, or on the whole
+  document when nothing is selected, and can be bound to keys and recorded
+  in macros.
 
 ## [0.2.0] - 2026-10-13
 

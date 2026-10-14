@@ -334,6 +334,16 @@ impl Editor {
                 };
                 resolved.ok_or(ActionError::NoCommentSyntax)
             }
+            Action::FormatJson { .. }
+            | Action::MinifyJson
+            | Action::Encode(_)
+            | Action::Decode(_) => crate::text_tools::resolve(
+                action,
+                &buffer.doc,
+                sels,
+                buffer.indent,
+                buffer.meta.line_ending,
+            ),
             _ => {
                 let rows = DisplayMap::new(buffer, v);
                 Ok(resolve(action, &buffer.doc, sels, buffer.indent, &rows))
