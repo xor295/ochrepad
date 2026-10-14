@@ -168,6 +168,7 @@ pub(crate) fn resolve(
         Action::MoveLinesUp => transform::move_lines(doc, sels, true),
         Action::MoveLinesDown => transform::move_lines(doc, sels, false),
         Action::JoinLines => transform::join(doc, sels),
+        Action::SplitLines { width } => transform::split_lines(doc, sels, *width, tab_width),
         Action::RemoveEmptyLines { include_whitespace } => {
             transform::remove_empty(doc, sels, *include_whitespace)
         }

@@ -120,6 +120,9 @@ pub struct EditorViewState {
     pub context_url: Option<Option<String>>,
     /// Where Begin/End Select began, until it ends.
     pub begin_select: Option<ByteOffset>,
+    /// How many columns of text the pane shows (Split Lines' width when
+    /// there is no vertical edge).
+    pub text_cols: usize,
     /// Paste to (Replace) Bookmarked Lines asked for the clipboard at this
     /// time: the paste that answers goes to the bookmarked lines.
     paste_to_bookmarks: Option<f64>,
@@ -138,6 +141,7 @@ impl Default for EditorViewState {
             context_file: None,
             context_url: None,
             begin_select: None,
+            text_cols: 80,
             paste_to_bookmarks: None,
             cache: LayoutCache::default(),
             font_size: 14.0,
@@ -404,13 +408,15 @@ pub fn editor_view(
 
     // The wrap width follows the pane (the core's motions use it). One cell
     // stays free at the right for the caret at the end of a full row.
-    let wrap_cols = wrap.then(|| {
+    let text_cols = {
         let line_count = doc_of(editor, buffer_id).line_count();
         let content = geometry(line_count, line_count).content;
         ((content.width() - TEXT_PAD - cell_w) / cell_w)
             .floor()
             .max(1.0) as usize
-    });
+    };
+    state.text_cols = text_cols;
+    let wrap_cols = wrap.then_some(text_cols);
     if let Some(v) = editor.view_mut(view)
         && v.wrap_cols != wrap_cols
     {
@@ -460,6 +466,9 @@ pub fn editor_view(
                     Some(EditorCommand::BeginEndSelectColumn) => {
                         ops.push(Op::BeginEndSelect { column: true })
                     }
+                    Some(EditorCommand::SplitLines) => ops.push(Op::Apply(Action::SplitLines {
+                        width: state.split_width(),
+                    })),
                     None => {}
                 },
                 Event::Text(t)
@@ -1605,6 +1614,13 @@ fn remember_copy(ctx: &egui::Context, text: &str, rect: bool) {
 pub fn clip_history(ctx: &egui::Context) -> Vec<(String, bool)> {
     ctx.data(|d| d.get_temp(clip_history_id()))
         .unwrap_or_default()
+}
+
+impl EditorViewState {
+    /// Split Lines' width: up to the vertical edge, or else the pane's.
+    pub fn split_width(&self) -> usize {
+        self.edge_column.unwrap_or(self.text_cols)
+    }
 }
 
 /// Begin/End Select, as in Notepad++: the first time marks where the

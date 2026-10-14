@@ -123,6 +123,8 @@ Motions for `MoveCursor`:
 | `{"Action": "MoveLinesUp"}` | Moves the selected lines up one line. |
 | `{"Action": "MoveLinesDown"}` | Moves the selected lines down one line. |
 | `{"Action": "JoinLines"}` | Joins the selected lines (or the caret's line and the next). |
+| `"SplitLines"` | Split Lines (Ctrl+I): splits the selected lines, or the caret's line, at the blanks between words to fit the vertical edge, or the pane's width without one ([more](editing.md#line-operations)). |
+| `{"Action": {"SplitLines": {"width": 72}}}` | The same, at a fixed number of columns. |
 | `{"Action": "TrimTrailingWhitespace"}` | Removes trailing spaces and tabs from the selected lines, or from every line when nothing is selected. |
 | `{"Action": {"RemoveEmptyLines": {"include_whitespace": false}}}` | Removes empty lines from the selected lines, or from the whole document when nothing is selected. With `include_whitespace`, lines of only spaces and tabs go too. |
 | `{"Action": "DeleteLine"}` | Deletes the caret's line, or every line a selection touches, with its line break (Ctrl+Shift+L). |

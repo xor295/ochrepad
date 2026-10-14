@@ -249,6 +249,13 @@ impl OchrepadApp {
                 Action::InsertLineBelow,
             ),
             ("Reverse Line Order", "", Action::ReverseLines),
+            (
+                "Split Lines",
+                "Ctrl+I",
+                Action::SplitLines {
+                    width: self.view_state().map_or(80, |s| s.split_width()),
+                },
+            ),
         ] {
             if ui.add(Button::new(label).shortcut_text(shortcut)).clicked() {
                 self.apply(action);

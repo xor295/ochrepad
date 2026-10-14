@@ -304,6 +304,42 @@ fn new_actions_round_trip_through_json() {
 }
 
 #[test]
+fn split_lines_breaks_long_lines_between_words() {
+    let mut t = setup("|the quick brown fox jumps over the lazy dog\nshort");
+    t.apply(Action::SplitLines { width: 15 });
+    assert_eq!(
+        t.text(),
+        "the quick brown\nfox jumps over\nthe lazy dog\nshort"
+    );
+    // One undo step.
+    t.apply(Action::Undo);
+    assert_eq!(
+        t.text(),
+        "the quick brown fox jumps over the lazy dog\nshort"
+    );
+
+    // Indentation carries over; a word wider than the width stays whole;
+    // blanks at the end stay.
+    let mut t = setup("    alpha beta gamma|\n");
+    t.apply(Action::SplitLines { width: 12 });
+    assert_eq!(t.text(), "    alpha\n    beta\n    gamma\n");
+    let mut t = setup("x incomprehensibilities y  |");
+    t.apply(Action::SplitLines { width: 6 });
+    assert_eq!(t.text(), "x\nincomprehensibilities\ny  ");
+
+    // Only the selected lines; tabs count to their stops.
+    let mut t = setup("a b c d\n\ta b c d\na b c d");
+    t.set_sels(vec![(8, 15)]);
+    t.apply(Action::SplitLines { width: 7 });
+    assert_eq!(t.text(), "a b c d\n\ta b\n\tc d\na b c d");
+    // Nothing to split: no change.
+    let mut t = setup("|fits");
+    let revision = t.buffer().revision();
+    t.apply(Action::SplitLines { width: 80 });
+    assert_eq!(t.buffer().revision(), revision);
+}
+
+#[test]
 fn column_editor_refuses_padding_out_to_an_absurd_column() {
     // A hand-written macro: a rectangle a trillion columns wide.
     let mut t = setup("|a\nb\nc");

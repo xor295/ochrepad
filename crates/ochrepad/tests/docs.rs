@@ -57,6 +57,7 @@ fn table_commands(md: &str) -> Vec<String> {
                     "\"ToggleOvertype\"",
                     "\"BeginEndSelect\"",
                     "\"BeginEndSelectColumn\"",
+                    "\"SplitLines\"",
                 ]
                 .contains(&s.as_str())
         })
@@ -100,6 +101,7 @@ fn name(action: &Action) -> &'static str {
         Action::MoveLinesUp => "MoveLinesUp",
         Action::MoveLinesDown => "MoveLinesDown",
         Action::JoinLines => "JoinLines",
+        Action::SplitLines { .. } => "SplitLines",
         Action::RemoveEmptyLines { .. } => "RemoveEmptyLines",
         Action::RemoveDuplicateLines { .. } => "RemoveDuplicateLines",
         Action::DeleteLine => "DeleteLine",
@@ -148,7 +150,7 @@ fn name(action: &Action) -> &'static str {
     }
 }
 
-const ALL: [&str; 78] = [
+const ALL: [&str; 79] = [
     "InsertText",
     "Paste",
     "InsertTab",
@@ -182,6 +184,7 @@ const ALL: [&str; 78] = [
     "MoveLinesUp",
     "MoveLinesDown",
     "JoinLines",
+    "SplitLines",
     "RemoveEmptyLines",
     "RemoveDuplicateLines",
     "DeleteLine",

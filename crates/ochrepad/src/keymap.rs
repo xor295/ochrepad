@@ -23,6 +23,9 @@ pub enum EditorCommand {
     BeginEndSelect,
     /// The same, ending in a column selection.
     BeginEndSelectColumn,
+    /// Edit > Line Operations > Split Lines, at the vertical edge or else
+    /// the pane's width.
+    SplitLines,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -212,6 +215,7 @@ impl Default for Keymap {
                 act(Action::MoveLinesDown),
             ),
             (Chord::new(J).cmd(), act(Action::JoinLines)),
+            (Chord::new(I).cmd(), EditorCommand::SplitLines),
             // Notepad++'s (Scintilla's) line commands.
             (Chord::new(L).cmd().shift(), act(Action::DeleteLine)),
             (Chord::new(T).cmd(), act(Action::TransposeLines)),

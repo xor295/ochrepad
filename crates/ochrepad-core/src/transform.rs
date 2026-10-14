@@ -551,6 +551,74 @@ pub(crate) fn join(doc: &Document, sels: &SelectionSet) -> Resolved {
 
 /// The lines the selections touch (a selection ending at a line start does
 /// not take that line), or the carets' lines.
+/// Splits each touched line wider than `width` columns at the blanks
+/// between its words (Split Lines): each run of blanks where it breaks
+/// becomes a line break and the line's indentation, so the new lines line
+/// up with it. A word wider than the width stays whole on its own line,
+/// and blanks at the end of the line stay.
+pub(crate) fn split_lines(
+    doc: &Document,
+    sels: &SelectionSet,
+    width: usize,
+    tab_width: usize,
+) -> Resolved {
+    let mut edits = Vec::new();
+    for line in touched_lines(doc, sels) {
+        let text = doc.line_text(line);
+        let start = doc.line_start(line).0;
+        let lead = text.len() - text.trim_start_matches([' ', '\t']).len();
+        let indent = &text[..lead];
+        for blanks in split_points(&text, width.max(1), tab_width) {
+            edits.push(Edit::new(
+                ByteOffset(start + blanks.start),
+                ByteOffset(start + blanks.end),
+                format!("\n{indent}"),
+            ));
+        }
+    }
+    let changes = ChangeSet::new(doc.len(), edits);
+    let after = map_selections_around(sels, &changes);
+    edit_result(changes, after, sels)
+}
+
+/// The runs of blanks (byte ranges) at which `text`, one line, breaks so
+/// that its pieces fit `width` columns where they can.
+fn split_points(text: &str, width: usize, tab_width: usize) -> Vec<Range<usize>> {
+    let cols = |s: &str, from: usize| {
+        s.graphemes(true)
+            .fold(from, |col, g| col + grapheme_width(g, col, tab_width))
+            - from
+    };
+    let blank_end = |at: usize| text.len() - text[at..].trim_start_matches([' ', '\t']).len();
+    let lead = blank_end(0);
+    let indent = cols(&text[..lead], 0);
+    let mut breaks = Vec::new();
+    // The column the next character goes at, and whether a word is on the
+    // piece being filled already.
+    let (mut col, mut filled) = (indent, false);
+    let mut at = lead;
+    while at < text.len() {
+        let word = blank_end(at);
+        if word == text.len() {
+            break;
+        }
+        let end = text[word..]
+            .find([' ', '\t'])
+            .map_or(text.len(), |i| word + i);
+        let blanks = cols(&text[at..word], col);
+        let word_cols = cols(&text[word..end], col + blanks);
+        if filled && col + blanks + word_cols > width {
+            breaks.push(at..word);
+            col = indent + cols(&text[word..end], indent);
+        } else {
+            col += blanks + word_cols;
+        }
+        filled = true;
+        at = end;
+    }
+    breaks
+}
+
 fn touched_lines(doc: &Document, sels: &SelectionSet) -> BTreeSet<usize> {
     sels.ranges()
         .iter()

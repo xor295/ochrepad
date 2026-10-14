@@ -168,7 +168,7 @@ Windows and Linux. macOS is not supported.
 | Toggle comment, block comment | Ctrl+/ or Ctrl+Q, Ctrl+Shift+/ or Ctrl+Shift+Q |
 | Comment, uncomment lines | Ctrl+K, Ctrl+Shift+K |
 | Matching bracket: go, select | Ctrl+B, Ctrl+Alt+B |
-| Duplicate, move, join lines | Ctrl+D, Ctrl+Shift+Up/Down, Ctrl+J |
+| Duplicate, move, join, split lines | Ctrl+D, Ctrl+Shift+Up/Down, Ctrl+J, Ctrl+I |
 | Delete line, swap with the line above | Ctrl+Shift+L, Ctrl+T |
 | New line above, below | Ctrl+Alt+Enter, Ctrl+Alt+Shift+Enter |
 | Column Editor (text or numbers down a column) | Alt+C |

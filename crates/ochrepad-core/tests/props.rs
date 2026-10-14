@@ -172,6 +172,7 @@ fn action() -> impl Strategy<Value = Action> {
             Just(Action::Unindent),
             any::<bool>().prop_map(|to_spaces| Action::ConvertIndentation { to_spaces }),
             Just(Action::ToggleLineComment),
+            (1usize..30).prop_map(|width| Action::SplitLines { width }),
             Just(Action::CommentLines),
             Just(Action::UncommentLines),
             Just(Action::ToggleBlockComment),

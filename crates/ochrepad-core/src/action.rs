@@ -148,6 +148,12 @@ pub enum Action {
     MoveLinesDown,
     /// Join the selected lines (or the caret's line and the next).
     JoinLines,
+    /// Split each selected line (or the caret's line) wider than `width`
+    /// columns at the blanks between words, as Notepad++'s Split Lines;
+    /// the new lines start with the line's indentation.
+    SplitLines {
+        width: usize,
+    },
     /// Remove empty lines from the selected lines (all lines when nothing
     /// is selected); with `include_whitespace`, also lines of only spaces
     /// and tabs.

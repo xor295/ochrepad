@@ -15,6 +15,7 @@ undo step, can be recorded in a macro, and can be bound to other keys
 | Insert Blank Line Above Current | Ctrl+Alt+Enter | Inserts a line above the caret's line, indented like it, and puts the caret there. |
 | Insert Blank Line Below Current | Ctrl+Alt+Shift+Enter | The same, below. |
 | Reverse Line Order | | Reverses the selected lines, or every line when nothing is selected. |
+| Split Lines | Ctrl+I | Splits the selected lines, or the caret's line, so that they fit the vertical edge (**Settings > Preferences**), or the pane's width when there is none. Lines break at the blanks between words, each new line starts with the line's indentation, and a word too long to fit stays whole. |
 | Sort Lines by Length Ascending, Descending | | Sorts the selected lines (or every line) by their length in characters, and lines of the same length as text. |
 | Randomize Line Order | | Puts the selected lines (or every line) in a random order. |
 

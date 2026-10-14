@@ -167,6 +167,24 @@ fn the_tab_menu_closes_tabs_beside_and_unchanged() {
 }
 
 #[test]
+fn ctrl_i_splits_lines_at_the_vertical_edge() {
+    let mut h = harness();
+    h.state_mut().settings.edge_column = Some(10);
+    h.run();
+    h.event(Event::Paste("one two three four five".into()));
+    h.run();
+    key(&mut h, Modifiers::COMMAND, Key::I);
+    assert_eq!(text(&h), "one two\nthree four\nfive");
+    // From the menu too, after undoing.
+    key(&mut h, Modifiers::COMMAND, Key::Z);
+    assert_eq!(text(&h), "one two three four five");
+    submenu(&mut h, "Edit", "Line Operations");
+    h.get_by_label_contains("Split Lines").click();
+    h.run();
+    assert_eq!(text(&h), "one two\nthree four\nfive");
+}
+
+#[test]
 fn the_tab_menu_saves_and_sets_read_only_for_its_tab() {
     let tmp = tempfile::tempdir().unwrap();
     let (a, b) = (tmp.path().join("a.txt"), tmp.path().join("b.txt"));

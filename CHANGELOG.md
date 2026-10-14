@@ -40,6 +40,9 @@ people downloading the release.
   and ranDOm cASE.
 - Edit > Text Tools > Hex Encode and Hex Decode, as Notepad++'s Converter
   (ASCII to hex and back).
+- Edit > Line Operations > Split Lines (Ctrl+I), as in Notepad++: long
+  lines are split between words to fit the vertical edge, or the window,
+  keeping their indentation.
 - Overtype: Insert switches to typing over the text, as in Notepad++. The
   status bar shows OVR and the caret becomes a bar under the character it
   replaces; typing never runs past the end of a line.
