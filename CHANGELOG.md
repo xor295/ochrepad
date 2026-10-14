@@ -12,31 +12,14 @@ people downloading the release.
 
 ### Added
 
-- Go to Line (Ctrl+G): a line, or `line:column`.
-- Tab indents the selected lines when a selection spans lines; Shift+Tab
-  unindents the selected lines or the caret's line. Edit > Indent and
-  Unindent do the same.
-- Toggle Comment (Ctrl+/) and Toggle Block Comment (Ctrl+Shift+/), with the
-  comment markers of about 100 languages.
-- Matching brackets: the bracket beside the caret and its match are
-  outlined (in red when there is no match). Ctrl+B jumps to the match and
-  Ctrl+Alt+B selects up to it.
-- Each document has its own indentation. Opening a file detects tabs or
-  spaces and the indent width from its text, and the status bar flags files
-  that mix the two.
-- The status bar's indentation, line ending and encoding are menus: indent
-  with spaces or tabs and set the width for this document, convert the
-  indentation, change the line endings, reopen a file with another encoding,
-  or save it in another encoding (characters that encoding cannot store are
-  listed, and nothing changes).
-- Zoom: Ctrl+plus, Ctrl+minus and Ctrl+0, or Ctrl+mouse wheel, make the
-  editors' text larger or smaller (10% to 400%) without changing the menus.
-  The status bar shows the zoom while it is not 100%.
-- View > Show Symbol, as in Notepad++: spaces and tabs, line endings,
-  non-printing characters (zero-width and bidi characters, the BOM, unusual
-  spaces), Show All Characters (Ctrl+Shift+8), indent guides and the wrap
-  symbol. Hovering a special character's box names it.
-- A vertical edge line after a chosen column (Preferences).
+- A read-only viewer for large files: files over 256 MB (a setting) open
+  without being read into memory, so a log of several gigabytes shows its
+  first screen at once. The line index builds in the background while you
+  scroll, select, copy (up to 64 MB), go to a line and search (Find
+  Next/Previous, Count and Find All run in the background). Long lines are
+  cut after 10,000 bytes with a marker; UTF-8 and legacy encodings are
+  shown, UTF-16 is refused. View > Open as Editable opens such a file in an
+  editor (up to 1 GB). The session reopens viewers where they were.
 - Log tools, for any file ([docs/logs.md](docs/logs.md)):
   - Search > Filter Lines (Alt+Shift+L) shows only the lines that match a
     pattern, or hides them. The gutter keeps the real line numbers, the
@@ -56,6 +39,36 @@ people downloading the release.
   when the file is opened again unchanged, and with unsaved work restored
   from a backup. Edit > Clear Undo History forgets it; a preference turns it
   off.
+- Each document has its own indentation. Opening a file detects tabs or
+  spaces and the indent width from its text, and the status bar flags files
+  that mix the two. A document's indentation comes back with the
+  session.
+- The status bar's indentation, line ending and encoding are menus: indent
+  with spaces or tabs and set the width for this document, convert the
+  indentation, change the line endings, reopen a file with another encoding,
+  or save it in another encoding (characters that encoding cannot store are
+  listed, and nothing changes).
+- Zoom: Ctrl+plus, Ctrl+minus and Ctrl+0, or Ctrl+mouse wheel, make the
+  editors' text larger or smaller (10% to 400%) without changing the menus.
+  The status bar shows the zoom while it is not 100%.
+- View > Show Symbol, as in Notepad++: spaces and tabs, line endings,
+  non-printing characters (zero-width and bidi characters, the BOM, unusual
+  spaces), Show All Characters (Ctrl+Shift+8), indent guides and the wrap
+  symbol. Hovering a special character's box names it.
+- A vertical edge line after a chosen column (Preferences).
+- Go to Line (Ctrl+G): a line, or `line:column`.
+- Tab indents the selected lines when a selection spans lines; Shift+Tab
+  unindents the selected lines or the caret's line. Edit > Indent and
+  Unindent do the same.
+- Toggle Comment (Ctrl+/) and Toggle Block Comment (Ctrl+Shift+/), with the
+  comment markers of about 100 languages.
+- Matching brackets: the bracket beside the caret and its match are
+  outlined (in red when there is no match). Ctrl+B jumps to the match and
+  Ctrl+Alt+B selects up to it.
+- Optional closing of brackets and quotes as you type (Preferences, off by
+  default as in Notepad++): typing `(`, `[`, `{`, `"` or `'` inserts the
+  partner, typing it again steps over it, and Backspace deletes an empty
+  pair.
 - Edit > Text Tools: Format, Minify and Validate JSON (object key order,
   numbers and strings are kept exactly; invalid JSON is reported with its
   line and column, and the caret moves there), Base64 and URL
@@ -76,20 +89,6 @@ people downloading the release.
   in File Manager and Reload from Disk. The same copies are in Edit > Copy
   to Clipboard.
 - View > Full Screen (F11) and Always on Top.
-- Optional closing of brackets and quotes as you type (Preferences, off by
-  default as in Notepad++): typing `(`, `[`, `{`, `"` or `'` inserts the
-  partner, typing it again steps over it, and Backspace deletes an empty
-  pair.
-- A document's indentation, detected or chosen in the status bar, comes
-  back with the session.
-- A read-only viewer for large files: files over 256 MB (a setting) open
-  without being read into memory, so a log of several gigabytes shows its
-  first screen at once. The line index builds in the background while you
-  scroll, select, copy (up to 64 MB), go to a line and search (Find
-  Next/Previous, Count and Find All run in the background). Long lines are
-  cut after 10,000 bytes with a marker; UTF-8 and legacy encodings are
-  shown, UTF-16 is refused. View > Open as Editable opens such a file in an
-  editor (up to 1 GB). The session reopens viewers where they were.
 
 ### Fixed
 
@@ -104,7 +103,7 @@ people downloading the release.
   app.
 - Opening a folder, a device such as `/dev/zero` or a pipe (from the file
   tree, the session or a reload) could hang the app or fill its memory.
-  These are refused now, as are files over 1 GB.
+  These are refused now. (Files too large to edit open in the new viewer.)
 - New files saved on Linux were readable only by you; they get the usual
   permissions now. ochrepad's own backups and settings stay private.
 - Reveal in File Manager on Windows failed for names with commas.
