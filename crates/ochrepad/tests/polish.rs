@@ -36,8 +36,10 @@ impl Dirs {
 fn app(d: &Dirs) -> Harness<'static, OchrepadApp> {
     let mut app = OchrepadApp::new();
     app.set_storage(&d.config(), &d.data());
+    // Tall enough for the whole File menu below the menu bar (in a shorter
+    // window egui moves it up over the menu titles).
     let mut h = Harness::builder()
-        .with_size(Vec2::new(1000.0, 600.0))
+        .with_size(Vec2::new(1000.0, 700.0))
         .with_step_dt(1.0 / 60.0)
         .with_max_steps(10_000)
         .build_ui_state(|ui, app: &mut OchrepadApp| app.show(ui), app);

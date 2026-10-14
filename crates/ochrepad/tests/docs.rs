@@ -1,5 +1,5 @@
-//! The documentation's key-binding examples must work, and every action
-//! must be documented in docs/keymap.md.
+//! The documentation's key-binding examples must work, every action must be
+//! documented in docs/keymap.md, and the session file example must load.
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -242,6 +242,22 @@ fn keymap_examples_in_the_docs_are_valid_keymaps() {
         assert!(!blocks.is_empty(), "{file} has no JSON examples");
         for block in blocks {
             if let Err(e) = Keymap::with_file(&block) {
+                panic!("{file}: {e}\n{block}");
+            }
+        }
+    }
+}
+
+#[test]
+fn the_session_file_example_is_a_session_file() {
+    let file = "docs/backups-and-session.md";
+    let blocks = json_blocks(&read(file));
+    assert!(!blocks.is_empty(), "{file} has no JSON example");
+    for block in blocks {
+        let session = ochrepad::app::parse_session(block.as_bytes())
+            .unwrap_or_else(|e| panic!("{file}: {e}\n{block}"));
+        for entry in session.files {
+            if let Err(e) = entry {
                 panic!("{file}: {e}\n{block}");
             }
         }

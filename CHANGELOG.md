@@ -83,6 +83,11 @@ people downloading the release.
 - Edit > Paste from History offers the last ten texts copied in ochrepad.
 - Edit > Read-Only refuses edits to a document until turned off.
 - File > Save All, Save a Copy As…, Reload from Disk and Rename….
+- File > Save Session… and Load Session…, as in Notepad++: save the open
+  files, with their carets, scroll positions and the open folder, to a
+  session file, and open them all again later beside the files already
+  open. Files that can't be opened are listed; on Windows, network paths
+  in a session file are not opened.
 - File > Export > HTML… saves the document as a web page that looks as it
   does in the editor, in the syntax theme's colours (as Notepad++'s
   NppExport does). Unsaved changes are included; a document over the

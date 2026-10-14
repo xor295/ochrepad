@@ -96,6 +96,54 @@ configuration folder (`%APPDATA%\ochrepad\config` on Windows,
 Markdown previews and comparisons are not part of the session; reopen them
 from the menus.
 
+## Session files
+
+Besides the session ochrepad keeps by itself, you can save sets of files to
+open together later, as in Notepad++:
+
+- **File > Save Session…** saves the open files to a file you name
+  (`session.json` is suggested): each file's path, in tab order, with its
+  caret and the first line on screen, which one is active, and the open
+  folder. Tabs that were never saved have no file to list, so they are left
+  out, and the status bar says how many.
+- **File > Load Session…** opens the files a session file lists, beside the
+  tabs already open (none are closed). Each opens as with **File > Open**: a
+  file that is already open is switched to, and a large one opens in the
+  viewer. The files come back with their carets and scroll positions, the
+  folder opens in the sidebar, and the session's active file becomes the
+  active tab. Files that are missing or can't be opened are listed in one
+  message afterwards; the others still open.
+
+A session file is JSON, so you can also write or change one by hand:
+
+```json
+{
+  "version": 1,
+  "files": [
+    { "path": "C:\\Users\\me\\project\\src\\main.rs", "caret": 1520, "first_line": 30 },
+    { "path": "notes.md" }
+  ],
+  "active": 0,
+  "folder": "C:\\Users\\me\\project"
+}
+```
+
+- `version` is required, and is 1. A file from a later version of
+  ochrepad, with a higher number, is refused.
+- A relative `path`, such as `notes.md` here, is taken from the session
+  file's folder. (Save Session writes full paths.)
+- `caret` is where the caret goes, in bytes from the start of the text
+  (UTF-8, with each line break counting as one); past the end it goes to the
+  end. `first_line` is the first line on screen, counting from 0.
+- `active` is the active file's place in the list, counting from 0.
+- Everything but `version` and each file's `path` can be left out.
+
+A session file may come from someone else, so ochrepad reads one only if it
+is no larger than 1 MB, and skips (and lists) an entry it can't read. On
+Windows it also opens only files on this computer's drives: a network path
+such as `\\server\share\notes.txt` is skipped as "not on this computer",
+because opening it would send your Windows credentials to that server.
+
 ## Files changed by other programs
 
 ochrepad watches the folders of the files you have open. When another program

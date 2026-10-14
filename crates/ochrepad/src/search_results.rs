@@ -458,7 +458,7 @@ enum Row {
 }
 
 /// "1 file", "3 files".
-fn files(n: usize) -> String {
+pub(crate) fn files(n: usize) -> String {
     if n == 1 {
         "1 file".to_owned()
     } else {

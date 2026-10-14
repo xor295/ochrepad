@@ -33,23 +33,27 @@ impl OchrepadApp {
 
     /// Opens `path` read-only in a viewer tab, or switches to its viewer.
     pub fn open_viewer(&mut self, path: &Path) -> Option<ViewerId> {
-        if let Some(id) = self.viewers.find(path) {
-            self.activate_viewer(id);
-            return Some(id);
-        }
-        match BigFile::open(path) {
-            Ok(file) => {
-                let id = self.viewers.add(file);
-                self.dock.push_to_focused_leaf(Tab::Viewer(id));
-                self.settings.add_recent(super::canonical(path));
-                self.activate_viewer(id);
-                Some(id)
-            }
+        match self.open_viewer_tab(path) {
+            Ok(id) => Some(id),
             Err(e) => {
                 self.message = Some(format!("Could not open {}:\n{e}", path.display()));
                 None
             }
         }
+    }
+
+    /// [`Self::open_viewer`], returning why the file could not be opened.
+    pub(super) fn open_viewer_tab(&mut self, path: &Path) -> Result<ViewerId, String> {
+        if let Some(id) = self.viewers.find(path) {
+            self.activate_viewer(id);
+            return Ok(id);
+        }
+        let file = BigFile::open(path).map_err(|e| e.to_string())?;
+        let id = self.viewers.add(file);
+        self.dock.push_to_focused_leaf(Tab::Viewer(id));
+        self.settings.add_recent(super::canonical(path));
+        self.activate_viewer(id);
+        Ok(id)
     }
 
     /// Makes viewer `id` the focused tab and gives it the keyboard.
@@ -437,7 +441,9 @@ impl OchrepadApp {
             self.confirm_editable = None;
             let path = v.file.path().to_path_buf();
             self.close_viewer(id);
-            self.open_in_editor(&path);
+            if let Err(e) = self.open_in_editor(&path) {
+                self.message = Some(format!("Could not open {}:\n{e}", path.display()));
+            }
         }
     }
 }

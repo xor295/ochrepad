@@ -116,6 +116,13 @@ pub(super) enum PendingJob {
         path: PathBuf,
         colored: bool,
     },
+    /// File > Save Session…: how many files the session lists, and how
+    /// many documents were left out for having no file.
+    Session {
+        path: PathBuf,
+        files: usize,
+        unnamed: usize,
+    },
     Other,
 }
 
@@ -241,6 +248,11 @@ impl OchrepadApp {
                 Some(PendingJob::Export { path, colored }) => {
                     self.exported(&path, colored, d.result);
                 }
+                Some(PendingJob::Session {
+                    path,
+                    files,
+                    unnamed,
+                }) => self.session_saved(&path, files, unnamed, d.result),
                 Some(PendingJob::Other) | None => {
                     if let Err(e) = d.result {
                         self.message = Some(format!("Could not write a backup:\n{e}"));

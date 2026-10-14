@@ -29,6 +29,7 @@ mod history_store;
 mod prefs;
 mod replace_in_files;
 mod search;
+mod sessions;
 mod summary;
 mod tools;
 mod viewers;
@@ -36,6 +37,7 @@ mod workspace;
 
 pub use autosave::{AutosaveSettings, Session, SessionBuffer, SessionTab, SessionViewer};
 pub use external::DiskChange;
+pub use sessions::{ParsedSession, SessionEntry, SessionFile, parse_session};
 
 use crate::compare::{Compare, CompareId, CompareSide, Compares};
 use crate::find_panel::{FindPanel, FindRequest, FindTarget};
@@ -418,6 +420,14 @@ impl OchrepadApp {
     /// Opens `path` in a new tab, or switches to it if it is already open.
     /// An untouched "new" tab is replaced, as in Notepad++.
     pub fn open_path(&mut self, path: &Path) {
+        if let Err(e) = self.open_tab(path) {
+            self.message = Some(format!("Could not open {}:\n{e}", path.display()));
+        }
+    }
+
+    /// [`Self::open_path`], returning the tab that shows the file, or why
+    /// it could not be opened.
+    fn open_tab(&mut self, path: &Path) -> Result<Tab, String> {
         let wanted = canonical(path);
         let existing = self
             .editor
@@ -428,25 +438,18 @@ impl OchrepadApp {
             .and_then(|b| self.editor.views_of(b).next().map(|v| v.id()));
         if let Some(view) = existing_view {
             self.activate(view);
-            return;
+            return Ok(Tab::Editor(view));
         }
         if self.opens_in_viewer(path) {
-            self.open_viewer(path);
-            return;
+            return self.open_viewer_tab(path).map(Tab::Viewer);
         }
-        self.open_in_editor(path);
+        self.open_in_editor(path).map(Tab::Editor)
     }
 
     /// Opens `path` in a new editor tab, however large it is (up to what
     /// `fileio` loads): `open_path` without the viewer.
-    fn open_in_editor(&mut self, path: &Path) {
-        let decoded = match fileio::load(path) {
-            Ok(d) => d,
-            Err(e) => {
-                self.message = Some(format!("Could not open {}:\n{e}", path.display()));
-                return;
-            }
-        };
+    fn open_in_editor(&mut self, path: &Path) -> Result<ViewId, String> {
+        let decoded = fileio::load(path).map_err(|e| e.to_string())?;
         let replace = {
             let b = self.buffer();
             b.meta.path.is_none()
@@ -461,10 +464,11 @@ impl OchrepadApp {
         self.restore_file_history(buffer, path);
         self.record_disk_stamp(buffer);
         self.settings.add_recent(canonical(path));
-        self.add_tab(buffer);
+        let view = self.add_tab(buffer);
         if let Some(old) = replace {
             self.close_now(old);
         }
+        Ok(view)
     }
 
     pub fn open_dialog(&mut self) {
@@ -1469,6 +1473,24 @@ impl OchrepadApp {
             .clicked()
         {
             self.close_folder();
+        }
+        ui.separator();
+        if ui
+            .button("Load Session…")
+            .on_hover_text("Open the files a session file lists, beside the open ones")
+            .clicked()
+        {
+            self.load_session();
+        }
+        if ui
+            .button("Save Session…")
+            .on_hover_text(
+                "Save the list of open files, with where you were in each and the \
+                 open folder, to open them all again later",
+            )
+            .clicked()
+        {
+            self.save_session();
         }
         ui.separator();
         // A viewer's file is read-only; the editor behind it is not in view.

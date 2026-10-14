@@ -66,7 +66,9 @@ A fast, native text editor in the spirit of Notepad++, written in Rust with
   (tail -f) ([more](docs/logs.md)).
 - **Backups and session restore**: unsaved work is backed up every few seconds
   and comes back, with your tabs and layout, the next time you start. Optional
-  automatic saving of named files ([more](docs/backups-and-session.md)).
+  automatic saving of named files, and File > Save Session… and Load
+  Session… to keep sets of files to open together
+  ([more](docs/backups-and-session.md)).
 - **Notepad++'s editing habits**: overtype (Insert), Begin/End Select,
   Split Lines (Ctrl+I), comment and uncomment (Ctrl+Q, Ctrl+K,
   Ctrl+Shift+K), closing brackets and smart indentation as you type

@@ -29,8 +29,8 @@ menu item to explain:
 - [Key bindings](keymap.md): the `keymap.json` format and every command you
   can bind.
 - [Backups, sessions and files changed elsewhere](backups-and-session.md):
-  how unsaved work is kept, what happens on exit, automatic saving, and
-  reloading files other programs change.
+  how unsaved work is kept, what happens on exit, automatic saving, saving
+  and loading session files, and reloading files other programs change.
 - [How ochrepad reads and writes files](file-handling.md): encodings, line
   endings, which files are refused, atomic saves, and exporting a document
   as a web page.
