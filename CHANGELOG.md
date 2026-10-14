@@ -39,7 +39,10 @@ people downloading the release.
   blank line lines up with its partner.
 - Replace in Files: the find panel replaces every match in a folder's files,
   after counting them and asking. Open documents get an undo step; the
-  other files are saved in their own encoding and line endings.
+  other files are saved in the background in their own encoding and line
+  endings, with a Stop button. Files that would change beyond the matches
+  (mixed line endings), read-only files and files changed since the count
+  are left alone and listed.
 - Search > Style All Occurrences of Token highlights a word everywhere in
   one of five colours (also on the right-click menu), with Clear Style and
   Jump Up/Down to go from one occurrence to the next.

@@ -83,3 +83,10 @@ fn with_auto_close_enter_opens_the_pair() {
     t.apply(Action::InsertNewline);
     assert_eq!(t.show(), "fn main() {\n    |\n}");
 }
+
+#[test]
+fn a_closer_typed_before_other_text_stays_put() {
+    let mut t = smart("{\n    |foo();");
+    t.apply(Action::InsertText("}".into()));
+    assert_eq!(t.show(), "{\n    }|foo();");
+}

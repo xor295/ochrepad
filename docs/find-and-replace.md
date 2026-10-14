@@ -80,16 +80,23 @@ opens it.
 
 **Replace in Files** (with the replace row shown too) replaces every match
 in the same files. It first counts them, then asks: "Replace 42 matches in
-7 files?", saying how many are saved straight away and how many are open.
+7 files?", saying how many are saved as they are done and how many are
+open, and listing the files with matches it will leave alone.
 
 - Files open in a tab get a Replace All each, as an undo step, and are left
-  unsaved, as Replace All in All Open Documents does.
-- The other files are saved at once, each in its own encoding, byte order
-  mark and line endings, written to a temporary file and moved into place so
-  a file is never half written. This can't be undone.
-- Binary files and files over 50 MB are left alone. A file that can't be
-  saved (a replacement its encoding has no characters for, say) is listed
-  afterwards and left as it was.
+  unsaved, as Replace All in All Open Documents does. A document set to
+  Read-Only is left alone.
+- The other files are saved one by one in the background, each in its own
+  encoding, byte order mark and line endings, written to a temporary file
+  and moved into place so a file is never half written. This can't be
+  undone. A window shows how far it has got; **Stop** leaves the files not
+  yet done as they were. The app waits for it before it exits.
+- A file is only rewritten if nothing but the matches would change. Files
+  with mixed line endings (a save would make them all alike), files
+  read-only on disk, binary files and files over 50 MB are left alone. So is
+  a file that changed on disk after the matches were counted.
+- A file that can't be saved (a replacement its encoding has no characters
+  for, say) is listed afterwards and left as it was.
 
 **Replace All in All Open Documents** (in replace mode) first counts the
 matches and asks before replacing. Each document gets its own undo step,

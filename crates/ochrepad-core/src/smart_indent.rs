@@ -42,6 +42,9 @@ pub(crate) fn resolve(
     indent: Indent,
     language: Option<&str>,
 ) -> Option<Resolved> {
+    if !matches!(action, Action::InsertNewline | Action::InsertText(_)) {
+        return None;
+    }
     // Two selections on one line would rewrite overlapping text (they are
     // sorted, so only neighbours can share one).
     let shared = sels
@@ -180,9 +183,9 @@ fn closer(doc: &Document, sels: &SelectionSet, c: char) -> Option<Resolved> {
         let line = doc.line_of(s.head);
         let line_start = doc.line_start(line);
         let blanks = doc.slice(line_start..s.head);
-        let aligned = blanks
-            .chars()
-            .all(|ch| ch == ' ' || ch == '\t')
+        let after = doc.slice(s.head..doc.line_end(line));
+        let blank = |t: &str| t.chars().all(|ch| ch == ' ' || ch == '\t');
+        let aligned = (blank(&blanks) && blank(&after))
             .then(|| unmatched_opener(doc, s.head, open, c))
             .flatten()
             .map(|at| leading(doc, doc.line_of(at)));

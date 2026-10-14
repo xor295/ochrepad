@@ -1821,11 +1821,12 @@ fn paint(
     };
     // Every match of the find panel's pattern on the visible lines.
     let matches = find_highlight.map(find_in_runs).unwrap_or_default();
-    // Styled tokens on the visible lines, with their colours.
-    let styled: Vec<(std::ops::Range<ByteOffset>, egui::Color32)> = token_styles
+    // Styled tokens on the visible lines, with their colours, by start.
+    let mut styled: Vec<(std::ops::Range<ByteOffset>, egui::Color32)> = token_styles
         .iter()
         .flat_map(|(s, color)| find_in_runs(s).into_iter().map(move |m| (m, *color)))
         .collect();
+    styled.sort_by_key(|(m, _)| m.start);
     let match_bg = crate::theme::match_bg(&visuals);
     // Smart highlighting: other occurrences of the selected text.
     let smart = smart_searcher(&mut state.smart, doc, &v.selections)
@@ -1905,8 +1906,14 @@ fn paint(
         if let Some(bg) = row_bg {
             text_painter.rect_filled(rect, 0.0, bg);
         }
-        for (m, color) in &styled {
-            if m.start >= m.end || m.end < row_start || m.start > row_end {
+        // Tokens are short (one line at most), so those reaching this row
+        // start at most a line before it.
+        let from = styled.partition_point(|(m, _)| m.start < line_start);
+        for (m, color) in styled[from..]
+            .iter()
+            .take_while(|(m, _)| m.start <= row_end)
+        {
+            if m.start >= m.end || m.end < row_start {
                 continue;
             }
             let a = m.start.max(row_start);

@@ -159,6 +159,14 @@ pub(crate) fn open_regular_file(
     Ok((file, meta))
 }
 
+/// Whether `bytes` decode to text that encodes back to exactly the same
+/// bytes: false for mixed line endings (saved as the main kind) and for
+/// legacy-encoded bytes with more than one form. Such a file can't be
+/// rewritten without changing it beyond what was meant.
+pub fn round_trips(bytes: &[u8], decoded: &Decoded) -> bool {
+    encode(&decoded.text, &decoded.meta).is_ok_and(|b| b == bytes)
+}
+
 /// Reads and decodes a file.
 pub fn load(path: &Path) -> Result<Decoded, LoadError> {
     let bytes = read_file(path)?;

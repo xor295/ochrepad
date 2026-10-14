@@ -85,6 +85,15 @@ pub enum Job {
     /// Rename a file or folder; fails if something else is at `to` (a
     /// change of letter case alone is fine).
     Rename { from: PathBuf, to: PathBuf },
+    /// Write `bytes` over the file at `path` as a user's file, only if it
+    /// is still as it was read (its length and modification time): Replace
+    /// in Files never writes text made from a file that changed since.
+    Replace {
+        path: PathBuf,
+        bytes: Vec<u8>,
+        len: u64,
+        modified: Option<std::time::SystemTime>,
+    },
 }
 
 /// A finished job: the tag `submit` returned, and the outcome.
@@ -133,6 +142,18 @@ pub fn read_snapshot(dir: &Path, id: &str) -> Result<(String, SnapshotInfo), Str
 
 fn run(job: Job) -> Result<(), String> {
     match job {
+        Job::Replace {
+            path,
+            bytes,
+            len,
+            modified,
+        } => {
+            let meta = std::fs::metadata(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+            if meta.len() != len || meta.modified().ok() != modified {
+                return Err(format!("{}: it changed since it was read", path.display()));
+            }
+            crate::write_user_file(&path, &bytes).map_err(|e| format!("{}: {e}", path.display()))
+        }
         Job::Save { path, doc, meta } => {
             save(&path, &doc.to_string(), &meta).map_err(|e| e.to_string())
         }

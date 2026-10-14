@@ -575,6 +575,14 @@ impl OchrepadApp {
     /// Starts the exit sequence: asks about each dirty buffer in tab order;
     /// cancelling any prompt cancels the exit. Tabs stay open throughout.
     pub fn request_exit(&mut self) {
+        if self.writing_in_files() {
+            self.message = Some(
+                "Replace in Files is still saving files.\n\
+                 Wait for it to finish, or press Stop, then exit."
+                    .to_owned(),
+            );
+            return;
+        }
         if self.snapshots_active() {
             self.exit_with_snapshots();
             return;
@@ -853,6 +861,7 @@ impl OchrepadApp {
             .frame(bar(ui, 2))
             .show(ui, |ui| self.status_bar(ui));
         if self.find.open {
+            self.find.replacing = self.replacing_in_files();
             let viewer = self.focused_viewer();
             let target = match viewer {
                 Some(_) => FindTarget::Viewer,

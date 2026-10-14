@@ -142,6 +142,9 @@ impl Editor {
         while runs < limit {
             let before = self.macro_state(view);
             for (i, action) in actions.iter().enumerate() {
+                // Going to a bookmark round past the end (or the start)
+                // ends a run to the end, as a search that would wrap does.
+                let line_before = until_end.then(|| self.caret_line(view)).flatten();
                 if let Err(error) = self.apply(view, action.clone()) {
                     if until_end {
                         return Ok(runs);
@@ -152,6 +155,14 @@ impl Editor {
                         action: action.clone(),
                         error,
                     });
+                }
+                let wrapped = match (action, line_before, self.caret_line(view)) {
+                    (Action::NextBookmark, Some(before), Some(after)) => after <= before,
+                    (Action::PrevBookmark, Some(before), Some(after)) => after >= before,
+                    _ => false,
+                };
+                if wrapped {
+                    return Ok(runs);
                 }
             }
             runs += 1;
@@ -164,6 +175,13 @@ impl Editor {
             }
         }
         Ok(runs)
+    }
+
+    /// The line of `view`'s primary caret.
+    fn caret_line(&self, view: ViewId) -> Option<usize> {
+        let v = self.view(view)?;
+        let b = self.buffer(v.buffer())?;
+        Some(b.doc().line_of(v.selections.primary().head))
     }
 
     /// (revision, selections, caret at end) — to detect runs that change

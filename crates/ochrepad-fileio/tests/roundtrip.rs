@@ -372,6 +372,20 @@ fn reopening_with_an_encoding_decodes_strictly() {
 }
 
 #[test]
+fn round_trips_only_when_saving_gives_the_same_bytes() {
+    let check = |bytes: &[u8]| {
+        let decoded = decode(bytes).unwrap();
+        ochrepad_fileio::round_trips(bytes, &decoded)
+    };
+    assert!(check(b"a\r\nb\r\n"));
+    assert!(check(b"one\ntwo"));
+    assert!(check("caf\u{e9}\n".as_bytes()));
+    // Mixed line endings are saved as the main kind.
+    assert!(!check(b"a\r\nb\nc\r\n"));
+    assert!(!check(b"x\ry\nz\n"));
+}
+
+#[test]
 fn appended_bytes_decode_as_far_as_whole_characters_go() {
     // UTF-8: a character cut in two waits for the rest; a final CR waits
     // for a possible LF.

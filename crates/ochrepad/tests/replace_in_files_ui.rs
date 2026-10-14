@@ -81,7 +81,7 @@ fn replace_in_files_rewrites_files_and_open_documents() {
         h.query_by_label_contains("Replace 7 matches in 4 files")
             .is_some()
     });
-    h.get_by_label_contains("3 files are saved straight away");
+    h.get_by_label_contains("3 files are saved as they are done");
     h.get_by_label_contains("1 open documents get an undo step");
     h.get_by_label("Replace All Matches").click();
     h.run();
@@ -99,7 +99,12 @@ fn replace_in_files_rewrites_files_and_open_documents() {
     assert_eq!(read("open.txt"), b"old");
     assert_eq!(h.state().buffer().doc().to_string(), "baz baz old");
     assert!(h.state().buffer().is_dirty());
-    h.get_by_label_contains("Replaced 7 matches in 4 files (1 open, not saved yet)");
+    // In the find panel and the status bar.
+    assert!(
+        h.get_all_by_label_contains("Replaced 7 matches in 4 files (1 open, not saved yet)")
+            .count()
+            >= 1
+    );
     // Undo brings the open document back.
     h.state_mut()
         .editor
@@ -135,4 +140,65 @@ fn cancelling_leaves_everything_alone() {
         std::fs::read_to_string(dir.path().join("a.txt")).unwrap(),
         "foo"
     );
+}
+
+#[test]
+fn files_that_would_change_beyond_the_matches_are_left_alone() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    // Mixed line endings: saving would make them all alike.
+    let mixed: &[u8] = b"a\r\nfoo\nb\r\nc\r\n";
+    std::fs::write(root.join("mixed.txt"), mixed).unwrap();
+    // Read-only on disk.
+    let locked = root.join("locked.txt");
+    std::fs::write(&locked, "foo").unwrap();
+    let mut perms = std::fs::metadata(&locked).unwrap().permissions();
+    perms.set_readonly(true);
+    std::fs::set_permissions(&locked, perms).unwrap();
+    // Changed after the count: written to between the question and the
+    // answer.
+    let changing = root.join("changing.txt");
+    std::fs::write(&changing, "foo").unwrap();
+    std::fs::write(root.join("plain.txt"), "foo").unwrap();
+
+    let mut h = harness();
+    {
+        let app = h.state_mut();
+        app.find.open = true;
+        app.find.show_replace = true;
+        app.find.show_files = true;
+        app.find.pattern = "foo".into();
+        app.find.replacement = "baz".into();
+        app.find.folder = root.display().to_string();
+    }
+    settle(&mut h);
+    h.get_by_label("Replace in Files").click();
+    wait_for(&mut h, |h| {
+        h.query_by_label_contains("Replace 2 matches in 2 files")
+            .is_some()
+    });
+    h.get_by_label_contains("2 files with matches are left alone");
+    h.get_by_label_contains("mixed line endings");
+    h.get_by_label_contains("read-only on disk");
+    // Make sure the modification time moves on, then change the file.
+    std::thread::sleep(Duration::from_millis(50));
+    std::fs::write(&changing, "foo foo").unwrap();
+    h.get_by_label("Replace All Matches").click();
+    h.run();
+    wait_for(&mut h, |h| !h.state().replacing_in_files());
+    h.state_mut().flush_disk();
+    h.run();
+
+    assert_eq!(std::fs::read(root.join("mixed.txt")).unwrap(), mixed);
+    assert_eq!(std::fs::read_to_string(&locked).unwrap(), "foo");
+    assert_eq!(std::fs::read_to_string(&changing).unwrap(), "foo foo");
+    assert_eq!(
+        std::fs::read_to_string(root.join("plain.txt")).unwrap(),
+        "baz"
+    );
+    h.get_by_label_contains("changed since the matches were counted");
+    let mut perms = std::fs::metadata(&locked).unwrap().permissions();
+    #[allow(clippy::permissions_set_readonly_false)]
+    perms.set_readonly(false);
+    std::fs::set_permissions(&locked, perms).unwrap();
 }

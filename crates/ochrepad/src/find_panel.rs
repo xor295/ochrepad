@@ -47,6 +47,8 @@ pub struct FindPanel {
     pub filters: String,
     pub subfolders: bool,
     pub include_ignored: bool,
+    /// Replace in Files is running (its button waits).
+    pub replacing: bool,
     pub pattern: String,
     pub replacement: String,
     pub options: SearchOptions,
@@ -66,6 +68,7 @@ impl Default for FindPanel {
             filters: String::new(),
             subfolders: true,
             include_ignored: false,
+            replacing: false,
             pattern: String::new(),
             replacement: String::new(),
             // Notepad++ wraps by default.
@@ -412,7 +415,10 @@ impl FindPanel {
                 if self.show_replace
                     && !in_viewer
                     && ui
-                        .add_enabled(valid, egui::Button::new("Replace in Files"))
+                        .add_enabled(
+                            valid && !self.replacing,
+                            egui::Button::new("Replace in Files"),
+                        )
                         .on_hover_text(
                             "Replace every match in these files (after counting them and asking)",
                         )

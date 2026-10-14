@@ -252,3 +252,15 @@ fn a_read_only_document_still_reloads_from_disk() {
         Err(ActionError::ReadOnly)
     );
 }
+
+#[test]
+fn a_bookmark_macro_run_to_the_end_stops_at_the_last_bookmark() {
+    let mut t = setup("|a\nb\nc\nd\n");
+    mark(&mut t, &[1, 3]);
+    let actions = vec![Action::NextBookmark, Action::InsertText("// ".into())];
+    let runs =
+        t.ed.play_macro(t.view, &actions, ochrepad_core::Repeat::UntilEnd)
+            .unwrap();
+    assert_eq!(runs, 2);
+    assert_eq!(t.text(), "a\n// b\nc\n// d\n");
+}
