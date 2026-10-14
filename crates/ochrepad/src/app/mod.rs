@@ -170,6 +170,8 @@ pub struct OchrepadApp {
     pub changes: crate::change_history::ChangeHistory,
     /// View > Function List.
     pub function_list: crate::function_list::FunctionList,
+    /// View > Document List.
+    document_list: crate::document_list::DocumentList,
     /// Search > Style All Occurrences of Token.
     pub token_styles: crate::token_styles::TokenStyles,
     /// The View > Summary dialog, while it is open.
@@ -257,6 +259,7 @@ impl OchrepadApp {
             filter: Default::default(),
             changes: Default::default(),
             function_list: Default::default(),
+            document_list: Default::default(),
             token_styles: Default::default(),
             summary: None,
             rename: None,
@@ -992,6 +995,7 @@ impl OchrepadApp {
 
         self.sidebar(ui);
         self.function_list_panel(ui);
+        self.document_list_panel(ui);
 
         self.dark = ui.visuals().dark_mode;
         if self
@@ -2102,6 +2106,70 @@ impl OchrepadApp {
         }
     }
 
+    /// View > Document List: the open documents and viewers in tab order,
+    /// beside the Function List. A click activates a document's tab and a
+    /// middle click closes it, as they do on the tab itself.
+    fn document_list_panel(&mut self, ui: &mut Ui) {
+        use crate::document_list::{ListRequest, Row};
+        if !self.settings.show_document_list {
+            return;
+        }
+        let current = self
+            .focused_viewer()
+            .map_or(Tab::Editor(self.active), Tab::Viewer);
+        let (tabs, rows): (Vec<Tab>, Vec<Row>) = self
+            .dock
+            .iter_all_tabs()
+            .filter_map(|(_, &tab)| {
+                let (title, path) = match tab {
+                    Tab::Editor(view) => (
+                        editor_title(&self.editor, &self.untitled, view),
+                        self.editor
+                            .view(view)
+                            .and_then(|v| self.editor.buffer(v.buffer()))
+                            .and_then(|b| b.meta.path.as_deref()),
+                    ),
+                    Tab::Viewer(id) => (
+                        viewer_title(&self.viewers, id),
+                        self.viewers.get(id).map(|v| v.file.path()),
+                    ),
+                    Tab::Preview(_) | Tab::Compare(_) => return None,
+                };
+                let row = Row {
+                    title,
+                    path,
+                    active: tab == current,
+                };
+                Some((tab, row))
+            })
+            .unzip();
+        let frame = egui::Frame::new().fill(ui.visuals().panel_fill);
+        let shown = Panel::right("document-list")
+            .frame(frame)
+            .resizable(true)
+            .default_size(self.settings.document_list_width)
+            .size_range(160.0..=480.0)
+            .show(ui, |ui| self.document_list.ui(ui, &rows));
+        let width = shown.response.rect.width();
+        if (width - self.settings.document_list_width).abs() > 0.5 {
+            self.settings.document_list_width = width;
+        }
+        match shown.inner {
+            Some(ListRequest::Activate(i)) => match tabs.get(i) {
+                Some(&Tab::Editor(view)) => self.activate(view),
+                Some(&Tab::Viewer(id)) => self.activate_viewer(id),
+                _ => {}
+            },
+            Some(ListRequest::Close(i)) => match tabs.get(i) {
+                Some(&Tab::Editor(view)) => self.close_view(view),
+                Some(&Tab::Viewer(id)) => self.close_viewer(id),
+                _ => {}
+            },
+            Some(ListRequest::Hide) => self.settings.show_document_list = false,
+            None => {}
+        }
+    }
+
     /// Goes to the start of the next (or previous) run of lines changed since
     /// the file was saved, going round the document.
     pub fn go_to_change(&mut self, backward: bool) {
@@ -2486,6 +2554,8 @@ impl OchrepadApp {
         ui.checkbox(&mut self.settings.fold_margin, "Show Fold Margin");
         ui.checkbox(&mut self.settings.word_wrap, "Word Wrap");
         ui.checkbox(&mut self.settings.document_map, "Document Map");
+        ui.checkbox(&mut self.settings.show_document_list, "Document List")
+            .on_hover_text("A panel listing the open documents, to switch between them");
         ui.checkbox(&mut self.settings.show_function_list, "Function List")
             .on_hover_text("A panel listing the document's functions, types and headings");
         ui.checkbox(&mut self.settings.change_history, "Change History")
@@ -2841,21 +2911,10 @@ impl TabViewer for Tabs<'_> {
                 .into();
             }
             Tab::Viewer(id) => {
-                return format!("{} (read-only)", viewer_name(self.viewers, *id)).into();
+                return viewer_title(self.viewers, *id).into();
             }
         };
-        let Some(buffer) = self.editor.view(view).map(|v| v.buffer()) else {
-            return "?".into();
-        };
-        let name = buffer_name(self.editor, self.untitled, buffer);
-        let dirty = self.editor.buffer(buffer).is_some_and(Buffer::is_dirty);
-        let read_only = self.editor.buffer(buffer).is_some_and(|b| b.read_only);
-        let name = if dirty { format!("{name} *") } else { name };
-        if read_only {
-            format!("{name} (read-only)").into()
-        } else {
-            name.into()
-        }
+        editor_title(self.editor, self.untitled, view).into()
     }
 
     fn ui(&mut self, ui: &mut Ui, tab: &mut Tab) {
@@ -3083,6 +3142,29 @@ fn viewer_name(viewers: &crate::viewer::Viewers, id: crate::viewer::ViewerId) ->
         .get(id)
         .and_then(|v| v.file.path().file_name())
         .map_or_else(|| "?".to_owned(), |n| n.to_string_lossy().into_owned())
+}
+
+/// A viewer tab's title (the tab bar and the Document List).
+fn viewer_title(viewers: &crate::viewer::Viewers, id: crate::viewer::ViewerId) -> String {
+    format!("{} (read-only)", viewer_name(viewers, id))
+}
+
+/// An editor tab's title (the tab bar and the Document List): its
+/// document's name, with " *" while it has unsaved changes and
+/// " (read-only)" while it refuses edits.
+fn editor_title(editor: &Editor, untitled: &HashMap<BufferId, String>, view: ViewId) -> String {
+    let Some(buffer) = editor.view(view).map(|v| v.buffer()) else {
+        return "?".to_owned();
+    };
+    let name = buffer_name(editor, untitled, buffer);
+    let dirty = editor.buffer(buffer).is_some_and(Buffer::is_dirty);
+    let read_only = editor.buffer(buffer).is_some_and(|b| b.read_only);
+    let name = if dirty { format!("{name} *") } else { name };
+    if read_only {
+        format!("{name} (read-only)")
+    } else {
+        name
+    }
 }
 
 fn buffer_name(editor: &Editor, untitled: &HashMap<BufferId, String>, buffer: BufferId) -> String {

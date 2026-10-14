@@ -46,6 +46,9 @@ people downloading the release.
 - View > Function List: a panel listing the document's functions, types,
   modules and Markdown headings (from the syntax highlighting, so for most
   languages), with a filter; click one to go to it.
+- View > Document List, as in Notepad++: a panel listing the open
+  documents in tab order, each with its folder. Click one to switch to it,
+  middle-click to close it.
 - Change history: the gutter marks the lines changed (blue), added (green)
   and deleted (red) since the file was saved. View > Change History turns
   it off.

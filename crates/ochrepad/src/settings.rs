@@ -69,6 +69,9 @@ pub struct AppSettings {
     /// View > Function List: the panel of the document's functions.
     pub show_function_list: bool,
     pub function_list_width: f32,
+    /// View > Document List: the panel of the open documents.
+    pub show_document_list: bool,
+    pub document_list_width: f32,
     /// Editor text size in percent of `font_size` (View > Zoom).
     pub zoom: u32,
     /// View > Show Symbol: spaces as dots and tabs as arrows.
@@ -122,6 +125,8 @@ impl Default for AppSettings {
             change_history: true,
             show_function_list: false,
             function_list_width: 240.0,
+            show_document_list: false,
+            document_list_width: 240.0,
             zoom: 100,
             show_space_tab: false,
             show_eol: false,

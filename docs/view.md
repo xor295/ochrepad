@@ -63,6 +63,27 @@ colour, so you can see the shape of the file and jump around in it.
 - **View > Document Map** turns it off for every editor. It also hides
   itself while a pane is too narrow to show 40 columns of text beside it.
 
+## Document List
+
+**View > Document List** opens a panel on the right listing the open
+documents in tab order, so you can see and switch between many files. Each
+row shows the name its tab shows, with the same `*` for unsaved changes and
+"(read-only)", followed by its folder, dimmed. A folder too long for the
+panel is cut from the front so that its last folders show; hover over a
+row for the whole path.
+
+- **Click** a row to switch to that document, as clicking its tab does.
+- **Middle-click** a row to close its tab. A document with unsaved changes
+  asks first, as on the tab bar.
+- The current document's row is highlighted, and the list scrolls to it
+  when you switch tabs another way.
+
+The tabs of both panes are listed, and files open in the
+[viewer for large files](logs.md#large-files-the-viewer); Markdown previews
+and comparisons are not. With the Function List open too, the Document List
+sits beside it, next to the editor. The panel remembers whether it is open
+and how wide it is; **×** closes it.
+
 ## Function List
 
 **View > Function List** opens a panel on the right listing what the

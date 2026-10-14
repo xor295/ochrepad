@@ -43,6 +43,8 @@ A fast, native text editor in the spirit of Notepad++, written in Rust with
 - **Function List**: a panel of the document's functions, types and
   headings, filtered as you type; click one to go there
   ([more](docs/view.md#function-list)).
+- **Document List**: a panel of the open documents in tab order, to see
+  and switch between many files ([more](docs/view.md#document-list)).
 - **Word wrap** at the pane's edge, with continuation rows indented like
   the line ([more](docs/view.md#word-wrap)).
 - **Folders**: open a folder to browse its files in a sidebar, with
