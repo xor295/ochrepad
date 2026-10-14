@@ -167,6 +167,45 @@ fn the_tab_menu_closes_tabs_beside_and_unchanged() {
 }
 
 #[test]
+fn the_tab_menu_saves_and_sets_read_only_for_its_tab() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (a, b) = (tmp.path().join("a.txt"), tmp.path().join("b.txt"));
+    std::fs::write(&a, "a").unwrap();
+    std::fs::write(&b, "b").unwrap();
+    let mut h = harness();
+    h.state_mut().open_path(&a);
+    h.run();
+    typ(&mut h, "new ");
+    h.state_mut().open_path(&b);
+    h.run();
+    assert_eq!(h.state().file_name(), "b.txt");
+
+    // Save on a tab in the background saves that tab's document.
+    h.get_by_label("a.txt *").click_secondary();
+    h.run();
+    click(&mut h, "Save");
+    h.state_mut().flush_disk();
+    h.run();
+    assert_eq!(std::fs::read_to_string(&a).unwrap(), "new a");
+    assert_eq!(h.state().file_name(), "a.txt");
+    assert!(!h.state().buffer().is_dirty());
+
+    // Read-Only, for the tab right-clicked.
+    h.get_by_label("b.txt").click_secondary();
+    h.run();
+    click(&mut h, "Read-Only");
+    let app = h.state();
+    let read_only = |name: &str| {
+        app.editor
+            .buffers()
+            .find(|buf| buf.meta.path.as_deref().and_then(|p| p.file_name()) == Some(name.as_ref()))
+            .is_some_and(|buf| buf.read_only)
+    };
+    assert!(read_only("b.txt"));
+    assert!(!read_only("a.txt"));
+}
+
+#[test]
 fn copying_paths_from_the_tab_and_edit_menus() {
     let tmp = tempfile::tempdir().unwrap();
     let file = tmp.path().join("notes.txt");

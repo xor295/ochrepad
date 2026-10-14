@@ -100,6 +100,11 @@ pub enum TabFileCommand {
     CloseLeft,
     CloseRight,
     CloseUnchanged,
+    Save,
+    SaveAs,
+    Rename,
+    /// Set Read-Only to this.
+    ReadOnly(bool),
     Reveal,
     Reload,
 }
@@ -150,6 +155,25 @@ pub(super) fn tab_menu(
         return;
     };
     let path = editor.buffer(buffer).and_then(|b| b.meta.path.clone());
+    // As in Notepad++'s tab menu: these act on this tab's document.
+    for (label, command, enabled) in [
+        ("Save", TabFileCommand::Save, true),
+        ("Save As…", TabFileCommand::SaveAs, true),
+        ("Rename…", TabFileCommand::Rename, path.is_some()),
+    ] {
+        if ui.add_enabled(enabled, Button::new(label)).clicked() {
+            commands.push(TabCommand::File(command, view));
+        }
+    }
+    let mut read_only = editor.buffer(buffer).is_some_and(|b| b.read_only);
+    if ui
+        .checkbox(&mut read_only, "Read-Only")
+        .on_hover_text("Refuse edits to this document (the file on disk is not changed)")
+        .changed()
+    {
+        commands.push(TabCommand::File(TabFileCommand::ReadOnly(read_only), view));
+    }
+    ui.separator();
     copy_path_items(
         ui,
         path.as_deref(),
@@ -339,6 +363,29 @@ impl OchrepadApp {
                     })
                     .collect();
                 self.close_queue.extend(clean);
+            }
+            TabFileCommand::Save | TabFileCommand::SaveAs | TabFileCommand::Rename => {
+                // The commands act on the active document.
+                self.activate(view);
+                match command {
+                    TabFileCommand::Save => {
+                        self.save();
+                    }
+                    TabFileCommand::SaveAs => {
+                        self.save_as();
+                    }
+                    _ => self.open_rename(),
+                }
+            }
+            TabFileCommand::ReadOnly(on) => {
+                if let Some(b) = self
+                    .editor
+                    .view(view)
+                    .map(|v| v.buffer())
+                    .and_then(|b| self.editor.buffer_mut(b))
+                {
+                    b.read_only = on;
+                }
             }
             TabFileCommand::Reveal => {
                 let path = self

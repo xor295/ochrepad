@@ -33,6 +33,8 @@ people downloading the release.
   Notepad++.
 - Find in Files' filters can leave files and folders out with `!`, as in
   Notepad++: `*.js; !*.min.js; !node_modules`.
+- The tab menu can save, Save As, rename and set Read-Only for its tab, as
+  in Notepad++.
 - Overtype: Insert switches to typing over the text, as in Notepad++. The
   status bar shows OVR and the caret becomes a bar under the character it
   replaces; typing never runs past the end of a line.

@@ -85,6 +85,8 @@ Other View:
 - **Close All to the Left** and **Close All to the Right**: the other tabs on
   that side in the same pane.
 - **Close All Unchanged**: every tab without unsaved changes, in every pane.
+- **Save**, **Save As…** and **Rename…** for that tab's document (it
+  becomes the active one), and **Read-Only** to refuse edits to it.
 - **Copy Full File Path**, **Copy File Name** and **Copy Folder Path**.
 - **Reveal in File Manager**: the file, selected in Explorer on Windows; its
   folder on Linux.
