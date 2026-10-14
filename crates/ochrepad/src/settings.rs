@@ -40,6 +40,8 @@ pub struct AppSettings {
     pub fold_margin: bool,
     /// Wrap long lines at the pane's width.
     pub word_wrap: bool,
+    /// The zoomed-out map beside the text.
+    pub document_map: bool,
     pub recent_files: Vec<PathBuf>,
 }
 
@@ -58,6 +60,7 @@ impl Default for AppSettings {
             highlight_limit_mb: 10,
             fold_margin: true,
             word_wrap: false,
+            document_map: true,
             recent_files: Vec::new(),
         }
     }

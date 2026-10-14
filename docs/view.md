@@ -1,4 +1,22 @@
-# Folding, word wrap and the editor view
+# The editor view: document map, word wrap and folding
+
+## Document map
+
+The strip on the right of each editor shows the whole document zoomed out:
+each line is a thin row, and each run of text a block in its highlight
+colour, so you can see the shape of the file and jump around in it.
+
+- The lighter band marks the part of the document on screen. **Drag it** to
+  scroll; it moves like a scrollbar.
+- **Click** anywhere else in the map to bring that part of the document to
+  the middle of the editor.
+- The mouse wheel over the map scrolls the editor.
+- When the document is longer than the map, the map scrolls along with the
+  editor, keeping the band in view.
+- Folded lines are left out and wrapped lines show as their rows, as in the
+  editor.
+- **View > Document Map** turns it off for every editor. It also hides
+  itself while a pane is too narrow to show 40 columns of text beside it.
 
 ## Word wrap
 
@@ -25,7 +43,6 @@ scrolling sideways. It applies to every tab and is remembered.
   exactly would make every resize slow.
 - Column selection (Alt+drag) still selects the same columns of each line;
   on a wrapped line the columns may be on different rows.
-
 
 ## Folding
 

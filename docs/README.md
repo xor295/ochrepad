@@ -8,8 +8,8 @@ menu item to explain:
   regular-expression syntax differs from Notepad++.
 - [Column selection and multiple cursors](column-selection.md): making
   rectangles and extra carets, and how copy, paste and sorting work with them.
-- [Folding and word wrap](view.md): where blocks can be folded, the fold
-  shortcuts, how folded text behaves, and how wrapped lines are edited.
+- [The editor view](view.md): the document map, word wrap, and folding
+  (where blocks can be folded, the shortcuts, how folded text behaves).
 - [Macros](macros.md): what gets recorded, running a macro to the end of the
   file, saving macros with shortcuts.
 - [Key bindings](keymap.md): the `keymap.json` format and every command you

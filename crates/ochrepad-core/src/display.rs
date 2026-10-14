@@ -252,6 +252,18 @@ impl<'a> DisplayMap<'a> {
         }
     }
 
+    /// The line's visual column where `row` starts, and the cells the row
+    /// is indented by on screen (continuation rows only).
+    pub fn row_cols(&self, row: RowPos) -> (usize, usize) {
+        match self.wrapped(row.line) {
+            Some(w) if row.sub > 0 => {
+                let sub = row.sub.min(w.starts.len() - 1);
+                (w.start_cols[sub], w.indent)
+            }
+            _ => (0, 0),
+        }
+    }
+
     /// Cells the text of `row` is indented by (continuation rows only).
     pub fn row_indent(&self, row: RowPos) -> usize {
         match self.wrapped(row.line) {

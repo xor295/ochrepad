@@ -10,6 +10,7 @@ use ochrepad_core::{
 };
 use ochrepad_fileio::normalize_line_endings;
 
+use crate::doc_map::{MAP_W, MapView};
 use crate::keymap::{EditorCommand, Keymap};
 use crate::layout::{LayoutCache, LineLayout, Styling, visual_col_at_x};
 
@@ -66,6 +67,11 @@ pub struct EditorViewState {
     pub fold_margin: bool,
     /// Wrap lines at the pane's width.
     pub word_wrap: bool,
+    /// Show the document map beside the text.
+    pub document_map: bool,
+    map_cache: crate::doc_map::MapCache,
+    /// Dragging the map's viewport marker: where it was grabbed, from its top.
+    map_drag: Option<f32>,
 }
 
 impl Default for EditorViewState {
@@ -73,6 +79,9 @@ impl Default for EditorViewState {
         Self {
             fold_margin: true,
             word_wrap: false,
+            document_map: true,
+            map_cache: Default::default(),
+            map_drag: None,
             cache: LayoutCache::default(),
             font_size: 14.0,
             last_activity: 0.0,
@@ -119,6 +128,8 @@ struct Frame {
     /// margin, or one cell of padding without it.
     fold_w: f32,
     fold_margin: bool,
+    /// The document map strip, when shown.
+    map: Option<Rect>,
 }
 
 impl Frame {
@@ -228,6 +239,7 @@ pub fn editor_view(
     let fold_margin = state.fold_margin;
     let fold_w = if fold_margin { 2.0 } else { 1.0 } * cell_w;
     let wrap = state.word_wrap;
+    let show_map = state.document_map;
     // No horizontal scrollbar while lines wrap.
     let hbar_h = if wrap { 0.0 } else { SCROLLBAR_W };
     let geometry = |line_count: usize, visible_lines: usize| {
@@ -238,7 +250,13 @@ pub fn editor_view(
             Pos2::new(rect.max.x - SCROLLBAR_W, rect.max.y - hbar_h),
         );
         let gutter = Rect::from_min_max(body.min, Pos2::new(body.min.x + gutter_w, body.max.y));
-        let content = Rect::from_min_max(Pos2::new(gutter.max.x, body.min.y), body.max);
+        let mut content = Rect::from_min_max(Pos2::new(gutter.max.x, body.min.y), body.max);
+        // The map takes the right of the text area while 40 columns of text
+        // still fit beside it.
+        let map = (show_map && content.width() - MAP_W >= 40.0 * cell_w).then(|| {
+            content.max.x -= MAP_W;
+            Rect::from_min_max(Pos2::new(content.max.x, content.min.y), body.max)
+        });
         let rows_full = ((content.height() / line_h).floor() as usize).max(1);
         Frame {
             vbar: Rect::from_min_max(
@@ -258,6 +276,7 @@ pub fn editor_view(
             visible_lines,
             fold_w,
             fold_margin,
+            map,
         }
     };
 
@@ -487,6 +506,46 @@ pub fn editor_view(
     }
     top = top.clamped(&rows, f.rows_full);
     x_off = x_off.clamp(0.0, h_max.max(x_off.min(state.max_width)));
+
+    // --- Document map --------------------------------------------------------------
+    if !down {
+        state.map_drag = None;
+    }
+    if let Some(strip) = f.map {
+        let rows = display_map(editor, view);
+        let map = MapView::new(
+            &rows,
+            strip,
+            top.row,
+            top.offset(&rows),
+            max_offset,
+            f.rows_full,
+        );
+        if pressed
+            && state.bar_drag.is_none()
+            && let Some(p) = pointer
+            && response.contains_pointer()
+            && strip.contains(p)
+        {
+            let marker = map.viewport_rect(strip);
+            if marker.contains(p) {
+                state.map_drag = Some(p.y - marker.min.y);
+            } else if let Some(row) = map.row_at(strip, p.y) {
+                // Centre the editor on the clicked row; keep dragging from
+                // the middle of the marker.
+                let half = f.rows_full as isize / 2;
+                top = Top {
+                    row: rows.advance(row, -half),
+                    frac: 0.0,
+                }
+                .clamped(&rows, f.rows_full);
+                state.map_drag = Some(marker.height() / 2.0);
+            }
+        } else if let (Some(grab), Some(p)) = (state.map_drag, pointer) {
+            let t = ((p.y - grab - strip.min.y) / map.track).clamp(0.0, 1.0);
+            top = Top::at_offset(&rows, t as f64 * max_offset).clamped(&rows, f.rows_full);
+        }
+    }
 
     // --- Fold margin and folded-line markers ------------------------------------
     let mut fold_click = false;
@@ -1184,7 +1243,8 @@ fn paint(
     let text_color = visuals.text_color();
     let current_line_bg = visuals.faint_bg_color;
     let sel_bg = visuals.selection.bg_fill;
-    let spans: Vec<(usize, Vec<Option<ochrepad_syntax::LineSpans>>)> = match styler {
+    let mut styler = styler;
+    let spans: Vec<(usize, Vec<Option<ochrepad_syntax::LineSpans>>)> = match styler.as_deref_mut() {
         Some(s) => runs
             .iter()
             .map(|r| (r.start, s.line_spans(doc, r.clone())))
@@ -1383,6 +1443,53 @@ fn paint(
                 should_interrupt_composition: false,
             })
         });
+    }
+
+    // The document map.
+    if let Some(strip) = f.map {
+        painter.rect_filled(strip, 0.0, visuals.extreme_bg_color);
+        let map = MapView::new(
+            &rows,
+            strip,
+            top.row,
+            top.offset(&rows),
+            max_offset,
+            f.rows_full,
+        );
+        // Highlighting for the map's lines, asked for per run of lines.
+        let mut map_spans: std::collections::HashMap<usize, ochrepad_syntax::LineSpans> =
+            Default::default();
+        if let Some(s) = styler {
+            let mut i = 0;
+            while i < map.rows.len() {
+                let start = map.rows[i].line;
+                let mut end = start + 1;
+                while i < map.rows.len() && map.rows[i].line <= end {
+                    end = map.rows[i].line + 1;
+                    i += 1;
+                }
+                for (line, sp) in (start..end).zip(s.line_spans(doc, start..end)) {
+                    if let Some(sp) = sp {
+                        map_spans.insert(line, sp);
+                    }
+                }
+            }
+        }
+        let hovered = ui
+            .input(|i| i.pointer.hover_pos())
+            .is_some_and(|p| strip.contains(p));
+        crate::doc_map::paint(
+            &painter,
+            strip,
+            &map,
+            &rows,
+            &mut state.map_cache,
+            buffer,
+            &|line| map_spans.get(&line).cloned(),
+            &visuals,
+            editor.settings.tab_width,
+            hovered || state.map_drag.is_some(),
+        );
     }
 
     // Scrollbars.

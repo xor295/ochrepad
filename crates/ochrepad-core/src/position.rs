@@ -179,6 +179,29 @@ pub fn line_visual_width(doc: &Document, line: usize, tab_width: usize) -> Visua
     VisualCol(advance(&doc.line_text(line), 0, tab_width))
 }
 
+/// (byte, visual column, width in cells) of each grapheme of one line's
+/// `text`.
+pub fn cells(text: &str, tab_width: usize) -> Vec<(usize, usize, usize)> {
+    let mut col = 0;
+    let mut out = Vec::with_capacity(text.len());
+    if text.is_ascii() {
+        // Every byte is a grapheme (a line holds no CR LF pair).
+        let tw = tab_width.max(1);
+        for (i, b) in text.bytes().enumerate() {
+            let w = if b == b'\t' { tw - col % tw } else { 1 };
+            out.push((i, col, w));
+            col += w;
+        }
+    } else {
+        for (i, g) in text.grapheme_indices(true) {
+            let w = grapheme_width(g, col, tab_width);
+            out.push((i, col, w));
+            col += w;
+        }
+    }
+    out
+}
+
 /// The narrowest wrap width, in cells.
 pub const MIN_WRAP_WIDTH: usize = 10;
 
