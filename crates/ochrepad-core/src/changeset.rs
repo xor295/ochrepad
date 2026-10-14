@@ -94,6 +94,12 @@ impl ChangeSet {
         self.base_len
     }
 
+    /// The same edits against a document `by` bytes longer at its end, as
+    /// after text was appended past every edit (follow mode).
+    pub(crate) fn extend_base(&mut self, by: usize) {
+        self.base_len = ByteOffset(self.base_len.0 + by);
+    }
+
     pub fn new_len(&self) -> ByteOffset {
         let delta: isize = self
             .edits

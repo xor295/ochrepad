@@ -72,6 +72,9 @@ const NEXT_DIFF: KeyboardShortcut = KeyboardShortcut::new(Modifiers::NONE, Key::
 const PREV_DIFF: KeyboardShortcut = KeyboardShortcut::new(Modifiers::SHIFT, Key::F8);
 
 const GO_TO_LINE: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::G);
+/// Ctrl+Shift+L is Notepad++'s Delete Line.
+const FILTER_LINES: KeyboardShortcut =
+    KeyboardShortcut::new(Modifiers::ALT.plus(Modifiers::SHIFT), Key::L);
 const ZOOM_IN: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::Plus);
 const ZOOM_IN_EQUALS: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::Equals);
 const ZOOM_OUT: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::Minus);
@@ -122,6 +125,10 @@ pub struct OchrepadApp {
     title: String,
     pub highlighting: Highlighting,
     pub find: FindPanel,
+    /// Each tab's filter (Search > Filter Lines).
+    pub filter: crate::filter_bar::FilterBar,
+    /// The log highlight rules from the settings, compiled.
+    log_rules: crate::log_rules::LogRules,
     /// The Search Results panel.
     pub results: crate::search_results::SearchResults,
     replace_all_plan: Option<search::ReplaceAllPlan>,
@@ -189,6 +196,8 @@ impl OchrepadApp {
             title: String::new(),
             highlighting: Highlighting::new(Arc::new(ochrepad_syntax::Registry::load())),
             find: FindPanel::default(),
+            filter: Default::default(),
+            log_rules: Default::default(),
             results: Default::default(),
             replace_all_plan: None,
             tree: None,
@@ -583,6 +592,14 @@ impl OchrepadApp {
         if let Some(path) = self.dock.find_tab(&Tab::Editor(view)) {
             self.dock.remove_tab(path);
         }
+        if self.filter.is_open(view) {
+            self.filter.close(&mut self.editor, view);
+        }
+        if let Some(b) = self.editor.view(view).map(|v| v.buffer())
+            && self.editor.views_of(b).count() == 1
+        {
+            self.set_following(b, false);
+        }
         let buffer = self.editor.view(view).map(|v| v.buffer());
         self.editor.remove_view(view);
         self.view_states.remove(&view);
@@ -747,6 +764,25 @@ impl OchrepadApp {
                 }
             }
         }
+        if self.filter.is_open(self.active) {
+            let requests = Panel::bottom("filter")
+                .show(ui, |ui| {
+                    self.filter.ui(ui, &self.editor, self.active, self.now)
+                })
+                .inner;
+            for r in requests {
+                match r {
+                    crate::filter_bar::FilterRequest::Close => {
+                        self.filter.close(&mut self.editor, self.active);
+                        self.view_state_mut().request_focus();
+                    }
+                }
+            }
+        }
+        if self.filter.tick(&mut self.editor, self.now) {
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(50));
+        }
         if self.results.poll() {
             ui.ctx().request_repaint();
         }
@@ -780,6 +816,7 @@ impl OchrepadApp {
             let find_highlight = self.find.highlighter();
             let mut tabs = Tabs {
                 look: self.settings.look(),
+                log_rules: &self.log_rules,
                 fold_margin: self.settings.fold_margin,
                 word_wrap: self.settings.word_wrap,
                 document_map: self.settings.document_map,
@@ -956,6 +993,9 @@ impl OchrepadApp {
         }
         if pressed(ui, &GO_TO_LINE) {
             self.go_to_line = Some(String::new());
+        }
+        if pressed(ui, &FILTER_LINES) {
+            self.filter.open(&self.editor, self.active, self.now);
         }
         if pressed(ui, &ZOOM_IN) || pressed(ui, &ZOOM_IN_EQUALS) {
             self.zoom_by(1);
@@ -1369,6 +1409,9 @@ impl OchrepadApp {
         if item(ui, "Go to Line…", "Ctrl+G") {
             self.go_to_line = Some(String::new());
         }
+        if item(ui, "Filter Lines…", "Alt+Shift+L") {
+            self.filter.open(&self.editor, self.active, self.now);
+        }
         if item(ui, "Go to Matching Bracket", "Ctrl+B") {
             self.apply(Action::GoToMatchingBracket);
         }
@@ -1643,6 +1686,18 @@ impl OchrepadApp {
         ui.checkbox(&mut self.settings.fold_margin, "Show Fold Margin");
         ui.checkbox(&mut self.settings.word_wrap, "Word Wrap");
         ui.checkbox(&mut self.settings.document_map, "Document Map");
+        let buffer = self.buffer_id();
+        let mut following = self.is_following(buffer);
+        if ui
+            .add_enabled(
+                self.buffer().meta.path.is_some(),
+                egui::Checkbox::new(&mut following, "Follow (tail -f)"),
+            )
+            .on_hover_text("Add what other programs append to this file as it grows")
+            .changed()
+        {
+            self.set_following(buffer, following);
+        }
         ui.menu_button("Show Symbol", |ui| self.show_symbol_menu(ui));
         ui.menu_button("Zoom", |ui| self.zoom_menu(ui));
         ui.separator();
@@ -1739,6 +1794,17 @@ impl OchrepadApp {
             self.indent_menu(ui);
             ui.separator();
             self.language_picker(ui);
+            let buffer = self.buffer_id();
+            if self.is_following(buffer) {
+                ui.separator();
+                if ui
+                    .button("Following")
+                    .on_hover_text("The end of the file is followed as it grows. Click to stop.")
+                    .clicked()
+                {
+                    self.set_following(buffer, false);
+                }
+            }
             if self.settings.zoom != 100 {
                 ui.separator();
                 if ui
@@ -1852,6 +1918,7 @@ impl OchrepadApp {
 /// Draws the tabs: one editor per view, Markdown previews and comparisons.
 struct Tabs<'a> {
     look: crate::editor_view::Look,
+    log_rules: &'a crate::log_rules::LogRules,
     fold_margin: bool,
     word_wrap: bool,
     document_map: bool,
@@ -1965,6 +2032,22 @@ impl TabViewer for Tabs<'_> {
             *self.focus_request = None;
         }
         let mut styler = self.highlighting.styler(buffer);
+        // Log highlight rules, for files they apply to. The document is
+        // cloned (cheaply) because the editor is lent to the widget.
+        let log_doc = self
+            .editor
+            .buffer(buffer)
+            .filter(|b| {
+                b.meta
+                    .path
+                    .as_deref()
+                    .and_then(|p| p.file_name())
+                    .is_some_and(|n| self.log_rules.applies_to(&n.to_string_lossy()))
+            })
+            .map(|b| b.doc().clone());
+        let log_style = log_doc.as_ref().map(|doc| {
+            crate::log_rules::LogStyle::new(self.log_rules, doc, ui.visuals().dark_mode)
+        });
         editor_view(
             ui,
             self.editor,
@@ -1975,7 +2058,9 @@ impl TabViewer for Tabs<'_> {
             Decorations {
                 styler: styler.as_mut().map(|s| s as &mut dyn LineStyler),
                 find_highlight: self.find_highlight,
-                row_style: None,
+                row_style: log_style
+                    .as_ref()
+                    .map(|s| s as &dyn crate::editor_view::RowStyle),
             },
         );
     }

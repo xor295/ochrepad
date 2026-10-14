@@ -74,6 +74,10 @@ pub struct AppSettings {
     pub show_wrap_symbol: bool,
     /// A vertical line after this column, if any.
     pub edge_column: Option<usize>,
+    /// Files the log highlight rules apply to: globs separated by `;`.
+    pub log_files: String,
+    /// Log highlight rules (PLAN_v0.3.0 P6).
+    pub highlight_rules: Vec<crate::log_rules::HighlightRule>,
     /// The sidebar with the open folder's files.
     pub show_sidebar: bool,
     pub sidebar_width: f32,
@@ -105,6 +109,8 @@ impl Default for AppSettings {
             show_indent_guides: false,
             show_wrap_symbol: false,
             edge_column: None,
+            log_files: "*.log; *.log.*".to_owned(),
+            highlight_rules: crate::log_rules::default_rules(),
             show_sidebar: true,
             sidebar_width: 240.0,
             recent_folders: Vec::new(),
@@ -168,7 +174,15 @@ impl AppSettings {
     }
 
     /// The Preferences window body.
-    pub fn ui(&mut self, ui: &mut Ui, fonts: &[(String, PathBuf)], themes: &[&str]) {
+    /// `log_errors`: the highlight rules whose pattern does not compile,
+    /// by index.
+    pub fn ui(
+        &mut self,
+        ui: &mut Ui,
+        fonts: &[(String, PathBuf)],
+        themes: &[&str],
+        log_errors: &[(usize, String)],
+    ) {
         egui::Grid::new("preferences")
             .num_columns(2)
             .spacing([16.0, 8.0])
@@ -273,6 +287,74 @@ impl AppSettings {
                 });
                 ui.end_row();
             });
+        ui.add_space(8.0);
+        egui::CollapsingHeader::new("Log highlighting")
+            .id_salt("pref-log-rules")
+            .show(ui, |ui| self.log_rules_ui(ui, log_errors));
+    }
+
+    /// The highlight rules' editor: the files they apply to, then one row
+    /// per rule.
+    fn log_rules_ui(&mut self, ui: &mut Ui, errors: &[(usize, String)]) {
+        use crate::log_rules::{HighlightRule, RuleStyle, default_rules};
+        ui.horizontal(|ui| {
+            ui.label("For files named");
+            ui.add(
+                egui::TextEdit::singleline(&mut self.log_files)
+                    .desired_width(200.0)
+                    .hint_text("*.log; *.log.*"),
+            )
+            .on_hover_text("Patterns with * and ?, separated by ;");
+        });
+        let mut remove = None;
+        egui::Grid::new("pref-log-rule-rows")
+            .num_columns(6)
+            .spacing([8.0, 4.0])
+            .show(ui, |ui| {
+                for (i, r) in self.highlight_rules.iter_mut().enumerate() {
+                    let field = ui.add(
+                        egui::TextEdit::singleline(&mut r.pattern)
+                            .desired_width(220.0)
+                            .hint_text("text or pattern"),
+                    );
+                    if let Some((_, e)) = errors.iter().find(|(j, _)| *j == i) {
+                        field.on_hover_text(e);
+                    }
+                    ui.checkbox(&mut r.regex, "Regex");
+                    ui.checkbox(&mut r.match_case, "Match case");
+                    ui.color_edit_button_srgb(&mut r.color);
+                    egui::ComboBox::from_id_salt(("pref-log-rule-style", i))
+                        .selected_text(r.style.name())
+                        .show_ui(ui, |ui| {
+                            for s in RuleStyle::ALL {
+                                ui.selectable_value(&mut r.style, s, s.name());
+                            }
+                        });
+                    if ui
+                        .small_button("×")
+                        .on_hover_text("Remove this rule")
+                        .clicked()
+                    {
+                        remove = Some(i);
+                    }
+                    ui.end_row();
+                }
+            });
+        if let Some(i) = remove {
+            self.highlight_rules.remove(i);
+        }
+        for (i, e) in errors {
+            ui.colored_label(ui.visuals().error_fg_color, format!("Rule {}: {e}", i + 1));
+        }
+        ui.horizontal(|ui| {
+            if ui.button("Add Rule").clicked() {
+                self.highlight_rules.push(HighlightRule::default());
+            }
+            if ui.button("Restore Defaults").clicked() {
+                self.highlight_rules = default_rules();
+                self.log_files = AppSettings::default().log_files;
+            }
+        });
     }
 }
 

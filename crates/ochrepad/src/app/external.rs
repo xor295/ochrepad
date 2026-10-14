@@ -6,8 +6,15 @@
 //!
 //! The same watcher covers the file tree's root and expanded folders, so the
 //! tree relists a folder when something in it changes.
+//!
+//! Follow mode (View > Follow, PLAN_v0.3.0 P6) is `tail -f`: when a
+//! followed file grows, the new text is appended to its clean document
+//! without asking (and without an undo step), after checking that the end
+//! it had is still there; a file that shrank or changed before its end is
+//! reloaded. Views whose caret was at the end keep showing it.
 
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, channel};
 use std::time::SystemTime;
@@ -22,6 +29,14 @@ use super::{OchrepadApp, canonical};
 /// Wait this long after the last event before looking (writers often
 /// touch a file several times).
 const SETTLE_SECS: f64 = 0.3;
+/// How soon a followed file is looked at after it changes. Unlike other
+/// files, more changes do not postpone it (a log may never pause).
+const FOLLOW_SECS: f64 = 0.1;
+/// Bytes of a followed file's end that must still be there for a change to
+/// count as an append.
+const FOLLOW_TAIL: u64 = 4096;
+/// More text than this appended at once is read by reloading the file.
+const FOLLOW_MAX_APPEND: u64 = 64 * 1024 * 1024;
 
 type Stamp = (SystemTime, u64);
 
@@ -57,6 +72,51 @@ pub(super) struct External {
     stamps: HashMap<BufferId, Option<Stamp>>,
     due: HashMap<BufferId, f64>,
     pub queue: VecDeque<(BufferId, DiskChange)>,
+    /// Followed documents.
+    pub follow: HashSet<BufferId>,
+    /// For each followed document: how much of its file it has (in bytes),
+    /// and the last bytes of that.
+    tails: HashMap<BufferId, (u64, Vec<u8>)>,
+}
+
+/// The size of the file at `path` and its last [`FOLLOW_TAIL`] bytes.
+fn read_tail(path: &Path) -> Option<(u64, Vec<u8>)> {
+    let mut f = std::fs::File::open(path).ok()?;
+    let meta = f.metadata().ok()?;
+    if !meta.is_file() {
+        return None;
+    }
+    let len = meta.len();
+    let start = len.saturating_sub(FOLLOW_TAIL);
+    f.seek(SeekFrom::Start(start)).ok()?;
+    let mut tail = Vec::new();
+    f.take(len - start).read_to_end(&mut tail).ok()?;
+    Some((len, tail))
+}
+
+/// Bytes `from..to` of the file at `path`.
+fn read_range(path: &Path, from: u64, to: u64) -> Option<Vec<u8>> {
+    let mut f = std::fs::File::open(path).ok()?;
+    f.seek(SeekFrom::Start(from)).ok()?;
+    let mut out = Vec::new();
+    f.take(to - from).read_to_end(&mut out).ok()?;
+    (out.len() as u64 == to - from).then_some(out)
+}
+
+/// How much of `new` (appended UTF-8 bytes) can be taken now: whole
+/// characters, keeping back a final CR whose LF may still come. `None` if
+/// it is not UTF-8 text.
+fn takeable(new: &[u8]) -> Option<usize> {
+    let mut take = match std::str::from_utf8(new) {
+        Ok(_) => new.len(),
+        // Cut inside the last character: the rest is still being written.
+        Err(e) if e.error_len().is_none() => e.valid_up_to(),
+        Err(_) => return None,
+    };
+    if take > 0 && new[take - 1] == b'\r' {
+        take -= 1;
+    }
+    (!new[..take].contains(&0)).then_some(take)
 }
 
 impl OchrepadApp {
@@ -128,7 +188,11 @@ impl OchrepadApp {
                     let p = watch_key(p);
                     for (b, path) in &files {
                         if *path == p {
-                            self.external.due.insert(*b, now + SETTLE_SECS);
+                            if self.external.follow.contains(b) {
+                                self.external.due.entry(*b).or_insert(now + FOLLOW_SECS);
+                            } else {
+                                self.external.due.insert(*b, now + SETTLE_SECS);
+                            }
                         }
                     }
                     if let (Some(tree), Some(parent)) = (&mut self.tree, p.parent()) {
@@ -176,9 +240,136 @@ impl OchrepadApp {
             Some(s) if self.external.stamps.get(&buffer) == Some(&Some(s)) => return,
             Some(_) => DiskChange::Modified,
         };
+        if change == DiskChange::Modified
+            && self.external.follow.contains(&buffer)
+            && self.follow_change(buffer)
+        {
+            return;
+        }
         if !self.external.queue.iter().any(|(b, _)| *b == buffer) {
             self.external.queue.push_back((buffer, change));
         }
+    }
+
+    /// Whether `buffer` follows its file (View > Follow).
+    pub fn is_following(&self, buffer: BufferId) -> bool {
+        self.external.follow.contains(&buffer)
+    }
+
+    /// Starts or stops following `buffer`'s file. Starting brings the
+    /// document up to date and moves the active view to its end.
+    pub fn set_following(&mut self, buffer: BufferId, on: bool) {
+        if !on {
+            self.external.follow.remove(&buffer);
+            self.external.tails.remove(&buffer);
+            return;
+        }
+        let Some(path) = self.editor.buffer(buffer).and_then(|b| b.meta.path.clone()) else {
+            return;
+        };
+        let clean = self.editor.buffer(buffer).is_some_and(|b| !b.is_dirty());
+        let changed = self.external.stamps.get(&buffer) != Some(&stamp(&path));
+        if clean && changed {
+            self.reload_from_disk(buffer);
+        }
+        self.external.follow.insert(buffer);
+        if let Some(t) = read_tail(&path) {
+            self.external.tails.insert(buffer, t);
+        }
+        if self
+            .editor
+            .view(self.active)
+            .is_some_and(|v| v.buffer() == buffer)
+        {
+            self.apply(ochrepad_core::Action::MoveCursor {
+                motion: ochrepad_core::Motion::DocEnd,
+                extend: false,
+            });
+        }
+    }
+
+    /// A followed file changed: appends what it gained, or reloads it.
+    /// Returns false to ask as usual (the document has unsaved changes).
+    fn follow_change(&mut self, buffer: BufferId) -> bool {
+        let Some(b) = self.editor.buffer(buffer) else {
+            return false;
+        };
+        let Some(path) = b.meta.path.clone() else {
+            return false;
+        };
+        if b.is_dirty() {
+            return false;
+        }
+        let end = b.doc().len();
+        let utf8 = b.meta.encoding == "UTF-8";
+        // The views watching the end keep watching it.
+        let at_end: Vec<ochrepad_core::ViewId> = self
+            .editor
+            .views_of(buffer)
+            .filter(|v| v.selections.primary().head == end)
+            .map(|v| v.id())
+            .collect();
+        let appended = self.follow_append(buffer, &path, utf8);
+        if !appended {
+            self.reload_from_disk(buffer);
+            if let Some(t) = read_tail(&path) {
+                self.external.tails.insert(buffer, t);
+            }
+            let end = self.editor.buffer(buffer).map(|b| b.doc().len());
+            for &v in &at_end {
+                if let Some(end) = end {
+                    let _ = self.editor.apply(
+                        v,
+                        ochrepad_core::Action::SetSelections(ochrepad_core::SelectionSet::caret(
+                            end,
+                        )),
+                    );
+                }
+            }
+        }
+        for v in at_end {
+            self.view_states.entry(v).or_default().reveal_caret();
+        }
+        true
+    }
+
+    /// Appends the bytes the file gained since the remembered end, if that
+    /// end is still there. False when it must be reloaded instead.
+    fn follow_append(&mut self, buffer: BufferId, path: &Path, utf8: bool) -> bool {
+        let Some((had, tail)) = self.external.tails.get(&buffer).cloned() else {
+            return false;
+        };
+        let Some(len) = std::fs::metadata(path).ok().map(|m| m.len()) else {
+            return false;
+        };
+        if !utf8 || len < had || len - had > FOLLOW_MAX_APPEND {
+            return false;
+        }
+        let from = had - tail.len() as u64;
+        let Some(bytes) = read_range(path, from, len) else {
+            return false;
+        };
+        if !bytes.starts_with(&tail) {
+            return false;
+        }
+        let new = &bytes[tail.len()..];
+        let Some(take) = takeable(new) else {
+            return false;
+        };
+        let Ok(text) = std::str::from_utf8(&new[..take]) else {
+            return false;
+        };
+        let text = fileio::normalize_line_endings(text);
+        if self.editor.append_unrecorded(buffer, &text).is_err() {
+            return false;
+        }
+        let kept = &bytes[..tail.len() + take];
+        let keep_from = kept.len().saturating_sub(FOLLOW_TAIL as usize);
+        self.external
+            .tails
+            .insert(buffer, (had + take as u64, kept[keep_from..].to_vec()));
+        self.record_disk_stamp(buffer);
+        true
     }
 
     /// Reloads `buffer` from its file (undoable).

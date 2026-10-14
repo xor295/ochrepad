@@ -279,19 +279,25 @@ fn check(t: &util::T) -> Result<(), TestCaseError> {
     Ok(())
 }
 
-/// How a random view lays out its rows: a wrap width, and padding (blank
-/// rows before lines, as in a compare view).
-type Layout = (Option<usize>, Option<(Vec<usize>, usize)>);
+/// How a random view lays out its rows: a wrap width, padding (blank rows
+/// before lines, as in a compare view), and a filter showing every `step`th
+/// line from `offset` (the filter view).
+type Layout = (
+    Option<usize>,
+    Option<(Vec<usize>, usize)>,
+    Option<(usize, usize)>,
+);
 
 fn layout() -> impl Strategy<Value = Layout> {
     (
         prop::option::of(10usize..16),
         prop::option::weighted(0.3, (prop::collection::vec(0usize..3, 0..8), 0usize..3)),
+        prop::option::weighted(0.3, (1usize..4, 0usize..4)),
     )
 }
 
 /// A document whose view has the random `layout`.
-fn setup_wrapped(initial: &str, (wrap, padding): Layout) -> util::T {
+fn setup_wrapped(initial: &str, (wrap, padding, filter): Layout) -> util::T {
     let mut t = util::setup(initial);
     let b = t.ed.view(t.view).unwrap().buffer();
     t.ed.buffer_mut(b).unwrap().comments = Some(ochrepad_core::CommentSyntax {
@@ -303,6 +309,11 @@ fn setup_wrapped(initial: &str, (wrap, padding): Layout) -> util::T {
     v.padding = padding.map(|(before, after_last)| {
         std::sync::Arc::new(ochrepad_core::Padding { before, after_last })
     });
+    if let Some((step, offset)) = filter {
+        let lines = t.buffer().doc().line_count();
+        let shown: Vec<usize> = (0..lines).filter(|l| (l + offset) % step == 0).collect();
+        t.ed.set_filter(t.view, Some(&shown));
+    }
     t
 }
 
@@ -563,5 +574,40 @@ proptest! {
                 }
             }
         }
+    }
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig { cases: 500, ..ProptestConfig::default() })]
+
+    /// Text appended outside the history (follow mode) between random
+    /// actions keeps every invariant, and undoing everything leaves the
+    /// original text with the appended text after it.
+    #[test]
+    fn appends_between_actions_keep_undo_working(
+        initial in text(),
+        steps in prop::collection::vec(
+            (action(), prop::option::weighted(0.25, short_text())),
+            0..30,
+        ),
+        layout in layout(),
+    ) {
+        let mut t = setup_wrapped(&initial, layout);
+        let b = t.ed.view(t.view).unwrap().buffer();
+        let mut appended = String::new();
+        for (a, append) in steps {
+            let _ = t.ed.apply(t.view, a);
+            check(&t)?;
+            if let Some(s) = append {
+                t.ed.append_unrecorded(b, &s).unwrap();
+                appended.push_str(&s);
+                check(&t)?;
+            }
+        }
+        while t.buffer().history().can_undo() {
+            t.apply(Action::Undo);
+            check(&t)?;
+        }
+        prop_assert_eq!(t.text(), format!("{initial}{appended}"));
     }
 }

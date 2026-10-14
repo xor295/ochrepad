@@ -47,6 +47,9 @@ A fast, native text editor in the spirit of Notepad++, written in Rust with
   (PNG, JPEG, WebP, SVG) loaded from the document's folder. Web and mail
   links open in the browser, links to files open in ochrepad, and other
   kinds of link are not followed.
+- **Logs**: filter a file down to the lines that match (or don't), colour
+  lines by log level, and follow a file as another program writes it
+  (tail -f) ([more](docs/logs.md)).
 - **Backups and session restore**: unsaved work is backed up every few seconds
   and comes back, with your tabs and layout, the next time you start. Optional
   automatic saving of named files ([more](docs/backups-and-session.md)).
@@ -147,6 +150,7 @@ Windows and Linux. macOS is not supported.
 | Markdown preview | Ctrl+Shift+M |
 | Zoom in, out, back to 100% | Ctrl+plus, Ctrl+minus, Ctrl+0 (or Ctrl+wheel) |
 | Show all characters | Ctrl+Shift+8 |
+| Filter lines | Alt+Shift+L |
 | Show or hide the sidebar | Ctrl+Shift+E |
 | Next/previous difference | F8, Shift+F8 |
 

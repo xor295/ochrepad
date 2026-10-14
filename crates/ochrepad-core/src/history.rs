@@ -298,4 +298,25 @@ impl History {
     pub fn clear(&mut self) {
         *self = History::default();
     }
+
+    /// Text was appended to the document outside the history (follow
+    /// mode): every step still applies, to a document `by` bytes longer.
+    /// The appended text stays when steps are undone. The current text is
+    /// now revision `new` (it was `old`), so undoing and redoing back to it
+    /// finds the new revision.
+    pub(crate) fn extend_base(&mut self, by: usize, old: Revision, new: Revision) {
+        for step in self.undo.iter_mut().chain(self.redo.iter_mut()) {
+            for t in &mut step.txns {
+                t.changes.extend_base(by);
+                t.inverse.extend_base(by);
+            }
+        }
+        if let Some(top) = self.undo.last_mut().filter(|s| s.rev_after == old) {
+            top.rev_after = new;
+        }
+        if let Some(next) = self.redo.last_mut().filter(|s| s.rev_before == old) {
+            next.rev_before = new;
+        }
+        self.coalesce_open = false;
+    }
 }

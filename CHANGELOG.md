@@ -37,6 +37,16 @@ people downloading the release.
   spaces), Show All Characters (Ctrl+Shift+8), indent guides and the wrap
   symbol. Hovering a special character's box names it.
 - A vertical edge line after a chosen column (Preferences).
+- Log tools, for any file ([docs/logs.md](docs/logs.md)):
+  - Search > Filter Lines (Alt+Shift+L) shows only the lines that match a
+    pattern, or hides them. The gutter keeps the real line numbers, the
+    search runs in the background, and edits filter again after a pause.
+  - Highlight rules colour whole lines or matches, or dim lines, in files
+    named `*.log` and `*.log.*` by default: errors red, warnings amber,
+    debug output dimmed. They are edited in Preferences.
+  - View > Follow (tail -f) adds what another program appends to the
+    file as it grows, without asking and without an undo step; a rotated
+    or truncated file is reloaded.
 - Undo survives closing a file and restarting ochrepad: each file's undo
   history (up to about 2 MB of the newest changes) is kept and comes back
   when the file is opened again unchanged, and with unsaved work restored

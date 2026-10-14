@@ -258,12 +258,17 @@ enum Op {
     Cut,
 }
 
-/// Per-row colours from outside the editor: a compare view's diff.
+/// Per-row colours from outside the editor: a compare view's diff, or a
+/// log's highlight rules.
 pub trait RowStyle {
     /// The background of `row` (`blank` for a padding row).
     fn background(&self, row: RowPos, blank: bool) -> Option<egui::Color32>;
-    /// Byte ranges (within the line) to tint on `line`, and their colour.
-    fn spans(&self, line: usize) -> (Vec<std::ops::Range<usize>>, egui::Color32);
+    /// Byte ranges (within the line) to tint on `line`, each with its colour.
+    fn spans(&self, line: usize) -> Vec<(std::ops::Range<usize>, egui::Color32)>;
+    /// How opaque `line`'s text is drawn (below 1 dims it).
+    fn text_opacity(&self, _line: usize) -> f32 {
+        1.0
+    }
 }
 
 /// Optional extras drawn over the text.
@@ -1714,11 +1719,12 @@ fn paint(
             Vec2::new(f.content.width(), f.line_h),
         );
         let blank = rows.is_filler(row);
-        if let Some(bg) = row_style.and_then(|s| s.background(row, blank)) {
-            text_painter.rect_filled(rect, 0.0, bg);
-        }
+        let row_bg = row_style.and_then(|s| s.background(row, blank));
         if blank {
             // A padding row: no text, no number.
+            if let Some(bg) = row_bg {
+                text_painter.rect_filled(rect, 0.0, bg);
+            }
             continue;
         }
 
@@ -1733,6 +1739,11 @@ fn paint(
             .any(|s| s.head >= line_start && s.head <= line_end);
         if has_caret {
             text_painter.rect_filled(rect, 0.0, current_line_bg);
+        }
+        // Over the current line's background, so a diff or log colour still
+        // shows on the caret's line.
+        if let Some(bg) = row_bg {
+            text_painter.rect_filled(rect, 0.0, bg);
         }
         let from = matches.partition_point(|m| m.end <= row_start && m.start < row_start);
         for m in matches[from..].iter().take_while(|m| m.start <= row_end) {
@@ -1777,8 +1788,7 @@ fn paint(
         }
 
         if let Some(style) = row_style {
-            let (spans, color) = style.spans(line);
-            for sp in spans {
+            for (sp, color) in style.spans(line) {
                 let a = ByteOffset(line_start.0 + sp.start).max(row_start);
                 let b = ByteOffset(line_start.0 + sp.end).min(row_end);
                 if a < b {
@@ -1818,6 +1828,10 @@ fn paint(
         } else {
             text_painter.clone()
         };
+        let mut row_painter = row_painter;
+        if let Some(o) = row_style.map(|s| s.text_opacity(line)).filter(|o| *o < 1.0) {
+            row_painter.multiply_opacity(o);
+        }
         paint_line_text(&row_painter, &layout, rx0, y, &f.font, f.line_h);
         paint_marks(&row_painter, &layout, rx0, y, f, symbols, &marks);
         if let Some(p) = bracket {

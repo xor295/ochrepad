@@ -8,6 +8,7 @@ pub mod changeset;
 pub mod diff;
 pub mod display;
 pub mod editor;
+pub mod filter;
 pub mod fold;
 pub mod history;
 pub mod indent;

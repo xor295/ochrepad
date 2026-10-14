@@ -12,6 +12,8 @@ menu item to explain:
   endings, invisible characters, indent guides), the document map, word
   wrap, and folding (where blocks can be folded, the shortcuts, how folded
   text behaves).
+- [Working with logs](logs.md): filtering lines, highlight rules for log
+  levels, and following a file as it grows (tail -f).
 - [Working in a folder](workspace.md): opening a folder, the file tree in
   the sidebar, ignored files, and creating and renaming files.
 - [Macros](macros.md): what gets recorded, running a macro to the end of the

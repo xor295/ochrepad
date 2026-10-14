@@ -188,10 +188,14 @@ impl<'a> DisplayMap<'a> {
         self.doc.line_count() - self.folds.hidden_count()
     }
 
-    /// `line`, or the fold header above it if it is hidden.
+    /// `line`, or if it is hidden the shown line above it (a fold's header),
+    /// or below it when nothing above is shown (a filter can hide the first
+    /// lines).
     fn shown_line(&self, line: usize) -> usize {
         match self.folds.hidden_range(line) {
-            Some((start, _)) => start - 1,
+            Some((start, end)) => start
+                .checked_sub(1)
+                .unwrap_or_else(|| (end + 1).min(self.doc.line_count() - 1)),
             None => line,
         }
     }
@@ -211,11 +215,14 @@ impl<'a> DisplayMap<'a> {
 
     fn prev_visible_line(&self, line: usize) -> Option<usize> {
         let prev = line.checked_sub(1)?;
-        Some(self.shown_line(prev))
+        match self.folds.hidden_range(prev) {
+            Some((start, _)) => start.checked_sub(1),
+            None => Some(prev),
+        }
     }
 
     pub fn first_row(&self) -> RowPos {
-        RowPos::default()
+        RowPos::new(self.shown_line(0), 0)
     }
 
     pub fn last_row(&self) -> RowPos {

@@ -109,6 +109,7 @@ impl OchrepadApp {
         a.interval_secs = s.autosave_secs;
         a.write_through = s.write_through;
         self.highlighting.theme_override = s.syntax_theme.clone();
+        self.log_rules = crate::log_rules::LogRules::new(&s.highlight_rules, &s.log_files);
         self.highlighting.size_limit = s.highlight_limit_mb * 1024 * 1024;
         if self.applied_theme != Some(s.theme) {
             self.applied_theme = Some(s.theme);
@@ -149,7 +150,8 @@ impl OchrepadApp {
             .resizable(false)
             .collapsible(false)
             .show(ui.ctx(), |ui| {
-                self.settings.ui(ui, &self.font_choices, &themes);
+                self.settings
+                    .ui(ui, &self.font_choices, &themes, &self.log_rules.errors);
             });
         self.show_preferences = open;
     }

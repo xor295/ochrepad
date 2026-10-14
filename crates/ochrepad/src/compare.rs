@@ -522,7 +522,7 @@ impl RowStyle for SideStyle<'_> {
         (kind != RowKind::Equal).then(|| tint(kind, alpha))
     }
 
-    fn spans(&self, line: usize) -> (Vec<Range<usize>>, Color32) {
+    fn spans(&self, line: usize) -> Vec<(Range<usize>, Color32)> {
         let color = tint(RowKind::Changed, 140);
         let spans = self
             .line_rows
@@ -536,7 +536,7 @@ impl RowStyle for SideStyle<'_> {
                 }
             })
             .unwrap_or_default();
-        (spans, color)
+        spans.into_iter().map(|r| (r, color)).collect()
     }
 }
 

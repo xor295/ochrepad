@@ -55,6 +55,11 @@ impl eframe::App for Shell {
                 }
                 println!("{}", b.report());
                 self.bench = None;
+                // The typing phases left the file unsaved: close without
+                // the save prompt (which would wait forever).
+                for buffer in self.app.editor.buffers_mut() {
+                    buffer.mark_saved();
+                }
                 ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
             }
             ui.ctx().request_repaint();

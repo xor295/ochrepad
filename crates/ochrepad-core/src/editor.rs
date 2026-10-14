@@ -380,7 +380,7 @@ impl Editor {
                     return Err(ActionError::UnknownBuffer(buffer_id));
                 };
                 let inverse = changes.invert(&buffer.doc);
-                apply_changes(buffer, &changes);
+                let line_edits = apply_changes(buffer, &changes);
                 let rev_before = buffer.revision;
                 let rev_after = buffer.next_revision;
                 buffer.next_revision += 1;
@@ -399,7 +399,7 @@ impl Editor {
                 );
                 self.set_selections(view, after);
                 self.map_other_views(buffer_id, view, &changes);
-                self.map_folds(buffer_id, &changes);
+                self.map_folds(buffer_id, &changes, &line_edits);
             }
         }
         Ok(())
@@ -470,16 +470,17 @@ impl Editor {
             return;
         };
         let inverses: Vec<ChangeSet> = step.txns.iter().rev().map(|t| t.inverse.clone()).collect();
-        for inv in &inverses {
-            apply_changes(buffer, inv);
-        }
+        let line_edits: Vec<Vec<LineEdit>> = inverses
+            .iter()
+            .map(|inv| apply_changes(buffer, inv))
+            .collect();
         buffer.revision = step.rev_before;
         let sels = step.txns[0].before.clone();
         buffer.history.push_redo(step);
         self.set_selections(view, sels);
-        for inv in &inverses {
+        for (inv, edits) in inverses.iter().zip(&line_edits) {
             self.map_other_views(buffer_id, view, inv);
-            self.map_folds(buffer_id, inv);
+            self.map_folds(buffer_id, inv, edits);
         }
     }
 
@@ -491,16 +492,15 @@ impl Editor {
             return;
         };
         let changes: Vec<ChangeSet> = step.txns.iter().map(|t| t.changes.clone()).collect();
-        for cs in &changes {
-            apply_changes(buffer, cs);
-        }
+        let line_edits: Vec<Vec<LineEdit>> =
+            changes.iter().map(|cs| apply_changes(buffer, cs)).collect();
         buffer.revision = step.rev_after;
         let sels = step.txns[step.txns.len() - 1].after.clone();
         buffer.history.push_undo(step);
         self.set_selections(view, sels);
-        for cs in &changes {
+        for (cs, edits) in changes.iter().zip(&line_edits) {
             self.map_other_views(buffer_id, view, cs);
-            self.map_folds(buffer_id, cs);
+            self.map_folds(buffer_id, cs, edits);
         }
     }
 
@@ -512,13 +512,100 @@ impl Editor {
 
     /// Maps every view's folds through `changes`, dropping the folds it
     /// touches (PLAN_v0.2.0 3.6). [`sync_folds`](Self::sync_folds) then
-    /// recomputes their lines.
-    fn map_folds(&mut self, buffer: BufferId, changes: &ChangeSet) {
+    /// recomputes their lines. A filter moves by `line_edits` (the same
+    /// change by line), showing the lines it touched.
+    fn map_folds(&mut self, buffer: BufferId, changes: &ChangeSet, line_edits: &[LineEdit]) {
         for v in self.views.values_mut() {
-            if v.buffer() == buffer && !v.folds.is_empty() {
+            if v.buffer() != buffer {
+                continue;
+            }
+            if !v.folds.is_empty() {
                 v.folds.map(changes);
             }
+            v.folds.filter_line_edits(line_edits);
         }
+    }
+
+    /// Appends `text` that the file on disk gained (follow mode, PLAN_v0.3.0
+    /// P6). It is not an undo step: undoing earlier steps keeps it. A clean
+    /// buffer stays clean. Carets at the end move along to the new end.
+    pub fn append_unrecorded(
+        &mut self,
+        buffer_id: BufferId,
+        text: &str,
+    ) -> Result<(), ActionError> {
+        let buffer = self
+            .buffers
+            .get_mut(&buffer_id)
+            .ok_or(ActionError::UnknownBuffer(buffer_id))?;
+        if text.is_empty() {
+            return Ok(());
+        }
+        let end = buffer.doc.len();
+        let changes = ChangeSet::new(end, vec![crate::changeset::Edit::new(end, end, text)]);
+        let clean = !buffer.is_dirty();
+        let line_edits = apply_changes(buffer, &changes);
+        let (old, new) = (buffer.revision, buffer.next_revision);
+        buffer.history.extend_base(text.len(), old, new);
+        buffer.revision = new;
+        buffer.next_revision += 1;
+        if clean {
+            buffer.mark_saved();
+        }
+        for v in self.views.values_mut() {
+            if v.buffer() == buffer_id {
+                v.selections = v.selections.map(|s| Selection {
+                    anchor: changes.map_position(s.anchor, Bias::After),
+                    head: changes.map_position(s.head, Bias::After),
+                    goal: None,
+                });
+            }
+        }
+        self.map_folds(buffer_id, &changes, &line_edits);
+        self.sync_folds(buffer_id);
+        Ok(())
+    }
+
+    /// Shows only the lines `shown` (sorted line numbers) of `view`, or
+    /// every line again with `None`: the filter view (PLAN_v0.3.0 P6).
+    /// Carets on lines it hides move to the start of the nearest shown
+    /// line. With no line to show, the primary caret's line stays.
+    pub fn set_filter(&mut self, view: ViewId, shown: Option<&[usize]>) {
+        let Some(v) = self.views.get_mut(&view) else {
+            return;
+        };
+        let Some(b) = self.buffers.get(&v.buffer()) else {
+            return;
+        };
+        let doc = &b.doc;
+        let count = doc.line_count();
+        let Some(shown) = shown else {
+            v.folds.set_filter(None, count);
+            return;
+        };
+        let caret_line = [doc.line_of(v.selections.primary().head)];
+        let shown = if shown.is_empty() {
+            &caret_line[..]
+        } else {
+            shown
+        };
+        v.folds.set_filter(Some(shown), count);
+        let folds = &v.folds;
+        let moved = v.selections.map(|s| {
+            let line = doc.line_of(s.head);
+            if !folds.filter_hides(line) {
+                return s.clone();
+            }
+            let after = shown.partition_point(|&l| l < line);
+            let target = shown
+                .get(after)
+                .or_else(|| after.checked_sub(1).and_then(|i| shown.get(i)))
+                .copied()
+                .unwrap_or(0)
+                .min(count - 1);
+            Selection::caret(doc.line_start(target))
+        });
+        v.selections = moved;
     }
 
     /// After any action: brings the folds' line numbers up to date and
@@ -534,6 +621,18 @@ impl Editor {
             // Also when an edit dropped the last fold: the hidden lines need
             // rebuilding. Cheap when nothing was mapped.
             v.folds.relines(doc);
+            // A caret the filter hides (Go to Line, a match on a hidden
+            // line, an edit elsewhere) brings its line back.
+            if v.folds.has_filter() {
+                let lines: Vec<usize> = v
+                    .selections
+                    .ranges()
+                    .iter()
+                    .map(|s| doc.line_of(s.head))
+                    .filter(|&l| v.folds.filter_hides(l))
+                    .collect();
+                v.folds.unfilter(&lines);
+            }
             if v.folds.is_empty() {
                 continue;
             }
@@ -656,7 +755,7 @@ fn reveal_carets(doc: &crate::text::Document, v: &mut View) {
         return;
     }
     let moved = v.selections.map(|s| {
-        let Some((start, _)) = folds.hidden_range(doc.line_of(s.head)) else {
+        let Some((start, _)) = folds.fold_hidden_range(doc.line_of(s.head)) else {
             return s.clone();
         };
         let head = doc.line_end(start - 1);
@@ -669,9 +768,12 @@ fn reveal_carets(doc: &crate::text::Document, v: &mut View) {
     v.selections = moved;
 }
 
-fn apply_changes(buffer: &mut Buffer, changes: &ChangeSet) {
+/// Applies `changes` to the buffer's text and returns how the lines changed,
+/// in the order the edits were applied.
+fn apply_changes(buffer: &mut Buffer, changes: &ChangeSet) -> Vec<LineEdit> {
     // `ChangeSet::apply` goes back to front, so each line edit is recorded in
     // the coordinates of the document at the moment it is applied.
+    let mut edits = Vec::with_capacity(changes.edits().len());
     for e in changes.edits().iter().rev() {
         let start = buffer.doc.line_of(e.start);
         let edit = LineEdit {
@@ -680,6 +782,8 @@ fn apply_changes(buffer: &mut Buffer, changes: &ChangeSet) {
             new_end: start + e.text.bytes().filter(|&b| b == b'\n').count(),
         };
         buffer.record_line_edit(edit);
+        edits.push(edit);
     }
     changes.apply(&mut buffer.doc);
+    edits
 }
