@@ -7,13 +7,16 @@
 //! background thread over the file read in pieces; the index of lines grows
 //! in the background too, and the scrollbar and line count follow it.
 //!
-//! The lines shown are a [`Shown`] list: every line, or a list of line
-//! numbers (the seam for the log tools' filter).
+//! The lines shown are a [`Shown`] list: every line, the lines a filter
+//! keeps, or every line but those it hides (PLAN_v0.3.0 P8). A filter's
+//! lines are found by a background search that sends them as it goes, so
+//! the view fills in while a large file is searched, and goes on with what
+//! the file gains when it grows.
 
 use std::collections::HashMap;
 use std::ops::Range;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, channel};
 
 use egui::{
@@ -46,8 +49,15 @@ pub enum Shown {
     /// Every line.
     #[default]
     All,
-    /// These lines, in order (a filter).
+    /// These lines, in order (a filter showing what matches).
     Lines(Arc<Vec<u64>>),
+    /// Every line but these, in order (a filter hiding what matches), up to
+    /// line `decided` while the search is still going (all lines once it
+    /// is done: `None`).
+    AllExcept {
+        excluded: Arc<Vec<u64>>,
+        decided: Option<u64>,
+    },
 }
 
 impl Shown {
@@ -56,6 +66,10 @@ impl Shown {
         match self {
             Shown::All => lines,
             Shown::Lines(v) => v.len() as u64,
+            Shown::AllExcept { excluded, decided } => {
+                let limit = decided.map_or(lines, |d| d.min(lines));
+                limit - excluded.partition_point(|&l| l < limit) as u64
+            }
         }
     }
 
@@ -64,6 +78,20 @@ impl Shown {
         match self {
             Shown::All => Some(row),
             Shown::Lines(v) => v.get(row as usize).copied(),
+            Shown::AllExcept { excluded, .. } => {
+                // Row `row` is line `row + j`, where `j` lines before it are
+                // excluded: the first `j` with `excluded[j] - j > row`.
+                let (mut lo, mut hi) = (0, excluded.len());
+                while lo < hi {
+                    let mid = (lo + hi) / 2;
+                    if excluded[mid] - mid as u64 <= row {
+                        lo = mid + 1;
+                    } else {
+                        hi = mid;
+                    }
+                }
+                Some(row + lo as u64)
+            }
         }
     }
 
@@ -72,6 +100,11 @@ impl Shown {
         match self {
             Shown::All => line,
             Shown::Lines(v) => v.partition_point(|&l| l <= line).saturating_sub(1) as u64,
+            Shown::AllExcept { excluded, .. } => {
+                let before = excluded.partition_point(|&l| l < line);
+                let hidden = excluded.get(before) == Some(&line);
+                (line - before as u64).saturating_sub(u64::from(hidden))
+            }
         }
     }
 }
@@ -133,9 +166,129 @@ impl Drop for Task {
     }
 }
 
+/// What a filter search sends: matching lines found since the last batch,
+/// in order, and how far the search has looked (a file offset).
+struct FilterBatch {
+    lines: Vec<u64>,
+    decided: u64,
+}
+
+/// A filter on a viewer (PLAN_v0.3.0 P8) and the search finding its lines.
+pub struct ViewerFilter {
+    pub query: SearchQuery,
+    /// Show the matching lines (else the others).
+    pub keep: bool,
+    rx: Option<Receiver<FilterBatch>>,
+    stop: Arc<AtomicBool>,
+    /// How far the search has read, for progress.
+    read: Arc<AtomicU64>,
+    /// The end of what the current search covers.
+    until: u64,
+    /// The last matching line found (searches that go on with a grown file
+    /// start at its last line, which may come again).
+    last: Option<u64>,
+}
+
+impl Drop for ViewerFilter {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+    }
+}
+
+/// A file source that remembers how far it has been read.
+struct Tracked {
+    inner: ochrepad_fileio::bigfile::FileSource,
+    read: Arc<AtomicU64>,
+}
+
+impl ochrepad_core::search::ByteSource for Tracked {
+    fn len(&self) -> u64 {
+        self.inner.len()
+    }
+
+    fn read_at(&self, at: u64, buf: &mut [u8]) -> usize {
+        let n = self.inner.read_at(at, buf);
+        self.read.fetch_max(at + n as u64, Ordering::Relaxed);
+        n
+    }
+}
+
+/// Searches `file` from `from` for `query`'s lines, sending them in
+/// batches about ten times a second.
+fn spawn_filter(
+    file: &BigFile,
+    query: &SearchQuery,
+    from: u64,
+    stop: Arc<AtomicBool>,
+    read: Arc<AtomicU64>,
+) -> Result<Receiver<FilterBatch>, String> {
+    let searcher = Searcher::new_raw(query).map_err(|e| e.0)?;
+    let src = Tracked {
+        inner: file.source(stop.clone()),
+        read,
+    };
+    let finder = file.line_finder();
+    let (tx, rx) = channel();
+    std::thread::Builder::new()
+        .name("ochrepad-viewer-filter".into())
+        .spawn(move || {
+            use ochrepad_core::search::ByteSource;
+            let mut batch = Vec::new();
+            let mut sent = std::time::Instant::now();
+            let mut hint = None;
+            let mut last: Option<u64> = None;
+            let len = src.len();
+            for m in searcher.matches_in(&src, from..len) {
+                let Some(first) = finder.line_of(m.start, hint, &stop) else {
+                    return;
+                };
+                hint = Some((m.start, first));
+                let end_line = if m.end > m.start + 1 {
+                    match finder.line_of(m.end - 1, hint, &stop) {
+                        Some(l) => l,
+                        None => return,
+                    }
+                } else {
+                    first
+                };
+                for l in first..=end_line {
+                    if last.is_none_or(|p| l > p) {
+                        batch.push(l);
+                        last = Some(l);
+                    }
+                }
+                if sent.elapsed().as_millis() >= 100 {
+                    sent = std::time::Instant::now();
+                    let lines = std::mem::take(&mut batch);
+                    if tx
+                        .send(FilterBatch {
+                            lines,
+                            decided: m.start,
+                        })
+                        .is_err()
+                    {
+                        return;
+                    }
+                }
+            }
+            if !stop.load(Ordering::Relaxed) {
+                let _ = tx.send(FilterBatch {
+                    lines: batch,
+                    decided: len,
+                });
+            }
+        })
+        .map_err(|e| e.to_string())?;
+    Ok(rx)
+}
+
 /// Everything the widget keeps between frames.
 pub struct ViewerState {
     pub shown: Shown,
+    /// The filter, if one is on.
+    pub filter: Option<ViewerFilter>,
+    /// Follow (tail -f): when the file grows, scroll to its end.
+    pub follow: bool,
     /// The top row, with the fraction of it scrolled past.
     top: f64,
     x_off: f32,
@@ -164,6 +317,8 @@ impl Default for ViewerState {
     fn default() -> Self {
         Self {
             shown: Shown::All,
+            filter: None,
+            follow: false,
             top: 0.0,
             x_off: 0.0,
             anchor: Pos::default(),
@@ -477,6 +632,136 @@ impl ViewerState {
         Ok(())
     }
 
+    /// Shows only the lines matching `query` (`keep`), or only the others,
+    /// or every line again with `None`. The lines are found in the
+    /// background; the view fills in as they come.
+    pub fn set_filter(
+        &mut self,
+        file: &BigFile,
+        filter: Option<(SearchQuery, bool)>,
+    ) -> Result<(), String> {
+        self.filter = None;
+        let Some((query, keep)) = filter else {
+            self.shown = Shown::All;
+            return Ok(());
+        };
+        let stop = Arc::new(AtomicBool::new(false));
+        let read = Arc::new(AtomicU64::new(0));
+        let rx = spawn_filter(file, &query, 0, stop.clone(), read.clone())?;
+        self.shown = if keep {
+            Shown::Lines(Arc::default())
+        } else {
+            Shown::AllExcept {
+                excluded: Arc::default(),
+                decided: Some(0),
+            }
+        };
+        self.filter = Some(ViewerFilter {
+            query,
+            keep,
+            rx: Some(rx),
+            stop,
+            read,
+            until: file.len(),
+            last: None,
+        });
+        self.top = 0.0;
+        Ok(())
+    }
+
+    /// The filter's progress: rows shown, and how much of the file it has
+    /// searched (1 when done).
+    pub fn filter_progress(&self, file: &BigFile) -> Option<(u64, f32)> {
+        let f = self.filter.as_ref()?;
+        let rows = self.shown.rows(file.progress().lines);
+        let done = f.rx.is_none();
+        let part = if done || f.until == 0 {
+            1.0
+        } else {
+            (f.read.load(Ordering::Relaxed) as f64 / f.until as f64).min(0.99) as f32
+        };
+        Some((rows, part))
+    }
+
+    /// Takes in the filter search's lines; goes on searching what the file
+    /// gained, or from the start after a reload.
+    fn poll_filter(&mut self, file: &BigFile, change: Change) {
+        let Some(f) = &mut self.filter else {
+            return;
+        };
+        if change == Change::Reloaded {
+            let filter = Some((f.query.clone(), f.keep));
+            let _ = self.set_filter(file, filter);
+            return;
+        }
+        let mut lines = Vec::new();
+        let mut decided = None;
+        let mut finished = false;
+        if let Some(rx) = &f.rx {
+            loop {
+                match rx.try_recv() {
+                    Ok(batch) => {
+                        lines.extend(batch.lines);
+                        finished |= batch.decided >= f.until;
+                        decided = Some(batch.decided);
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                        finished = true;
+                        break;
+                    }
+                }
+            }
+        }
+        // A search going on with a grown file may find its first line again.
+        lines.retain(|&l| f.last.is_none_or(|p| l > p));
+        if let Some(&l) = lines.last() {
+            f.last = Some(l);
+        }
+        if finished {
+            f.rx = None;
+        }
+        let searching = f.rx.is_some();
+        let decided_line = decided.and_then(|d| file.line_of(d.min(file.len())));
+        match &mut self.shown {
+            Shown::Lines(v) => Arc::make_mut(v).extend(lines),
+            Shown::AllExcept {
+                excluded,
+                decided: limit,
+            } => {
+                Arc::make_mut(excluded).extend(lines);
+                if !searching {
+                    *limit = None;
+                } else if let Some(d) = decided_line {
+                    *limit = Some(d);
+                }
+            }
+            Shown::All => {}
+        }
+        // The file grew past what the search covered: look through what it
+        // gained, from the start of the line that was last (it may have
+        // grown).
+        if !searching && file.len() > f.until {
+            let end = f.until;
+            let from = file
+                .line_of(end.saturating_sub(1))
+                .and_then(|l| file.line_start(l))
+                .unwrap_or(end)
+                .min(end);
+            let stop = Arc::new(AtomicBool::new(false));
+            let read = Arc::new(AtomicU64::new(from));
+            if let Ok(rx) = spawn_filter(file, &f.query, from, stop.clone(), read.clone()) {
+                f.rx = Some(rx);
+                f.stop = stop;
+                f.read = read;
+                f.until = file.len();
+                if let Shown::AllExcept { decided, .. } = &mut self.shown {
+                    *decided = file.line_of(from);
+                }
+            }
+        }
+    }
+
     /// Takes in background results, and moves to a match or line the index
     /// has now reached.
     fn poll(&mut self, file: &BigFile, rows: u64) {
@@ -575,6 +860,7 @@ pub fn viewer_ui(
     tab_width: usize,
     label: &str,
     highlight: Option<&Searcher>,
+    rules: Option<&crate::log_rules::LogRules>,
 ) -> Response {
     let Viewer { file, state } = viewer;
     let rect = ui.available_rect_before_wrap();
@@ -587,7 +873,8 @@ pub fn viewer_ui(
     // The file may have changed on disk since the last frame: look before
     // reading any of it.
     let old_len = file.len();
-    match file.refresh() {
+    let change = file.refresh();
+    match change {
         Change::Unchanged => {}
         Change::Grew => {
             // The last line may have grown.
@@ -598,6 +885,11 @@ pub fn viewer_ui(
             state.task = None;
             state.events.push(ViewerEvent::Reloaded);
         }
+    }
+    state.poll_filter(file, change);
+    if state.filter.as_ref().is_some_and(|f| f.rx.is_some()) {
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_millis(100));
     }
     let progress = file.progress();
     if !progress.done {
@@ -650,6 +942,10 @@ pub fn viewer_ui(
     };
     let color = ui.visuals().text_color();
     let max_top = rows.saturating_sub(f.rows_full as u64) as f64;
+    // Follow (tail -f): a file that grew shows its end.
+    if state.follow && change == Change::Grew {
+        state.top = max_top;
+    }
 
     // --- Focus ------------------------------------------------------------------
     let pressed_here = ui.input(|i| i.pointer.primary_pressed()) && response.contains_pointer();
@@ -827,7 +1123,7 @@ pub fn viewer_ui(
     }
 
     paint(
-        ui, state, file, &f, rows, max_top, h_max, focused, now, tab_width, color, highlight,
+        ui, state, file, &f, rows, max_top, h_max, focused, now, tab_width, color, highlight, rules,
     );
     response
 }
@@ -1070,6 +1366,7 @@ fn paint(
     tab_width: usize,
     color: Color32,
     highlight: Option<&Searcher>,
+    rules: Option<&crate::log_rules::LogRules>,
 ) {
     let visuals = ui.visuals().clone();
     let painter = ui.painter().clone();
@@ -1111,7 +1408,19 @@ fn paint(
         if line == state.head.line {
             text_painter.rect_filled(row_rect, 0.0, visuals.faint_bg_color);
         }
+        // Log highlight rules.
+        let look = rules.map(|r| r.look_text(&l.layout.text, visuals.dark_mode));
+        if let Some(bg) = look.as_ref().and_then(|k| k.background) {
+            text_painter.rect_filled(row_rect, 0.0, bg);
+        }
         let x_at = |col: usize| x0 + l.layout.x_of(col);
+        for (span, c) in look.iter().flat_map(|k| k.spans.iter()) {
+            let r = Rect::from_min_max(
+                Pos2::new(x_at(span.start), y),
+                Pos2::new(x_at(span.end), y + f.line_h),
+            );
+            text_painter.rect_filled(r, 2.0, *c);
+        }
         // The selection on this line (and its line break).
         if sel_a != sel_b && sel_a.line <= line && line <= sel_b.line {
             let a = if line == sel_a.line { sel_a.col } else { 0 };
@@ -1136,7 +1445,13 @@ fn paint(
                 text_painter.rect_filled(r, 2.0, match_bg);
             }
         }
-        paint_line_text(&text_painter, &l.layout, x0, y, &f.font, f.line_h);
+        if look.as_ref().is_some_and(|k| k.dim) {
+            let mut dim = text_painter.clone();
+            dim.multiply_opacity(0.5);
+            paint_line_text(&dim, &l.layout, x0, y, &f.font, f.line_h);
+        } else {
+            paint_line_text(&text_painter, &l.layout, x0, y, &f.font, f.line_h);
+        }
         // Control characters are drawn as boxes, as in the editor.
         for cell in &l.layout.specials {
             let r = Rect::from_min_size(
@@ -1275,5 +1590,28 @@ mod tests {
             "a hidden line maps to the shown one before it"
         );
         assert_eq!(some.row_of(0), 0);
+    }
+
+    #[test]
+    fn all_but_some_lines_map_rows_and_lines() {
+        // Lines 0..10 without 2, 3 and 7: rows show 0 1 4 5 6 8 9.
+        let shown = Shown::AllExcept {
+            excluded: Arc::new(vec![2, 3, 7]),
+            decided: None,
+        };
+        assert_eq!(shown.rows(10), 7);
+        let lines: Vec<u64> = (0..7).map(|r| shown.line(r).unwrap()).collect();
+        assert_eq!(lines, vec![0, 1, 4, 5, 6, 8, 9]);
+        for (row, &line) in lines.iter().enumerate() {
+            assert_eq!(shown.row_of(line), row as u64);
+        }
+        assert_eq!(shown.row_of(3), 1, "a hidden line maps to the one before");
+        assert_eq!(shown.row_of(7), 4);
+        // While the search is going, only the decided lines count.
+        let partial = Shown::AllExcept {
+            excluded: Arc::new(vec![2, 3]),
+            decided: Some(5),
+        };
+        assert_eq!(partial.rows(10), 3);
     }
 }

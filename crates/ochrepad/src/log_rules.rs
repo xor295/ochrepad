@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::ops::Range;
 
 use egui::Color32;
-use ochrepad_core::{ByteOffset, Document, RowPos, SearchOptions, SearchQuery, Searcher};
+use ochrepad_core::{Document, RowPos, SearchOptions, SearchQuery, Searcher};
 use serde::{Deserialize, Serialize};
 
 use crate::editor_view::RowStyle;
@@ -159,14 +159,47 @@ impl LogRules {
     pub fn applies_to(&self, name: &str) -> bool {
         !self.rules.is_empty() && self.globs.iter().any(|g| glob_match(g, name))
     }
+
+    /// How a line with this text looks (in a dark or light theme).
+    pub fn look_text(&self, text: &str, dark: bool) -> LineLook {
+        let mut look = LineLook::default();
+        let (line_alpha, match_alpha) = if dark { (45, 110) } else { (50, 120) };
+        for (searcher, style, [r, g, b]) in &self.rules {
+            let matches = searcher.find_all_bytes(text.as_bytes());
+            if matches.is_empty() {
+                continue;
+            }
+            match style {
+                // The first whole-line rule that matches wins.
+                RuleStyle::Line if look.background.is_none() => {
+                    look.background = Some(Color32::from_rgba_unmultiplied(*r, *g, *b, line_alpha));
+                }
+                RuleStyle::Line => {}
+                RuleStyle::Match => {
+                    let color = Color32::from_rgba_unmultiplied(*r, *g, *b, match_alpha);
+                    look.spans.extend(
+                        matches
+                            .into_iter()
+                            .filter(|m| m.end > m.start)
+                            .map(|m| (m, color)),
+                    );
+                }
+                RuleStyle::Dim => look.dim = true,
+            }
+        }
+        look
+    }
 }
 
-/// How one line looks.
-#[derive(Clone, Default)]
-struct LineLook {
-    background: Option<Color32>,
-    spans: Vec<(Range<usize>, Color32)>,
-    dim: bool,
+/// How one line looks under the rules.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct LineLook {
+    /// A whole-line tint.
+    pub background: Option<Color32>,
+    /// Tinted matches: byte ranges of the line.
+    pub spans: Vec<(Range<usize>, Color32)>,
+    /// Draw the text faintly.
+    pub dim: bool,
 }
 
 /// The rules applied to one document for one frame (lines are looked at as
@@ -192,43 +225,14 @@ impl<'a> LogStyle<'a> {
         if let Some(look) = self.lines.borrow().get(&line) {
             return look.clone();
         }
-        let mut look = LineLook::default();
-        if line < self.doc.line_count() {
-            let start = self.doc.line_start(line);
-            let end = self.doc.line_end(line);
-            let (line_alpha, match_alpha) = if self.dark { (45, 110) } else { (50, 120) };
-            for (searcher, style, [r, g, b]) in &self.rules.rules {
-                let matches = searcher.find_all(self.doc, start..end);
-                if matches.is_empty() {
-                    continue;
-                }
-                match style {
-                    // The first whole-line rule that matches wins.
-                    RuleStyle::Line if look.background.is_none() => {
-                        look.background =
-                            Some(Color32::from_rgba_unmultiplied(*r, *g, *b, line_alpha));
-                    }
-                    RuleStyle::Line => {}
-                    RuleStyle::Match => {
-                        let color = Color32::from_rgba_unmultiplied(*r, *g, *b, match_alpha);
-                        look.spans.extend(
-                            matches
-                                .iter()
-                                .filter(|m| m.end > m.start)
-                                .map(|m| (offset(m.start, start)..offset(m.end, start), color)),
-                        );
-                    }
-                    RuleStyle::Dim => look.dim = true,
-                }
-            }
-        }
+        let look = if line < self.doc.line_count() {
+            self.rules.look_text(&self.doc.line_text(line), self.dark)
+        } else {
+            LineLook::default()
+        };
         self.lines.borrow_mut().insert(line, look.clone());
         look
     }
-}
-
-fn offset(pos: ByteOffset, line_start: ByteOffset) -> usize {
-    pos.0 - line_start.0
 }
 
 impl RowStyle for LogStyle<'_> {

@@ -144,3 +144,18 @@ log that was truncated or rewritten), it is read again from the start, with
 a note in the status bar. On Windows, a file open in the viewer can't be
 truncated by another program (Windows refuses while the file is mapped into
 memory); it can still be appended to, renamed or deleted.
+
+### Log tools in the viewer
+
+The filter, the highlight rules and following work in the viewer too:
+
+- **Filter Lines** (Alt+Shift+L) searches the whole file in the background
+  and fills the view in as it finds lines, so the first matches show at once
+  in a file of gigabytes. The bar says how many lines are shown so far and
+  how much of the file has been searched; with **Hide matching**, lines
+  show up to the last match found until the search is done. When the file
+  grows, the new part is searched too.
+- **Highlight rules** colour and dim the lines on screen, as in the editor.
+- **View > Follow (tail -f)** keeps the end of the file in view as it grows.
+  (The viewer always reads what a file gains; following only scrolls.) The
+  status bar shows **Following**; click it to stop.

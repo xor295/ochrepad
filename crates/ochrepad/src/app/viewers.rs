@@ -79,6 +79,10 @@ impl OchrepadApp {
         if let Some(path) = self.dock.find_tab(&Tab::Viewer(id)) {
             self.dock.remove_tab(path);
         }
+        if self.filter.is_open(id) {
+            self.filter
+                .close(&mut self.editor, &mut self.viewers, id.into());
+        }
         self.viewers.remove(id);
         if self.confirm_editable == Some(id) {
             self.confirm_editable = None;
@@ -320,6 +324,7 @@ impl OchrepadApp {
         let searching = v.state.searching();
         let going = v.state.waiting_to_go();
         let size = human_bytes(v.file.len());
+        let following = v.state.follow;
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.label(encoding);
             ui.separator();
@@ -336,6 +341,17 @@ impl OchrepadApp {
             ui.separator();
             ui.label(format!("Read-only, {size}"))
                 .on_hover_text("Files this large open in the viewer: View > Open as Editable");
+            if following {
+                ui.separator();
+                if ui
+                    .button("Following")
+                    .on_hover_text("The end of the file stays in view as it grows. Click to stop.")
+                    .clicked()
+                    && let Some(v) = self.viewers.get_mut(id)
+                {
+                    v.state.follow = false;
+                }
+            }
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                 ui.label(caret);
                 ui.separator();

@@ -47,6 +47,10 @@ people downloading the release.
   - View > Follow (tail -f) adds what another program appends to the
     file as it grows, without asking and without an undo step; a rotated
     or truncated file is reloaded.
+  - The same tools in the viewer for large files: the filter searches the
+    whole file in the background and fills the view in as it goes (and
+    goes on as the file grows), highlight rules colour the lines on screen,
+    and Follow keeps the end in view.
 - Undo survives closing a file and restarting ochrepad: each file's undo
   history (up to about 2 MB of the newest changes) is kept and comes back
   when the file is opened again unchanged, and with unsaved work restored

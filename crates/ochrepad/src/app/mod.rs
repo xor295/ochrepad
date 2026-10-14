@@ -614,13 +614,30 @@ impl OchrepadApp {
         }
     }
 
+    /// The tab the filter bar is for: the focused viewer, or the active
+    /// editor.
+    fn filter_target(&mut self) -> crate::filter_bar::FilterTarget {
+        match self.focused_viewer() {
+            Some(id) => id.into(),
+            None => self.active.into(),
+        }
+    }
+
+    /// Search > Filter Lines (Alt+Shift+L) on the focused tab.
+    pub fn open_filter(&mut self) {
+        let target = self.filter_target();
+        self.filter
+            .open(&self.editor, &self.viewers, target, self.now);
+    }
+
     /// Removes a tab and its view, and the buffer if this was its last view.
     fn close_now(&mut self, view: ViewId) {
         if let Some(path) = self.dock.find_tab(&Tab::Editor(view)) {
             self.dock.remove_tab(path);
         }
         if self.filter.is_open(view) {
-            self.filter.close(&mut self.editor, view);
+            self.filter
+                .close(&mut self.editor, &mut self.viewers, view.into());
         }
         if let Some(b) = self.editor.view(view).map(|v| v.buffer())
             && self.editor.views_of(b).count() == 1
@@ -824,22 +841,35 @@ impl OchrepadApp {
                 }
             }
         }
-        if self.filter.is_open(self.active) {
+        let target = self.filter_target();
+        if self.filter.is_open(target) {
             let requests = Panel::bottom("filter")
                 .show(ui, |ui| {
-                    self.filter.ui(ui, &self.editor, self.active, self.now)
+                    self.filter
+                        .ui(ui, &self.editor, &self.viewers, target, self.now)
                 })
                 .inner;
             for r in requests {
                 match r {
                     crate::filter_bar::FilterRequest::Close => {
-                        self.filter.close(&mut self.editor, self.active);
-                        self.view_state_mut().request_focus();
+                        self.filter
+                            .close(&mut self.editor, &mut self.viewers, target);
+                        match target {
+                            crate::filter_bar::FilterTarget::Editor(_) => {
+                                self.view_state_mut().request_focus();
+                            }
+                            crate::filter_bar::FilterTarget::Viewer(id) => {
+                                self.activate_viewer(id);
+                            }
+                        }
                     }
                 }
             }
         }
-        if self.filter.tick(&mut self.editor, self.now) {
+        if self
+            .filter
+            .tick(&mut self.editor, &mut self.viewers, self.now)
+        {
             ui.ctx()
                 .request_repaint_after(std::time::Duration::from_millis(50));
         }
@@ -1083,7 +1113,7 @@ impl OchrepadApp {
             self.go_to_line = Some(String::new());
         }
         if pressed(ui, &FILTER_LINES) {
-            self.filter.open(&self.editor, self.active, self.now);
+            self.open_filter();
         }
         if pressed(ui, &ZOOM_IN) || pressed(ui, &ZOOM_IN_EQUALS) {
             self.zoom_by(1);
@@ -1515,7 +1545,7 @@ impl OchrepadApp {
             self.go_to_line = Some(String::new());
         }
         if item(ui, "Filter Lines…", "Alt+Shift+L") {
-            self.filter.open(&self.editor, self.active, self.now);
+            self.open_filter();
         }
         if item(ui, "Go to Matching Bracket", "Ctrl+B") {
             self.apply(Action::GoToMatchingBracket);
@@ -1809,16 +1839,25 @@ impl OchrepadApp {
         ui.checkbox(&mut self.settings.word_wrap, "Word Wrap");
         ui.checkbox(&mut self.settings.document_map, "Document Map");
         let buffer = self.buffer_id();
-        let mut following = self.is_following(buffer);
-        if ui
-            .add_enabled(
-                self.buffer().meta.path.is_some(),
-                egui::Checkbox::new(&mut following, "Follow (tail -f)"),
-            )
-            .on_hover_text("Add what other programs append to this file as it grows")
-            .changed()
-        {
-            self.set_following(buffer, following);
+        if let Some(id) = self.focused_viewer() {
+            // A viewer reads what the file gains by itself; following keeps
+            // its end in view.
+            if let Some(v) = self.viewers.get_mut(id) {
+                ui.checkbox(&mut v.state.follow, "Follow (tail -f)")
+                    .on_hover_text("Scroll to the end as the file grows");
+            }
+        } else {
+            let mut following = self.is_following(buffer);
+            if ui
+                .add_enabled(
+                    self.buffer().meta.path.is_some(),
+                    egui::Checkbox::new(&mut following, "Follow (tail -f)"),
+                )
+                .on_hover_text("Add what other programs append to this file as it grows")
+                .changed()
+            {
+                self.set_following(buffer, following);
+            }
         }
         ui.menu_button("Show Symbol", |ui| self.show_symbol_menu(ui));
         ui.menu_button("Zoom", |ui| self.zoom_menu(ui));
@@ -2142,6 +2181,12 @@ impl TabViewer for Tabs<'_> {
             Tab::Viewer(id) => {
                 let label = format!("Viewer: {}", viewer_name(self.viewers, id));
                 if let Some(v) = self.viewers.get_mut(id) {
+                    let rules = v
+                        .file
+                        .path()
+                        .file_name()
+                        .is_some_and(|n| self.log_rules.applies_to(&n.to_string_lossy()))
+                        .then_some(self.log_rules);
                     crate::viewer::viewer_ui(
                         ui,
                         id,
@@ -2150,6 +2195,7 @@ impl TabViewer for Tabs<'_> {
                         self.tab_width,
                         &label,
                         self.find_highlight,
+                        rules,
                     );
                 }
                 return;

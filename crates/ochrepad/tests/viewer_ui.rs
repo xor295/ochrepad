@@ -344,3 +344,86 @@ fn the_viewer_looks_right() {
     h.run();
     h.snapshot("viewer");
 }
+
+fn viewer_id(h: &mut Harness<'_, OchrepadApp>) -> ochrepad::viewer::ViewerId {
+    match focused_tab(h) {
+        Some(Tab::Viewer(id)) => id,
+        other => panic!("{other:?}"),
+    }
+}
+
+/// The viewer's filter: rows shown, and whether its search is done.
+fn filtered(h: &Harness<'_, OchrepadApp>, id: ochrepad::viewer::ViewerId) -> Option<(u64, bool)> {
+    let v = h.state().viewers.get(id)?;
+    v.state
+        .filter_progress(&v.file)
+        .map(|(rows, part)| (rows, part >= 1.0))
+}
+
+fn append(path: &Path, text: &str) {
+    use std::io::Write;
+    let mut f = std::fs::OpenOptions::new().append(true).open(path).unwrap();
+    f.write_all(text.as_bytes()).unwrap();
+}
+
+#[test]
+fn the_filter_works_in_a_viewer_and_follows_the_file() {
+    let d = Dirs::new();
+    let path = d.file("big.log", &log(1000));
+    let mut h = harness();
+    open_viewer(&mut h, &path);
+    let id = viewer_id(&mut h);
+    // Ten error lines (every 100th).
+    h.state_mut().open_filter();
+    h.run();
+    h.event(Event::Text("ERROR".into()));
+    wait_for(&mut h, |h| filtered(h, id) == Some((10, true)));
+    h.get_by_label_contains("10 of 1,001 lines");
+    // Hide matching: the rest.
+    h.get_by_label("Hide matching").click();
+    wait_for(&mut h, |h| filtered(h, id) == Some((991, true)));
+    h.get_by_label("Show matching").click();
+    wait_for(&mut h, |h| filtered(h, id) == Some((10, true)));
+
+    // The file grows: the new part is searched too.
+    append(&path, "2026-10-14 01:02:04 ERROR the disk is full\n");
+    wait_for(&mut h, |h| filtered(h, id) == Some((11, true)));
+
+    // Without a filter, following keeps the end in view as it grows.
+    h.get_by_label("×").click();
+    h.run();
+    assert!(filtered(&h, id).is_none());
+    h.state_mut().viewers.get_mut(id).unwrap().state.follow = true;
+    let top_before = h.state().viewers.get(id).unwrap().state.top_line();
+    append(&path, &log(200));
+    wait_for(&mut h, |h| {
+        h.state()
+            .viewers
+            .get(id)
+            .is_some_and(|v| v.file.progress().done && v.state.top_line() > top_before + 100)
+    });
+    h.get_by_label("Following");
+}
+
+#[test]
+fn a_filtered_log_in_the_viewer_looks_right() {
+    let d = Dirs::new();
+    let text = "2026-10-14 INFO  starting\n2026-10-14 ERROR disk full\n2026-10-14 DEBUG retry 1\n2026-10-14 WARN  slow write\n2026-10-14 ERROR gave up\n2026-10-14 INFO  done\n";
+    let path = d.file("server.log", text);
+    let mut h = Harness::builder()
+        .with_size(Vec2::new(640.0, 260.0))
+        .with_step_dt(1.0 / 60.0)
+        .with_max_steps(10_000)
+        .wgpu()
+        .build_ui_state(|ui, app: &mut OchrepadApp| app.show(ui), OchrepadApp::new());
+    h.run();
+    open_viewer(&mut h, &path);
+    let id = viewer_id(&mut h);
+    h.state_mut().open_filter();
+    h.run();
+    h.event(Event::Text("INFO".into()));
+    h.run();
+    h.get_by_label("Hide matching").click();
+    wait_for(&mut h, |h| filtered(h, id) == Some((5, true)));
+    h.snapshot("viewer_log");
+}
