@@ -29,6 +29,61 @@ pub enum MenuCommand {
     OpenFile(PathBuf, Option<(usize, usize)>),
 }
 
+/// The web link (`http://` or `https://`) the selection is, or the caret
+/// is in. Other kinds of link (`file:`, `javascript:` and the like) are
+/// not offered.
+pub fn url_at(doc: &Document, sels: &SelectionSet) -> Option<String> {
+    const SCHEMES: [&str; 2] = ["https://", "http://"];
+    let starts_link = |s: &str| {
+        SCHEMES.iter().any(|p| {
+            s.len() > p.len() && s.get(..p.len()).is_some_and(|h| h.eq_ignore_ascii_case(p))
+        })
+    };
+    let sel = sels.primary();
+    if !sel.is_empty() {
+        let text = doc.slice(sel.range());
+        let text = text.trim();
+        return (starts_link(text) && text.len() <= 4096 && !text.contains(char::is_whitespace))
+            .then(|| text.to_owned());
+    }
+    let line = doc.line_of(sel.head);
+    let text = doc.line_text(line);
+    let at = sel.head.0 - doc.line_start(line).0;
+    // A link runs between blanks and quotes; brackets can be part of it.
+    let stop = |c: char| c.is_whitespace() || "\"'<>`".contains(c);
+    let from = text[..at].rfind(stop).map_or(0, |i| i + 1);
+    let to = text[at..].find(stop).map_or(text.len(), |i| at + i);
+    let run = &text[from..to];
+    // The last link start at or before the caret ("url=https://...").
+    let caret = at - from;
+    let begin = run
+        .char_indices()
+        .rev()
+        .map(|(i, _)| i)
+        .find(|&i| i <= caret && starts_link(&run[i..]))?;
+    let mut link = &run[begin..];
+    // Punctuation after a link ends the sentence, and a closing bracket
+    // without its opening one closes the text around it.
+    loop {
+        let trimmed = link.trim_end_matches(['.', ',', ';', ':', '!', '?']);
+        let unbalanced = |open: char, close: char| {
+            trimmed.ends_with(close)
+                && trimmed.matches(open).count() < trimmed.matches(close).count()
+        };
+        let trimmed = if unbalanced('(', ')') || unbalanced('[', ']') || unbalanced('{', '}') {
+            &trimmed[..trimmed.len() - 1]
+        } else {
+            trimmed
+        };
+        if trimmed.len() == link.len() {
+            break;
+        }
+        link = trimmed;
+    }
+    (starts_link(link) && link.len() <= 4096 && caret <= begin + link.len())
+        .then(|| link.to_owned())
+}
+
 /// A file named in the text, and the line and column it gave.
 pub type FileAt = (PathBuf, Option<(usize, usize)>);
 
@@ -123,6 +178,14 @@ pub fn show(
                 .and_then(|v| file_at(b.doc(), &v.selections, dirs))
         })
         .clone();
+    let url = state
+        .context_url
+        .get_or_insert_with(|| {
+            editor
+                .view(view)
+                .and_then(|v| url_at(b.doc(), &v.selections))
+        })
+        .clone();
 
     let item = |ui: &mut Ui, enabled: bool, label: &str, shortcut: &str| {
         ui.add_enabled(enabled, Button::new(label).shortcut_text(shortcut))
@@ -143,6 +206,12 @@ pub fn show(
             .clicked()
         {
             command = Some(MenuCommand::OpenFile(path, place));
+        }
+        ui.separator();
+    }
+    if let Some(url) = url {
+        if ui.button("Open Link").on_hover_text(&url).clicked() {
+            ui.ctx().open_url(egui::OpenUrl::new_tab(url));
         }
         ui.separator();
     }
@@ -256,6 +325,44 @@ mod tests {
         let doc = Document::new("x src/main.rs y");
         let sel = SelectionSet::single(Selection::new(ByteOffset(2), ByteOffset(13)));
         assert_eq!(file_at(&doc, &sel, &dirs), Some((main, None)));
+    }
+
+    #[test]
+    fn web_links_around_the_caret() {
+        let url = |text: &str, caret: usize| {
+            url_at(
+                &Document::new(text),
+                &SelectionSet::caret(ByteOffset(caret)),
+            )
+        };
+        let some = |s: &str| Some(s.to_owned());
+        assert_eq!(
+            url("see https://example.com/a?b=1. Then", 10),
+            some("https://example.com/a?b=1")
+        );
+        // Brackets of its own stay; the ones around it go.
+        assert_eq!(
+            url("(https://en.wikipedia.org/wiki/Rust_(language))", 5),
+            some("https://en.wikipedia.org/wiki/Rust_(language)")
+        );
+        assert_eq!(url("<http://x.org/>", 3), some("http://x.org/"));
+        assert_eq!(url("[HTTPS://X.ORG]", 3), some("HTTPS://X.ORG"));
+        assert_eq!(url("url=https://a.b/c", 10), some("https://a.b/c"));
+        // At its end, and before its start.
+        assert_eq!(url("go https://a.b/c", 16), some("https://a.b/c"));
+        assert_eq!(url("url=https://a.b/c", 2), None);
+        // Only web links.
+        assert_eq!(url("ftp://x.org/f", 3), None);
+        assert_eq!(url("javascript:alert(1)", 3), None);
+        assert_eq!(url("file:///C:/x", 3), None);
+        assert_eq!(url("https://", 3), None);
+        assert_eq!(url("no link here", 3), None);
+        // A selected link, as it is.
+        let doc = Document::new("x https://a.b y");
+        let sel = SelectionSet::single(Selection::new(ByteOffset(2), ByteOffset(13)));
+        assert_eq!(url_at(&doc, &sel), some("https://a.b"));
+        let sel = SelectionSet::single(Selection::new(ByteOffset(0), ByteOffset(13)));
+        assert_eq!(url_at(&doc, &sel), None);
     }
 
     /// Only looking at a network path sends Windows' credentials to its

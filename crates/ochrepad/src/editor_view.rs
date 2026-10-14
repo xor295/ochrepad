@@ -116,6 +116,8 @@ pub struct EditorViewState {
     pub context_line: Option<usize>,
     /// The file the context menu offers to open, once it has looked.
     pub context_file: Option<Option<crate::editor_menu::FileAt>>,
+    /// The web link the context menu offers to open, once it has looked.
+    pub context_url: Option<Option<String>>,
     /// Paste to (Replace) Bookmarked Lines asked for the clipboard at this
     /// time: the paste that answers goes to the bookmarked lines.
     paste_to_bookmarks: Option<f64>,
@@ -132,6 +134,7 @@ impl Default for EditorViewState {
             map_drag: None,
             context_line: None,
             context_file: None,
+            context_url: None,
             paste_to_bookmarks: None,
             cache: LayoutCache::default(),
             font_size: 14.0,
@@ -680,6 +683,7 @@ pub fn editor_view(
         // On a scrollbar or the map: the menu has no line to act on.
         state.context_line = None;
         state.context_file = None;
+        state.context_url = None;
     }
     if secondary
         && state.bar_drag.is_none()

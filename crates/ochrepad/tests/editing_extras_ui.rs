@@ -249,3 +249,51 @@ fn open_file_from_the_right_click_menu_and_copy_results() {
         "lib.rs:2: two\nlib.rs:3: three\n"
     );
 }
+
+#[test]
+fn the_right_click_menu_opens_a_web_link() {
+    let mut h = harness();
+    let view = h.state().active_view();
+    h.state_mut()
+        .editor
+        .apply(
+            view,
+            ochrepad_core::Action::InsertText("see https://example.com/x here".into()),
+        )
+        .unwrap();
+    h.run();
+    // Right-click inside the link (the 9th column).
+    let rect = h.get_by_label("Editor: new 1").rect();
+    let font = egui::FontId::monospace(14.0);
+    let (cell_w, line_h) = h
+        .ctx
+        .fonts_mut(|f| (f.glyph_width(&font, 'M'), f.row_height(&font)));
+    let pos = egui::Pos2::new(
+        rect.min.x + 5.0 * cell_w + 8.0 + 8.5 * cell_w,
+        rect.min.y + 0.5 * line_h,
+    );
+    h.event(Event::PointerMoved(pos));
+    for pressed in [true, false] {
+        h.event(Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Secondary,
+            pressed,
+            modifiers: Modifiers::NONE,
+        });
+        h.step();
+    }
+    h.run();
+    h.get_by_label("Open Link").click();
+    h.step();
+    let opened: Vec<String> = h
+        .output()
+        .platform_output
+        .commands
+        .iter()
+        .filter_map(|c| match c {
+            egui::OutputCommand::OpenUrl(u) => Some(u.url.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(opened, ["https://example.com/x"]);
+}

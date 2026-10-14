@@ -21,7 +21,8 @@ people downloading the release.
 - The vertical scrollbar marks the bookmarks, the changed lines and the
   caret's place in the document; F8 and Shift+F8 go from change to change.
 - The right-click menu opens a file named at the caret (`src/main.rs:12:5`
-  goes to that line and column), and Search Results can copy its results.
+  goes to that line and column) or a web link in the browser, and Search
+  Results can copy its results.
 - Edit > Comment Lines (Ctrl+K) and Uncomment Lines (Ctrl+Shift+K), as
   Notepad++'s Single Line Comment and Uncomment: they add or take off one
   level whatever the lines already have, where Ctrl+Q toggles.
