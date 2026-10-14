@@ -165,8 +165,8 @@ selected; see [Text tools](text-tools.md).
 |---|---|
 | `{"Action": {"FormatJson": {"indent": null}}}` | Formats JSON with one member or element per line, indented like the document. Give an indent to use another: `{"FormatJson": {"indent": {"use_spaces": true, "width": 2}}}`. |
 | `{"Action": "MinifyJson"}` | Removes the blank space between JSON tokens. |
-| `{"Action": {"Encode": "Base64"}}` | Encodes as `"Base64"` or as URL percent-encoding (`"Url"`). |
-| `{"Action": {"Decode": "Url"}}` | Decodes `"Base64"` or `"Url"`; refused when the text is not valid or does not decode to UTF-8 text. |
+| `{"Action": {"Encode": "Base64"}}` | Encodes as `"Base64"`, as URL percent-encoding (`"Url"`) or as hex digits (`"Hex"`). |
+| `{"Action": {"Decode": "Url"}}` | Decodes `"Base64"`, `"Url"` or `"Hex"`; refused when the text is not valid or does not decode to UTF-8 text. |
 
 ### Folding
 

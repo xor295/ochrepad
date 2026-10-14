@@ -36,6 +36,9 @@ pub enum Codec {
     /// `0`–`9`, `-`, `.`, `_` and `~` becomes `%XX`. Decoding leaves `+`
     /// alone.
     Url,
+    /// Two hex digits per byte (Notepad++'s Converter, ASCII -> HEX).
+    /// Decoding takes either case, and spaces or line breaks anywhere.
+    Hex,
 }
 
 impl Codec {
@@ -43,6 +46,7 @@ impl Codec {
         match self {
             Codec::Base64 => "Base64",
             Codec::Url => "URL encoding",
+            Codec::Hex => "hex",
         }
     }
 
@@ -51,6 +55,7 @@ impl Codec {
         match self {
             Codec::Base64 => base64_encode(text.as_bytes()),
             Codec::Url => url_encode(text.as_bytes()),
+            Codec::Hex => hex_encode(text.as_bytes()),
         }
     }
 
@@ -59,6 +64,7 @@ impl Codec {
         let bytes = match self {
             Codec::Base64 => base64_decode(text)?,
             Codec::Url => url_decode(text)?,
+            Codec::Hex => hex_decode(text)?,
         };
         String::from_utf8(bytes).map_err(|_| "the decoded bytes are not UTF-8 text".to_owned())
     }
@@ -601,6 +607,37 @@ pub fn url_decode(text: &str) -> Result<Vec<u8>, String> {
     Ok(out)
 }
 
+/// Two upper-case hex digits per byte.
+pub fn hex_encode(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for &b in bytes {
+        out.push(HEX[(b >> 4) as usize] as char);
+        out.push(HEX[(b & 15) as usize] as char);
+    }
+    out
+}
+
+/// Reads pairs of hex digits, skipping blanks and line breaks.
+pub fn hex_decode(text: &str) -> Result<Vec<u8>, String> {
+    let mut out = Vec::with_capacity(text.len() / 2);
+    let mut high: Option<u8> = None;
+    for c in text.chars().filter(|c| !c.is_whitespace()) {
+        let Some(digit) = c.to_digit(16) else {
+            return Err(format!("'{c}' is not a hex digit"));
+        };
+        let digit = digit as u8;
+        match high.take() {
+            Some(h) => out.push(h << 4 | digit),
+            None => high = Some(digit),
+        }
+    }
+    if high.is_some() {
+        return Err("the hex digits do not pair up: one is left over".to_owned());
+    }
+    Ok(out)
+}
+
 // ---------------------------------------------------------------------------
 // Hashes
 
@@ -1021,6 +1058,22 @@ mod tests {
             base64_decode("-_-_").unwrap(),
             base64_decode("+/+/").unwrap()
         );
+    }
+
+    #[test]
+    fn hex_round_trips_and_takes_blanks() {
+        assert_eq!(Codec::Hex.encode("Hi é"), "486920C3A9");
+        assert_eq!(Codec::Hex.decode("486920C3A9").unwrap(), "Hi é");
+        assert_eq!(Codec::Hex.decode("48 69\n20 c3 a9").unwrap(), "Hi é");
+        assert_eq!(Codec::Hex.encode(""), "");
+        assert_eq!(Codec::Hex.decode("").unwrap(), "");
+        assert_eq!(
+            Codec::Hex.decode("4G").unwrap_err(),
+            "'G' is not a hex digit"
+        );
+        assert!(Codec::Hex.decode("486").is_err(), "a digit left over");
+        // 0xFF is not UTF-8.
+        assert!(Codec::Hex.decode("FF").is_err());
     }
 
     #[test]

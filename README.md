@@ -72,7 +72,7 @@ A fast, native text editor in the spirit of Notepad++, written in Rust with
   or put them in a random order, duplicate,
   move, join lines, trim trailing whitespace, and remove empty or duplicate
   lines. JSON format, minify and validate (key order and numbers kept),
-  Base64 and URL encoding, and MD5, SHA-1 and SHA-256 hashes
+  Base64, URL and hex encoding, and MD5, SHA-1 and SHA-256 hashes
   ([more](docs/text-tools.md)). Notepad++'s line and blank operations
   (delete, transpose, reverse, trim, EOL to space, tabs and spaces) and its
   Column Editor for text or number sequences down a column

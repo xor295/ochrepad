@@ -1,7 +1,7 @@
 # Text tools
 
-**Edit > Text Tools** formats JSON, encodes and decodes Base64 and URL
-encoding, and shows hashes of text.
+**Edit > Text Tools** formats JSON, encodes and decodes Base64, URL
+encoding and hex, and shows hashes of text.
 
 ## What the tools work on
 
@@ -45,7 +45,7 @@ message with its line and column and what is wrong there, for example
 `expected ',' or '}' but found '"'`. The column is counted as in the status
 bar.
 
-## Base64 and URL encoding
+## Base64, URL and hex encoding
 
 - **Base64 Encode** and **Decode** use the standard alphabet (`A`–`Z`,
   `a`–`z`, `0`–`9`, `+`, `/`) with `=` padding. Decoding also accepts the
@@ -56,13 +56,17 @@ bar.
   except the letters, digits, `-`, `.`, `_` and `~` is written as `%XX`, so a
   space becomes `%20`. Decoding turns each `%XX` back into its byte and
   leaves everything else, including `+`, as it is.
+- **Hex Encode** and **Decode** (Notepad++'s Converter: ASCII to hex and
+  back) write each byte as two hex digits, so `Hi` becomes `4869`.
+  Decoding takes upper or lower case, and spaces or line breaks anywhere
+  (`48 69` decodes too).
 
 Text is encoded as UTF-8. Line breaks are encoded as the document's line
 ending (shown in the status bar), as they are in the file. When decoding,
 line breaks of any kind become the editor's.
 
 Decoding is refused, with a note in the status bar, when the text is not
-valid Base64 or URL encoding, or when the decoded bytes are not UTF-8 text
+valid Base64, URL encoding or hex, or when the decoded bytes are not UTF-8 text
 (for example, an encoded image). ochrepad never inserts replacement
 characters for bytes it cannot show.
 

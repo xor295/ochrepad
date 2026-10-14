@@ -19,8 +19,8 @@ menu item to explain:
   the sidebar, ignored files, and creating and renaming files.
 - [Macros](macros.md): what gets recorded, running a macro to the end of the
   file, saving macros with shortcuts.
-- [Text tools](text-tools.md): formatting and checking JSON, Base64 and URL
-  encoding, and hashes.
+- [Text tools](text-tools.md): formatting and checking JSON, Base64, URL
+  and hex encoding, and hashes.
 - [Editing lines, blanks and columns](editing.md): Notepad++'s line and
   blank operations, the Column Editor, the tab menu and reopening closed
   files, bookmarks, the right-click menu, the summary, multi-select, paste

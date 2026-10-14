@@ -34,6 +34,8 @@ impl OchrepadApp {
             ("Base64 Decode", Action::Decode(Codec::Base64)),
             ("URL Encode", Action::Encode(Codec::Url)),
             ("URL Decode", Action::Decode(Codec::Url)),
+            ("Hex Encode", Action::Encode(Codec::Hex)),
+            ("Hex Decode", Action::Decode(Codec::Hex)),
         ] {
             if ui.button(label).clicked() {
                 self.apply(action);

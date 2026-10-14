@@ -38,6 +38,8 @@ people downloading the release.
 - Edit > Convert Case has Notepad++'s Title Case (blend) (Alt+Shift+U),
   Sentence case (Ctrl+Alt+U), Sentence case (blend) (Ctrl+Alt+Shift+U)
   and ranDOm cASE.
+- Edit > Text Tools > Hex Encode and Hex Decode, as Notepad++'s Converter
+  (ASCII to hex and back).
 - Overtype: Insert switches to typing over the text, as in Notepad++. The
   status bar shows OVR and the caret becomes a bar under the character it
   replaces; typing never runs past the end of a line.

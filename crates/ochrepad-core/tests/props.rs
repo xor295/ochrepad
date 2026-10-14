@@ -221,8 +221,8 @@ fn action() -> impl Strategy<Value = Action> {
                 indent: i.map(|(use_spaces, width)| ochrepad_core::Indent { use_spaces, width }),
             }),
             Just(Action::MinifyJson),
-            prop::sample::select(vec![Codec::Base64, Codec::Url]).prop_map(Action::Encode),
-            prop::sample::select(vec![Codec::Base64, Codec::Url]).prop_map(Action::Decode),
+            prop::sample::select(vec![Codec::Base64, Codec::Url, Codec::Hex]).prop_map(Action::Encode),
+            prop::sample::select(vec![Codec::Base64, Codec::Url, Codec::Hex]).prop_map(Action::Decode),
         ],
         // Bookmarks, and the commands on the lines they mark.
         2 => prop_oneof![
