@@ -336,6 +336,15 @@ mod tests {
                 "target/out.rs"
             ]
         );
+        // "!" leaves files, or whole folders, out.
+        o.filters = parse_filters("*.rs; !y.rs");
+        assert_eq!(rel(&o), vec!["a.rs", "src/x.rs", "target/out.rs"]);
+        o.filters = parse_filters("!deep; !target");
+        assert_eq!(
+            rel(&o),
+            vec![".gitignore", "a.rs", "b.toml", "c.txt", "src/x.rs"]
+        );
+        o.filters = parse_filters("*.rs; *.toml");
         o.subfolders = false;
         assert_eq!(rel(&o), vec!["a.rs", "b.toml"]);
         assert!(

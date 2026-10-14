@@ -60,7 +60,10 @@ panel, adds a row for searching the files in a folder on disk:
   a folder in the sidebar and choose **Find in Folder…** to search just that
   one. **Browse…** picks one.
 - **Filters**: which files, as globs separated by `;` (or spaces or
-  commas), such as `*.rs; *.toml`. Empty means every file.
+  commas), such as `*.rs; *.toml`. Empty means every file. A glob starting
+  with `!` leaves files out instead, and a folder's name leaves out the
+  whole folder: `*.js; !*.min.js; !node_modules`. They work as lines of a
+  `.gitignore` file do.
 - **Subfolders**: search the folders inside too (on by default).
 - **Ignored files**: also search files that `.gitignore` and `.ignore` leave
   out. The `.git` folder is never searched.

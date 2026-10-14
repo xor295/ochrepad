@@ -399,7 +399,7 @@ impl FindPanel {
                     TextEdit::singleline(&mut self.filters)
                         .id(Id::new("ochrepad-files-filters"))
                         .desired_width(120.0)
-                        .hint_text("*.rs; *.toml"),
+                        .hint_text("*.rs; *.toml; !target"),
                 );
                 ui.checkbox(&mut self.subfolders, "Subfolders");
                 ui.checkbox(&mut self.include_ignored, "Ignored files")

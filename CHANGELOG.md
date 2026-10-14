@@ -31,6 +31,8 @@ people downloading the release.
 - View > Move Tab Forward and Move Tab Backward (Ctrl+Shift+PageDown and
   Ctrl+Shift+PageUp) move the active tab along its tab bar, as in
   Notepad++.
+- Find in Files' filters can leave files and folders out with `!`, as in
+  Notepad++: `*.js; !*.min.js; !node_modules`.
 - Overtype: Insert switches to typing over the text, as in Notepad++. The
   status bar shows OVR and the caret becomes a bar under the character it
   replaces; typing never runs past the end of a line.
