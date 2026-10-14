@@ -5,7 +5,7 @@
 use crate::action::{Action, ActionError};
 use crate::position::ByteOffset;
 use crate::resolve::Resolved;
-use crate::search::{SearchOptions, SearchQuery, Searcher, escape};
+use crate::search::{SearchOptions, SearchQuery, Searcher};
 use crate::selection::{Selection, SelectionSet};
 use crate::text::Document;
 
@@ -45,10 +45,12 @@ pub(crate) fn resolve(
         primary.range()
     };
     let text = doc.slice(range.clone());
+    // Plain text: "whole word" then only asks for a word boundary where the
+    // text starts or ends with a word character ($var, foo( match).
     let query = SearchQuery::new(
-        escape(&text),
+        text,
         SearchOptions {
-            regex: true,
+            regex: false,
             match_case,
             whole_word,
             wrap: true,
@@ -70,7 +72,12 @@ pub(crate) fn resolve(
     }
     // The next occurrence after the newest selection that is not selected
     // yet, going round from the end to the start.
-    let taken = |m: &std::ops::Range<ByteOffset>| sels.ranges().iter().any(|s| s.range() == *m);
+    // The selections are sorted: look a match up by its start.
+    let ranges = sels.ranges();
+    let taken = |m: &std::ops::Range<ByteOffset>| {
+        let i = ranges.partition_point(|s| s.start() < m.start);
+        ranges.get(i).is_some_and(|s| s.range() == *m)
+    };
     let mut from = range.end;
     let mut wrapped = false;
     let next = loop {

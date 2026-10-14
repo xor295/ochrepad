@@ -71,3 +71,16 @@ fn all_selects_every_occurrence() {
         Err(ActionError::NotFound)
     );
 }
+
+#[test]
+fn whole_word_works_for_text_that_starts_or_ends_with_punctuation() {
+    // A boundary is only asked for beside word characters.
+    let mut t = setup("echo $var; x=$var");
+    t.set_sels(vec![(5, 9)]);
+    t.apply(all(true, true));
+    assert_eq!(t.show(), "echo ^$var|; x=^$var|");
+    let mut t = setup("foo(); foo();");
+    t.set_sels(vec![(0, 4)]);
+    t.apply(next(true, true));
+    assert_eq!(t.show(), "^foo(|); ^foo(|);");
+}

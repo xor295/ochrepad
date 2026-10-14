@@ -51,7 +51,9 @@ Not recorded:
 "Until the end of the file" repeats the macro until one of these happens:
 
 - an action fails, typically a Find with no more matches, which is the
-  usual way to stop a find-and-edit macro;
+  usual way to stop a find-and-edit macro (searches don't wrap round to the
+  start while running to the end, whatever the find panel's Wrap around
+  says, so the last match ends it);
 - a run starts and ends with the caret at the end of the document, so a
   "fix this line, go down a line" macro processes the last line once and
   stops;

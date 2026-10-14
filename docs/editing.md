@@ -116,7 +116,8 @@ characters, bytes and lines are selected.
   [keymap.json](keymap.md).
 - **Edit > Paste from History** offers the last ten texts copied (or cut)
   in ochrepad, newest first, so something copied before the last copy can
-  still be pasted. A rectangle pastes as a block.
+  still be pasted. A rectangle pastes as a block. Copies over 1 MB are not
+  kept.
 - **Edit > Read-Only** refuses edits to the current document until it is
   turned off; the tab says "(read-only)". The file on disk is not changed.
 - The status bar shows how many characters are selected, and on how many

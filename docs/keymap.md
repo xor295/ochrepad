@@ -181,8 +181,9 @@ are not recorded in macros. See [Folding](view.md#folding).
 
 Bookmarks belong to the document, and adding or removing them is not an
 undo step; the commands that delete or replace lines are. Macros record
-them all (a macro can find a line and bookmark it). See
-[Bookmarks](editing.md#bookmarks).
+them (a macro can find a line and bookmark it, then run to the end of the
+file); a bookmark set from the right-click menu is not recorded, as no
+mouse action is. See [Bookmarks](editing.md#bookmarks).
 
 | Command | Does |
 |---|---|

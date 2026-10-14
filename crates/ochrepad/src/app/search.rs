@@ -198,7 +198,9 @@ impl OchrepadApp {
             .open_buffers()
             .into_iter()
             .filter_map(|b| {
-                let doc = self.editor.buffer(b)?.doc();
+                // A Read-Only document refuses the edit: it is left out.
+                let buf = self.editor.buffer(b).filter(|buf| !buf.read_only)?;
+                let doc = buf.doc();
                 let n = searcher.matches(doc, ByteOffset(0)..doc.len()).count();
                 (n > 0).then_some((b, n))
             })

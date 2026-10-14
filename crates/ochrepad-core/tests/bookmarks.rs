@@ -200,3 +200,55 @@ fn macros_record_and_replay_bookmark_commands() {
         .unwrap();
     assert_eq!(marks(&t), vec![1, 3]);
 }
+
+#[test]
+fn a_find_and_bookmark_macro_runs_to_the_end_and_stops() {
+    // The find panel wraps round by default; running to the end must not.
+    let mut t = setup("|INFO a\nERROR b\nINFO c\nERROR d\nINFO e");
+    let query = SearchQuery::new(
+        "ERROR",
+        SearchOptions {
+            wrap: true,
+            ..SearchOptions::default()
+        },
+    );
+    let actions = vec![
+        Action::Find {
+            query,
+            backward: false,
+        },
+        Action::ToggleBookmark,
+    ];
+    let runs =
+        t.ed.play_macro(t.view, &actions, ochrepad_core::Repeat::UntilEnd)
+            .unwrap();
+    assert_eq!(runs, 2);
+    assert_eq!(marks(&t), vec![1, 3]);
+}
+
+#[test]
+fn removing_unmarked_lines_keeps_the_final_line_break() {
+    let mut t = setup("a\nb\nc\n");
+    mark(&mut t, &[1]);
+    t.apply(Action::RemoveUnbookmarkedLines);
+    assert_eq!(t.text(), "b\n");
+    let mut t = setup("a\nb\nc\n");
+    mark(&mut t, &[0, 1, 2]);
+    t.apply(Action::RemoveUnbookmarkedLines);
+    assert_eq!(t.text(), "a\nb\nc\n");
+}
+
+#[test]
+fn a_read_only_document_still_reloads_from_disk() {
+    let mut t = setup("old\ntext");
+    let b = t.ed.view(t.view).unwrap().buffer();
+    t.ed.buffer_mut(b).unwrap().read_only = true;
+    t.ed.reload_buffer(b, "new\ntext", Default::default())
+        .unwrap();
+    assert_eq!(t.text(), "new\ntext");
+    assert!(t.buffer().read_only, "it stays read-only");
+    assert_eq!(
+        t.ed.apply(t.view, Action::InsertText("x".into())),
+        Err(ActionError::ReadOnly)
+    );
+}

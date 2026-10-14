@@ -109,13 +109,15 @@ impl OchrepadApp {
             include_ignored: self.find.include_ignored,
             filters: ochrepad_fileio::tree::parse_filters(&self.find.filters),
         };
-        // Open documents are counted as they are in the editor.
-        let open: Vec<(PathBuf, BufferId, Document)> = self
+        // Open documents are counted as they are in the editor; a Read-Only
+        // one is left alone, in the editor and on disk.
+        let open: Vec<(PathBuf, BufferId, Option<Document>)> = self
             .editor
             .buffers()
             .filter_map(|b| {
                 let path = b.meta.path.as_deref()?;
-                Some((super::canonical(path), b.id(), b.doc().clone()))
+                let doc = (!b.read_only).then(|| b.doc().clone());
+                Some((super::canonical(path), b.id(), doc))
             })
             .collect();
         let (tx, rx) = channel();
@@ -143,9 +145,11 @@ impl OchrepadApp {
                     }
                     let canonical = super::canonical(&path);
                     if let Some((_, id, doc)) = open.iter().find(|(p, _, _)| *p == canonical) {
-                        let n = searcher.matches(doc, ByteOffset(0)..doc.len()).count();
-                        if n > 0 {
-                            in_open.push((*id, n));
+                        if let Some(doc) = doc {
+                            let n = searcher.matches(doc, ByteOffset(0)..doc.len()).count();
+                            if n > 0 {
+                                in_open.push((*id, n));
+                            }
                         }
                         continue;
                     }

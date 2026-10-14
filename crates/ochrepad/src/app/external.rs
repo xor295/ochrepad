@@ -297,7 +297,10 @@ impl OchrepadApp {
             .collect();
         let appended = self.follow_append(buffer, &path, &encoding);
         if !appended {
-            self.reload_from_disk(buffer);
+            if !self.reload_from_disk(buffer) {
+                // The next change tries again; the end it had is kept.
+                return true;
+            }
             // Following, the document mirrors the file: the reload is not
             // an undo step (nor are the steps before it, which it replaced).
             if let Some(b) = self.editor.buffer_mut(buffer) {
@@ -371,20 +374,28 @@ impl OchrepadApp {
         true
     }
 
-    /// Reloads `buffer` from its file (undoable).
-    pub fn reload_from_disk(&mut self, buffer: BufferId) {
+    /// Reloads `buffer` from its file (undoable); returns whether it did.
+    pub fn reload_from_disk(&mut self, buffer: BufferId) -> bool {
         let Some(path) = self.editor.buffer(buffer).and_then(|b| b.meta.path.clone()) else {
-            return;
+            return false;
         };
-        match fileio::load(&path) {
-            Ok(d) => {
-                if let Err(e) = self.editor.reload_buffer(buffer, &d.text, d.meta) {
-                    self.message = Some(format!("Could not reload {}:\n{e}", path.display()));
-                }
+        let result = fileio::load(&path)
+            .map_err(|e| e.to_string())
+            .and_then(|d| {
+                self.editor
+                    .reload_buffer(buffer, &d.text, d.meta)
+                    .map_err(|e| e.to_string())
+            });
+        match result {
+            Ok(()) => {
                 self.record_disk_stamp(buffer);
                 self.delete_snapshot(buffer);
+                true
             }
-            Err(e) => self.message = Some(format!("Could not reload {}:\n{e}", path.display())),
+            Err(e) => {
+                self.message = Some(format!("Could not reload {}:\n{e}", path.display()));
+                false
+            }
         }
     }
 
@@ -435,7 +446,9 @@ impl OchrepadApp {
         }
         self.external.queue.pop_front();
         match (change, first) {
-            (DiskChange::Modified, true) => self.reload_from_disk(buffer),
+            (DiskChange::Modified, true) => {
+                self.reload_from_disk(buffer);
+            }
             (DiskChange::Modified, false) => self.record_disk_stamp(buffer),
             (DiskChange::Deleted, true) => {
                 // Keep: the text is no longer on disk, so it is unsaved.

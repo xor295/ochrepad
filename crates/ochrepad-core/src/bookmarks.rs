@@ -205,8 +205,16 @@ pub(crate) fn resolve(
             Ok(crate::transform::remove_lines(doc, sels, marks.lines()))
         }
         Action::RemoveUnbookmarkedLines => {
+            // The empty line after a final line break is not a line of its
+            // own: removing it would take the file's last line break.
+            let last = doc.line_count() - 1;
+            let count = if last > 0 && doc.line_start(last) == doc.len() {
+                last
+            } else {
+                last + 1
+            };
             let mut unmarked = marks.clone();
-            unmarked.invert(doc.line_count());
+            unmarked.invert(count);
             Ok(crate::transform::remove_lines(doc, sels, unmarked.lines()))
         }
         Action::ReplaceBookmarkedLines(text) => {

@@ -79,6 +79,16 @@ impl Action {
 /// (revision, selections, caret at end of document).
 type MacroState = (u64, crate::selection::SelectionSet, bool);
 
+/// `action` with its search, if it has one, not wrapping round.
+fn without_wrap(action: &Action) -> Action {
+    let mut action = action.clone();
+    match &mut action {
+        Action::Find { query, .. } | Action::Replace { query, .. } => query.options.wrap = false,
+        _ => {}
+    }
+    action
+}
+
 impl Editor {
     /// Plays `actions` on `view`. The whole playback is one undo step and
     /// is not itself recorded. Returns the number of complete runs.
@@ -120,6 +130,14 @@ impl Editor {
             Repeat::UntilEnd => MAX_UNTIL_END_RUNS,
         };
         let until_end = repeat == Repeat::UntilEnd;
+        // Run to the end of the file, a search must not wrap round to the
+        // start: it fails at the last match, which ends the runs (a macro
+        // that finds and bookmarks would otherwise go round for ever).
+        let actions: Vec<Action> = if until_end {
+            actions.iter().map(without_wrap).collect()
+        } else {
+            actions.to_vec()
+        };
         let mut runs = 0;
         while runs < limit {
             let before = self.macro_state(view);

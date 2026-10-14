@@ -961,7 +961,9 @@ impl OchrepadApp {
         let editor = &self.editor;
         self.token_styles.retain(|b| editor.buffer(b).is_some());
         let limit = self.settings.highlight_limit_mb * 1024 * 1024;
-        if self.settings.change_history && self.changes.tick(&self.editor, self.now, limit) {
+        if !self.settings.change_history {
+            self.changes.clear();
+        } else if self.changes.tick(&self.editor, self.now, limit) {
             ui.ctx()
                 .request_repaint_after(std::time::Duration::from_millis(50));
         }
@@ -2001,6 +2003,14 @@ impl OchrepadApp {
             text
         };
         self.find.find(&mut self.editor, self.active, backward);
+        // With the panel closed, its message (Not found, wrapped) goes to
+        // the status bar.
+        if !self.find.open
+            && let Some(m) = self.find.message()
+        {
+            let m = m.to_owned();
+            self.note_text(m);
+        }
         let state = self.view_state_mut();
         state.reveal_caret();
         state.request_focus();
@@ -2386,6 +2396,11 @@ impl OchrepadApp {
     /// many there are ("4 selections, 20 selected"). `None` for one caret.
     pub fn selection_status(&self) -> Option<String> {
         let v = self.editor.view(self.active)?;
+        let count = v.selections.len();
+        if count > 1000 {
+            // Counting characters in that many every frame costs too much.
+            return Some(format!("{count} selections"));
+        }
         let doc = self.buffer().doc();
         let (mut chars, mut lines) = (0, 0);
         for s in v.selections.ranges().iter().filter(|s| !s.is_empty()) {
@@ -2397,7 +2412,6 @@ impl OchrepadApp {
             }
             lines += last + 1 - first;
         }
-        let count = v.selections.len();
         match (count, chars, lines) {
             (1, 0, _) => None,
             (1, c, 1) => Some(format!("{c} selected")),

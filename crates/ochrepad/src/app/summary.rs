@@ -12,7 +12,7 @@ use super::OchrepadApp;
 
 /// Words are not counted in documents larger than this (it would hold up
 /// the window for a moment).
-const MAX_WORD_COUNT_BYTES: usize = 64 << 20;
+const MAX_WORD_COUNT_BYTES: usize = 16 << 20;
 
 pub(super) struct SummaryDialog {
     rows: Vec<(&'static str, String)>,
@@ -116,7 +116,12 @@ impl OchrepadApp {
                 for s in selected {
                     c += doc.to_char_idx(s.end()).0 - doc.to_char_idx(s.start()).0;
                     bytes += s.end().0 - s.start().0;
-                    l += doc.line_of(s.end()) + 1 - doc.line_of(s.start());
+                    let (first, mut last) = (doc.line_of(s.start()), doc.line_of(s.end()));
+                    // Whole lines selected end at the start of the next one.
+                    if last > first && s.end() == doc.line_start(last) {
+                        last -= 1;
+                    }
+                    l += last + 1 - first;
                 }
                 rows.push((
                     "Selection",

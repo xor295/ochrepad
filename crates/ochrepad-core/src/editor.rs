@@ -281,11 +281,14 @@ impl Editor {
             | Action::InverseBookmarks
             | Action::BookmarkMatches(_) => self.bookmark_action(view, buffer_id, &action)?,
             _ => {
-                let marked = self
-                    .buffers
-                    .get(&buffer_id)
-                    .map(|b| b.bookmarks.lines().to_vec())
-                    .unwrap_or_default();
+                let marked = match action {
+                    Action::ReplaceBookmarkedLines(_) => self
+                        .buffers
+                        .get(&buffer_id)
+                        .map(|b| b.bookmarks.lines().to_vec())
+                        .unwrap_or_default(),
+                    _ => Vec::new(),
+                };
                 let resolved = self.resolve_in(view, buffer_id, &action)??;
                 self.commit(view, buffer_id, resolved)?;
                 if let Some(b) = self.buffers.get_mut(&buffer_id) {
@@ -462,7 +465,8 @@ impl Editor {
 
     /// Replaces a buffer's text with `text` read from disk (an external
     /// change), as one undoable step; carets keep their line and column.
-    /// The buffer takes `meta` and is marked saved.
+    /// The buffer takes `meta` and is marked saved. It mirrors the file, so
+    /// it goes through even when the buffer refuses edits (Read-Only).
     pub fn reload_buffer(
         &mut self,
         buffer: BufferId,
@@ -499,7 +503,11 @@ impl Editor {
                     text,
                 )],
             );
-            self.commit(
+            let read_only = self
+                .buffers
+                .get_mut(&buffer)
+                .map(|b| std::mem::replace(&mut b.read_only, false));
+            let committed = self.commit(
                 view,
                 buffer,
                 Resolved::Edit {
@@ -507,7 +515,11 @@ impl Editor {
                     after,
                     kind: crate::history::EditKind::Other,
                 },
-            )?;
+            );
+            if let (Some(b), Some(read_only)) = (self.buffers.get_mut(&buffer), read_only) {
+                b.read_only = read_only;
+            }
+            committed?;
         }
         if let Some(b) = self.buffers.get_mut(&buffer) {
             b.meta = meta;

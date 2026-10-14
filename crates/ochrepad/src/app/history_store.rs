@@ -57,9 +57,6 @@ impl OchrepadApp {
     /// is on disk, else its backup while it has one.
     fn history_key(&self, buffer: BufferId) -> Option<Key> {
         let b = self.editor.buffer(buffer)?;
-        if b.read_only {
-            return None;
-        }
         match (&b.meta.path, b.is_dirty()) {
             (Some(path), false) => Some(Key::File(path.clone())),
             (_, true) if self.snapshots_active() => self

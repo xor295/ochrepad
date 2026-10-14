@@ -77,11 +77,17 @@ impl FunctionList {
             let other = self.seen.as_ref().is_none_or(|(k, _)| k.0 != key.0);
             self.seen = Some((key.clone(), if other { now - PAUSE_SECS } else { now }));
         }
-        if let Some(job) = &self.job
-            && let Ok(entries) = job.rx.try_recv()
-        {
-            let job = self.job.take().expect("checked above");
-            self.entries = Some((job.key.clone(), Arc::new(entries)));
+        if let Some(job) = &self.job {
+            let done = match job.rx.try_recv() {
+                Ok(entries) => Some(entries),
+                // The thread failed: an empty list rather than "Reading…".
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => Some(Vec::new()),
+                Err(std::sync::mpsc::TryRecvError::Empty) => None,
+            };
+            if let Some(entries) = done {
+                let job = self.job.take().expect("checked above");
+                self.entries = Some((job.key.clone(), Arc::new(entries)));
+            }
         }
         if self.entries.as_ref().is_some_and(|(k, _)| *k == key) {
             return false;

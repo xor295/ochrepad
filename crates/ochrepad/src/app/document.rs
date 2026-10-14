@@ -148,11 +148,13 @@ impl OchrepadApp {
             return;
         }
         match fileio::load_as(&path, encoding) {
-            Ok(d) => {
-                let _ = self.editor.reload_buffer(id, &d.text, d.meta);
-                self.record_disk_stamp(id);
-                self.detect_indent(id);
-            }
+            Ok(d) => match self.editor.reload_buffer(id, &d.text, d.meta) {
+                Ok(()) => {
+                    self.record_disk_stamp(id);
+                    self.detect_indent(id);
+                }
+                Err(e) => self.message = Some(format!("Could not reopen {}:\n{e}", path.display())),
+            },
             Err(e) => {
                 self.message = Some(format!(
                     "{} cannot be read as {encoding}:\n{e}",

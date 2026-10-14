@@ -670,6 +670,10 @@ pub fn editor_view(
     // As in Scintilla: a click outside the selection moves the caret there
     // (on a line number, to the line's start); on the selection it stays.
     let secondary = ui.input(|i| i.pointer.secondary_pressed());
+    if secondary && response.contains_pointer() {
+        // On a scrollbar or the map: the menu has no line to act on.
+        state.context_line = None;
+    }
     if secondary
         && state.bar_drag.is_none()
         && let Some(p) = pointer

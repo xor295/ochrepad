@@ -4,8 +4,8 @@
 //! red wedge where lines were deleted. The marks come from the compare
 //! view's line diff, worked out on a thread once the text has been quiet for
 //! a moment, so undoing back to the saved text clears them. Documents
-//! without a file, read-only copies and documents over the highlighting
-//! size limit get none.
+//! without a file (the compare view's copies too) and documents over the
+//! highlighting size limit get none.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -17,6 +17,9 @@ use ochrepad_core::{BufferId, Document, Editor};
 
 /// Quiet time after an edit before the marks are worked out again.
 const PAUSE_SECS: f64 = 0.15;
+/// Diffs running at once at most (a Replace All in a hundred documents
+/// would otherwise start a hundred).
+const MAX_JOBS: usize = 2;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mark {
@@ -117,6 +120,12 @@ impl ChangeHistory {
             .filter(|m| !m.is_empty())
     }
 
+    /// Forgets everything (the change history was turned off: what it knew
+    /// may be out of date when it is turned on again).
+    pub fn clear(&mut self) {
+        self.docs.clear();
+    }
+
     /// A save of `buffer` at `revision` wrote `doc`: the marks compare with
     /// that from now on.
     pub fn saved(&mut self, buffer: BufferId, doc: Document, revision: u64) {
@@ -134,6 +143,7 @@ impl ChangeHistory {
     pub fn tick(&mut self, editor: &Editor, now: f64, limit: usize) -> bool {
         self.docs.retain(|b, _| editor.buffer(*b).is_some());
         let mut pending = false;
+        let mut running = self.docs.values().filter(|d| d.job.is_some()).count();
         for b in editor.buffers() {
             let revision = b.revision();
             let doc = self.docs.entry(b.id()).or_insert_with(|| Doc {
@@ -158,10 +168,8 @@ impl ChangeHistory {
                 doc.job = None;
                 continue;
             }
-            let none = b.meta.path.is_none()
-                || b.read_only
-                || b.doc().len().0 > limit
-                || matches!(doc.base, Base::None);
+            let none =
+                b.meta.path.is_none() || b.doc().len().0 > limit || matches!(doc.base, Base::None);
             if none {
                 doc.marks = Arc::default();
                 doc.job = None;
@@ -170,23 +178,34 @@ impl ChangeHistory {
             if doc.seen.0 != revision {
                 doc.seen = (revision, now);
             }
-            if let Some(rx) = &doc.job
-                && let Ok((rev, loaded, marks)) = rx.try_recv()
-            {
-                doc.job = None;
-                match loaded {
-                    Some(Some(text)) => doc.base = Base::Text(text),
-                    Some(None) => doc.base = Base::None,
-                    None => {}
+            if let Some(rx) = &doc.job {
+                match rx.try_recv() {
+                    Ok((rev, loaded, marks)) => {
+                        doc.job = None;
+                        running -= 1;
+                        match loaded {
+                            Some(Some(text)) => doc.base = Base::Text(text),
+                            Some(None) => doc.base = Base::None,
+                            None => {}
+                        }
+                        doc.marks = Arc::new(marks);
+                        doc.marks_revision = Some(rev);
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                        // The thread failed: no marks for this text.
+                        doc.job = None;
+                        running -= 1;
+                        doc.marks = Arc::default();
+                        doc.marks_revision = Some(revision);
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Empty) => {}
                 }
-                doc.marks = Arc::new(marks);
-                doc.marks_revision = Some(rev);
             }
             if doc.marks_revision == Some(revision) {
                 continue;
             }
             pending = true;
-            if doc.job.is_some() || now - doc.seen.1 < PAUSE_SECS {
+            if doc.job.is_some() || now - doc.seen.1 < PAUSE_SECS || running >= MAX_JOBS {
                 continue;
             }
             let base = match &doc.base {
@@ -215,6 +234,7 @@ impl ChangeHistory {
                 });
             if spawned.is_ok() {
                 doc.job = Some(rx);
+                running += 1;
             }
         }
         pending
