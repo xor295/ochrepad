@@ -141,6 +141,8 @@ Windows and Linux. macOS is not supported.
 | Title Case, iNVERT cASE | Alt+U, Ctrl+Alt+U |
 | Record/stop macro, play macro | Ctrl+Shift+R, Ctrl+Shift+P |
 | Markdown preview | Ctrl+Shift+M |
+| Zoom in, out, back to 100% | Ctrl+plus, Ctrl+minus, Ctrl+0 (or Ctrl+wheel) |
+| Show all characters | Ctrl+Shift+8 |
 | Show or hide the sidebar | Ctrl+Shift+E |
 | Next/previous difference | F8, Shift+F8 |
 
@@ -150,8 +152,8 @@ the other line tools are in **Edit > Line Operations**.
 ## Configuration
 
 **Settings > Preferences** covers the editor font and size, tab width, tabs or
-spaces, light/dark theme, syntax theme, backups and automatic saving, and the
-size above which highlighting is turned off.
+spaces, light/dark theme, syntax theme, backups and automatic saving, the
+size above which highlighting is turned off, and a vertical edge line.
 
 Everything is stored as JSON in your configuration folder:
 

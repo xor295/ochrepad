@@ -25,6 +25,16 @@ pub struct Piece {
     pub clip: bool,
 }
 
+/// The cells of a control, format or unusual space character
+/// (`crate::invisible`): drawn as a labelled box, never as a glyph.
+#[derive(Debug, Clone)]
+pub struct SpecialCell {
+    /// Byte range of the grapheme within the line.
+    pub range: std::ops::Range<usize>,
+    pub x: f32,
+    pub width: f32,
+}
+
 #[derive(Debug, Clone)]
 pub struct LineLayout {
     pub text: String,
@@ -32,6 +42,8 @@ pub struct LineLayout {
     /// including 0 and the line end.
     pub boundaries: Vec<(usize, f32)>,
     pub pieces: Vec<Piece>,
+    /// Special characters, which are not in `pieces`.
+    pub specials: Vec<SpecialCell>,
     pub width: f32,
 }
 
@@ -49,6 +61,7 @@ impl LineLayout {
         let mut span_i = 0;
         let mut boundaries = Vec::with_capacity(text.len() + 1);
         let mut pieces: Vec<Piece> = Vec::new();
+        let mut specials = Vec::new();
         let mut col = 0usize;
         for (byte, g) in text.grapheme_indices(true) {
             while span_i < spans.len() && spans[span_i].end <= byte {
@@ -66,6 +79,19 @@ impl LineLayout {
             let w = grapheme_width(g, col, tab_width);
             col += w;
             if g == "\t" {
+                continue;
+            }
+            // A control character inside an ASCII run would be laid out by
+            // the font (as a replacement glyph of its own width) and push the
+            // rest of the run off the grid.
+            if crate::invisible::maybe_special(g.as_bytes()[0])
+                && crate::invisible::special(g).is_some()
+            {
+                specials.push(SpecialCell {
+                    range: byte..byte + g.len(),
+                    x,
+                    width: w as f32 * cell_w,
+                });
                 continue;
             }
             let ascii = g.len() == 1;
@@ -89,6 +115,7 @@ impl LineLayout {
             text,
             boundaries,
             pieces,
+            specials,
             width,
         }
     }
@@ -244,6 +271,28 @@ mod tests {
             runs,
             vec![("let", true), (" x = ", false), ("1", true), (";", false)]
         );
+    }
+
+    #[test]
+    fn special_characters_get_their_own_cells_and_no_glyphs() {
+        let l = LineLayout::build(
+            "a\u{1b}b\u{200B}c".to_owned(),
+            CELL,
+            4,
+            Color32::WHITE,
+            None,
+        );
+        let drawn: Vec<&str> = l.pieces.iter().map(|p| &l.text[p.range.clone()]).collect();
+        assert_eq!(drawn, vec!["a", "b", "c"]);
+        let specials: Vec<(&str, f32)> = l
+            .specials
+            .iter()
+            .map(|s| (&l.text[s.range.clone()], s.x / CELL))
+            .collect();
+        assert_eq!(specials, vec![("\u{1b}", 1.0), ("\u{200B}", 3.0)]);
+        // The text after each one stays on the grid.
+        assert_eq!(l.pieces[1].x, 2.0 * CELL);
+        assert_eq!(l.pieces[2].x, 4.0 * CELL);
     }
 
     #[test]

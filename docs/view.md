@@ -1,4 +1,49 @@
-# The editor view: document map, word wrap and folding
+# The editor view: zoom, symbols, document map, word wrap and folding
+
+## Zoom
+
+**View > Zoom** makes the text of every editor (and both sides of a
+comparison) larger or smaller, without changing the menus and panels:
+
+- **Ctrl+plus** (or **Ctrl+=**) and **Ctrl+minus** step through 10% to 400%;
+  **Ctrl+0** goes back to 100%.
+- **Ctrl+mouse wheel** over an editor does the same, one step per notch.
+- The status bar shows the zoom while it is not 100%; click it to reset.
+
+The zoom is remembered. **Settings > Preferences > Font size** is the size at
+100%.
+
+## Show Symbol
+
+**View > Show Symbol** draws what is normally invisible, as in Notepad++:
+
+- **Show Space and Tab**: a dot in each space, an arrow across each tab.
+- **Show End of Line**: a small `CRLF`, `LF` or `CR` after each line, the
+  ending the document is saved with (the status bar's line ending menu
+  changes it). A file opened with mixed endings shows the one it will be
+  saved with on every line.
+- **Show Non-Printing Characters**: zero-width characters (such as U+200B
+  ZERO WIDTH SPACE and the BOM), bidi controls (such as U+202E
+  RIGHT-TO-LEFT OVERRIDE) and spaces other than the plain one (such as
+  U+00A0 NO-BREAK SPACE) as tinted boxes.
+- **Show All Characters** (**Ctrl+Shift+8**) turns the three above on or off
+  together.
+- **Show Indent Guide**: dotted lines at each indent level inside a line's
+  indentation, from the second level on, continuing through blank lines
+  inside a block.
+- **Show Wrap Symbol**: with word wrap on, a hooked arrow where a line
+  continues on the next row.
+
+**Control characters** (NUL, ESC and the rest of U+0000–U+001F, DEL and
+U+0080–U+009F) are always drawn as boxes, as Notepad++ does, so text after
+them stays in its columns. Each special character takes one cell, the same
+whether it is shown or not, so showing them never moves the text. **Hover
+over a box** for the character's code and name; zoomed in far enough, the
+box also shows its abbreviation (`NUL`, `ESC`, `ZWSP`, `NBSP`, …).
+
+**Vertical edge**: Settings > Preferences > **Vertical edge after column**
+draws a thin line after that column (80 when first turned on), as a guide
+for line length.
 
 ## Document map
 

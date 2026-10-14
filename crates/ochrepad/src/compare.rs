@@ -356,7 +356,7 @@ impl Compare {
         highlighting: &mut Highlighting,
         keymap: &Keymap,
         labels: [String; 2],
-        font_size: f32,
+        look: &crate::editor_view::Look,
         find_highlight: Option<&ochrepad_core::Searcher>,
     ) {
         let now = ui.input(|i| i.time);
@@ -382,7 +382,7 @@ impl Compare {
                 Vec2::new(half_w, rect.height()),
             ),
         ];
-        let line_h = ui.fonts_mut(|f| f.row_height(&egui::FontId::monospace(font_size)));
+        let line_h = ui.fonts_mut(|f| f.row_height(&egui::FontId::monospace(look.font_size)));
         self.rows_visible = ((rect.height() / line_h).floor() as usize).max(1);
 
         // The overview strip doubles as a scrollbar for both sides.
@@ -412,7 +412,7 @@ impl Compare {
                 visuals: &visuals,
             };
             let state = &mut self.states[side];
-            state.font_size = font_size;
+            state.set_look(look);
             let mut styler = highlighting.styler(self.shown[side]);
             let label = format!(
                 "Compare {}: {}",

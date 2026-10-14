@@ -9,6 +9,7 @@ pub mod file_tree;
 pub mod find_panel;
 pub mod fonts;
 pub mod highlight;
+pub mod invisible;
 pub mod keymap;
 pub mod layout;
 pub mod logo;

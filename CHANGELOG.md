@@ -29,6 +29,20 @@ people downloading the release.
   indentation, change the line endings, reopen a file with another encoding,
   or save it in another encoding (characters that encoding cannot store are
   listed, and nothing changes).
+- Zoom: Ctrl+plus, Ctrl+minus and Ctrl+0, or Ctrl+mouse wheel, make the
+  editors' text larger or smaller (10% to 400%) without changing the menus.
+  The status bar shows the zoom while it is not 100%.
+- View > Show Symbol, as in Notepad++: spaces and tabs, line endings,
+  non-printing characters (zero-width and bidi characters, the BOM, unusual
+  spaces), Show All Characters (Ctrl+Shift+8), indent guides and the wrap
+  symbol. Hovering a special character's box names it.
+- A vertical edge line after a chosen column (Preferences).
+
+### Fixed
+
+- Control characters (NUL, ESC, ...) are drawn as boxes. Before, they were
+  drawn with the font's replacement glyph, which could push the rest of the
+  line off its columns.
 
 ## [0.2.0] - 2026-10-13
 

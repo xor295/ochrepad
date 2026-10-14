@@ -70,6 +70,13 @@ const NEXT_DIFF: KeyboardShortcut = KeyboardShortcut::new(Modifiers::NONE, Key::
 const PREV_DIFF: KeyboardShortcut = KeyboardShortcut::new(Modifiers::SHIFT, Key::F8);
 
 const GO_TO_LINE: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::G);
+const ZOOM_IN: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::Plus);
+const ZOOM_IN_EQUALS: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::Equals);
+const ZOOM_OUT: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::Minus);
+const ZOOM_RESET: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::Num0);
+/// Word's shortcut for showing formatting marks.
+const SHOW_ALL_CHARACTERS: KeyboardShortcut =
+    KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::Num8);
 const FIND_IN_FILES: KeyboardShortcut =
     KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::F);
 const SIDEBAR: KeyboardShortcut =
@@ -758,7 +765,7 @@ impl OchrepadApp {
             let style = crate::theme::dock_style(ui.style());
             let find_highlight = self.find.highlighter();
             let mut tabs = Tabs {
-                font_size: self.settings.font_size,
+                look: self.settings.look(),
                 fold_margin: self.settings.fold_margin,
                 word_wrap: self.settings.word_wrap,
                 document_map: self.settings.document_map,
@@ -786,6 +793,10 @@ impl OchrepadApp {
                 .show_inside(ui, &mut tabs);
         });
         self.paint_tab_accents(ui, &tab_rects);
+        let zoom = crate::editor_view::take_zoom_steps(ui.ctx());
+        if zoom != 0 {
+            self.zoom_by(zoom);
+        }
         let errors: Vec<_> = self
             .view_states
             .values_mut()
@@ -922,6 +933,19 @@ impl OchrepadApp {
         }
         if pressed(ui, &GO_TO_LINE) {
             self.go_to_line = Some(String::new());
+        }
+        if pressed(ui, &ZOOM_IN) || pressed(ui, &ZOOM_IN_EQUALS) {
+            self.zoom_by(1);
+        }
+        if pressed(ui, &ZOOM_OUT) {
+            self.zoom_by(-1);
+        }
+        if pressed(ui, &ZOOM_RESET) {
+            self.settings.zoom = 100;
+        }
+        if pressed(ui, &SHOW_ALL_CHARACTERS) {
+            let on = !self.settings.show_all_characters();
+            self.settings.set_show_all_characters(on);
         }
         // Before Ctrl+F, which would also match Ctrl+Shift+F.
         if pressed(ui, &FIND_IN_FILES) {
@@ -1472,6 +1496,65 @@ impl OchrepadApp {
         self.activate(self.active);
     }
 
+    /// View > Show Symbol, as in Notepad++.
+    fn show_symbol_menu(&mut self, ui: &mut Ui) {
+        let s = &mut self.settings;
+        ui.checkbox(&mut s.show_space_tab, "Show Space and Tab");
+        ui.checkbox(&mut s.show_eol, "Show End of Line");
+        ui.checkbox(&mut s.show_non_printing, "Show Non-Printing Characters")
+            .on_hover_text(
+                "Zero-width and bidi characters, the BOM and unusual spaces, as labelled \
+                 boxes. Control characters are always shown.",
+            );
+        let all = s.show_all_characters();
+        if ui
+            .add(
+                Button::new("Show All Characters")
+                    .selected(all)
+                    .shortcut_text("Ctrl+Shift+8"),
+            )
+            .clicked()
+        {
+            s.set_show_all_characters(!all);
+        }
+        ui.separator();
+        ui.checkbox(&mut s.show_indent_guides, "Show Indent Guide");
+        ui.checkbox(&mut s.show_wrap_symbol, "Show Wrap Symbol");
+    }
+
+    /// View > Zoom: the editors' text size (not the menus').
+    fn zoom_menu(&mut self, ui: &mut Ui) {
+        let zoom = self.settings.zoom;
+        let max = crate::settings::ZOOM_LEVELS[crate::settings::ZOOM_LEVELS.len() - 1];
+        let min = crate::settings::ZOOM_LEVELS[0];
+        if ui
+            .add_enabled(zoom < max, Button::new("Zoom In").shortcut_text("Ctrl++"))
+            .clicked()
+        {
+            self.zoom_by(1);
+        }
+        if ui
+            .add_enabled(zoom > min, Button::new("Zoom Out").shortcut_text("Ctrl+-"))
+            .clicked()
+        {
+            self.zoom_by(-1);
+        }
+        if ui
+            .add_enabled(
+                zoom != 100,
+                Button::new("Restore Default Zoom").shortcut_text("Ctrl+0"),
+            )
+            .clicked()
+        {
+            self.settings.zoom = 100;
+        }
+    }
+
+    /// Zooms every editor's text `steps` levels in (or out, negative).
+    pub fn zoom_by(&mut self, steps: i32) {
+        self.settings.zoom = crate::settings::zoom_step(self.settings.zoom, steps);
+    }
+
     fn view_menu(&mut self, ui: &mut Ui) {
         if ui
             .add(Button::new("Markdown Preview").shortcut_text("Ctrl+Shift+M"))
@@ -1529,6 +1612,8 @@ impl OchrepadApp {
         ui.checkbox(&mut self.settings.fold_margin, "Show Fold Margin");
         ui.checkbox(&mut self.settings.word_wrap, "Word Wrap");
         ui.checkbox(&mut self.settings.document_map, "Document Map");
+        ui.menu_button("Show Symbol", |ui| self.show_symbol_menu(ui));
+        ui.menu_button("Zoom", |ui| self.zoom_menu(ui));
         ui.separator();
         if ui
             .add(
@@ -1623,6 +1708,16 @@ impl OchrepadApp {
             self.indent_menu(ui);
             ui.separator();
             self.language_picker(ui);
+            if self.settings.zoom != 100 {
+                ui.separator();
+                if ui
+                    .button(format!("{}%", self.settings.zoom))
+                    .on_hover_text("Zoom. Click (or Ctrl+0) for 100%.")
+                    .clicked()
+                {
+                    self.settings.zoom = 100;
+                }
+            }
             if let Some(problem) = self.highlighting.problem(self.buffer_id()) {
                 ui.separator();
                 ui.add(egui::Label::new(problem).truncate());
@@ -1725,7 +1820,7 @@ impl OchrepadApp {
 
 /// Draws the tabs: one editor per view, Markdown previews and comparisons.
 struct Tabs<'a> {
-    font_size: f32,
+    look: crate::editor_view::Look,
     fold_margin: bool,
     word_wrap: bool,
     document_map: bool,
@@ -1806,7 +1901,7 @@ impl TabViewer for Tabs<'_> {
                         self.highlighting,
                         self.keymap,
                         labels,
-                        self.font_size,
+                        &self.look,
                         self.find_highlight,
                     );
                 }
@@ -1828,7 +1923,7 @@ impl TabViewer for Tabs<'_> {
             buffer_name(self.editor, self.untitled, buffer)
         );
         let state = self.view_states.entry(view).or_default();
-        state.font_size = self.font_size;
+        state.set_look(&self.look);
         state.fold_margin = self.fold_margin;
         state.word_wrap = self.word_wrap;
         state.document_map = self.document_map;

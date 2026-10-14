@@ -9,6 +9,20 @@ use serde::{Deserialize, Serialize};
 /// How many recent files to remember.
 pub const MAX_RECENT: usize = 15;
 
+/// The editor zoom levels, in percent: Zoom In and Zoom Out step through
+/// them.
+pub const ZOOM_LEVELS: [u32; 17] = [
+    10, 25, 33, 50, 67, 75, 80, 90, 100, 110, 125, 150, 175, 200, 250, 300, 400,
+];
+
+/// The zoom `steps` levels above (or, negative, below) `percent`. A value
+/// between two levels counts as the one below it.
+pub fn zoom_step(percent: u32, steps: i32) -> u32 {
+    let at = ZOOM_LEVELS.iter().rposition(|&l| l <= percent).unwrap_or(0) as i32;
+    let i = (at + steps).clamp(0, ZOOM_LEVELS.len() as i32 - 1);
+    ZOOM_LEVELS[i as usize]
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ThemeChoice {
     #[default]
@@ -42,6 +56,21 @@ pub struct AppSettings {
     pub word_wrap: bool,
     /// The zoomed-out map beside the text.
     pub document_map: bool,
+    /// Editor text size in percent of `font_size` (View > Zoom).
+    pub zoom: u32,
+    /// View > Show Symbol: spaces as dots and tabs as arrows.
+    pub show_space_tab: bool,
+    /// View > Show Symbol: each line's ending (CRLF, LF or CR).
+    pub show_eol: bool,
+    /// View > Show Symbol: format characters and unusual spaces as labelled
+    /// boxes (control characters always are).
+    pub show_non_printing: bool,
+    /// View > Show Symbol: dotted lines at each indent level.
+    pub show_indent_guides: bool,
+    /// View > Show Symbol: a mark where a wrapped line continues.
+    pub show_wrap_symbol: bool,
+    /// A vertical line after this column, if any.
+    pub edge_column: Option<usize>,
     /// The sidebar with the open folder's files.
     pub show_sidebar: bool,
     pub sidebar_width: f32,
@@ -65,6 +94,13 @@ impl Default for AppSettings {
             fold_margin: true,
             word_wrap: false,
             document_map: true,
+            zoom: 100,
+            show_space_tab: false,
+            show_eol: false,
+            show_non_printing: false,
+            show_indent_guides: false,
+            show_wrap_symbol: false,
+            edge_column: None,
             show_sidebar: true,
             sidebar_width: 240.0,
             recent_folders: Vec::new(),
@@ -87,6 +123,44 @@ impl AppSettings {
         self.tab_width = self.tab_width.clamp(1, 16);
         self.autosave_secs = self.autosave_secs.clamp(1.0, 3600.0);
         self.highlight_limit_mb = self.highlight_limit_mb.clamp(1, 4096);
+        self.zoom = self
+            .zoom
+            .clamp(ZOOM_LEVELS[0], ZOOM_LEVELS[ZOOM_LEVELS.len() - 1]);
+        self.edge_column = self.edge_column.map(|c| c.clamp(1, 1000));
+    }
+
+    /// The editor font size after zooming.
+    pub fn editor_font_size(&self) -> f32 {
+        self.font_size * self.zoom as f32 / 100.0
+    }
+
+    /// Whether Show All Characters is on: spaces and tabs, line endings and
+    /// non-printing characters are all shown.
+    pub fn show_all_characters(&self) -> bool {
+        self.show_space_tab && self.show_eol && self.show_non_printing
+    }
+
+    /// How editors are drawn: the zoomed font size and the View menu's
+    /// symbols.
+    pub fn look(&self) -> crate::editor_view::Look {
+        crate::editor_view::Look {
+            font_size: self.editor_font_size(),
+            symbols: crate::editor_view::Symbols {
+                space_tab: self.show_space_tab,
+                eol: self.show_eol,
+                non_printing: self.show_non_printing,
+                indent_guides: self.show_indent_guides,
+                wrap: self.show_wrap_symbol,
+            },
+            edge_column: self.edge_column,
+        }
+    }
+
+    /// Turns Show All Characters on or off.
+    pub fn set_show_all_characters(&mut self, on: bool) {
+        self.show_space_tab = on;
+        self.show_eol = on;
+        self.show_non_printing = on;
     }
 
     /// The Preferences window body.
@@ -171,6 +245,36 @@ impl AppSettings {
                     ui.label("MB");
                 });
                 ui.end_row();
+
+                ui.label("Vertical edge");
+                ui.horizontal(|ui| {
+                    let mut on = self.edge_column.is_some();
+                    if ui.checkbox(&mut on, "after column").changed() {
+                        self.edge_column = on.then_some(80);
+                    }
+                    if let Some(col) = &mut self.edge_column {
+                        ui.add(egui::DragValue::new(col).range(1..=1000));
+                    }
+                });
+                ui.end_row();
             });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn zoom_steps_through_the_levels_and_stops_at_the_ends() {
+        assert_eq!(zoom_step(100, 1), 110);
+        assert_eq!(zoom_step(100, -1), 90);
+        assert_eq!(zoom_step(100, 3), 150);
+        assert_eq!(zoom_step(400, 1), 400);
+        assert_eq!(zoom_step(10, -5), 10);
+        // A hand-edited value between levels.
+        assert_eq!(zoom_step(105, 1), 110);
+        assert_eq!(zoom_step(105, -1), 90);
+        assert_eq!(zoom_step(5, 1), 25);
     }
 }

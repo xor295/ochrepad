@@ -50,9 +50,47 @@ enum BarDrag {
     Horizontal { grab: f32 },
 }
 
+/// What View > Show Symbol draws over the text.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Symbols {
+    /// Spaces as dots and tabs as arrows.
+    pub space_tab: bool,
+    /// Each line's ending, named, after its text.
+    pub eol: bool,
+    /// Format characters and unusual spaces as labelled boxes (control
+    /// characters always are).
+    pub non_printing: bool,
+    /// Dotted lines at each indent level inside the indentation.
+    pub indent_guides: bool,
+    /// A mark at the end of each row that a wrapped line continues from.
+    pub wrap: bool,
+}
+
+/// How the app wants every editor drawn: the (zoomed) font size and the
+/// View menu's symbols.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Look {
+    pub font_size: f32,
+    pub symbols: Symbols,
+    /// A vertical line after this column.
+    pub edge_column: Option<usize>,
+}
+
+impl Default for Look {
+    fn default() -> Self {
+        Self {
+            font_size: 14.0,
+            symbols: Symbols::default(),
+            edge_column: None,
+        }
+    }
+}
+
 pub struct EditorViewState {
     cache: LayoutCache,
     pub font_size: f32,
+    pub symbols: Symbols,
+    pub edge_column: Option<usize>,
     last_activity: f64,
     preedit: Option<String>,
     drag: Option<Drag>,
@@ -87,6 +125,8 @@ impl Default for EditorViewState {
             map_drag: None,
             cache: LayoutCache::default(),
             font_size: 14.0,
+            symbols: Symbols::default(),
+            edge_column: None,
             last_activity: 0.0,
             preedit: None,
             drag: None,
@@ -101,6 +141,13 @@ impl Default for EditorViewState {
 }
 
 impl EditorViewState {
+    /// Takes the app's font size and symbols.
+    pub fn set_look(&mut self, look: &Look) {
+        self.font_size = look.font_size;
+        self.symbols = look.symbols;
+        self.edge_column = look.edge_column;
+    }
+
     pub fn request_focus(&mut self) {
         self.request_focus = true;
     }
@@ -457,6 +504,12 @@ pub fn editor_view(
 
     // --- Wheel -------------------------------------------------------------------
     if response.contains_pointer() {
+        // Ctrl+wheel zooms (egui gives no scroll delta while Ctrl is held).
+        let zoom = ui.input(|i| wheel_zoom_steps(&i.events));
+        if zoom != 0.0 {
+            ui.ctx()
+                .data_mut(|d| *d.get_temp_mut_or_default::<f32>(zoom_id()) += zoom);
+        }
         let d = ui.input(|i| i.smooth_scroll_delta);
         if d != Vec2::ZERO {
             top = top.scrolled(&rows, -(d.y / line_h) as f64);
@@ -826,6 +879,16 @@ pub fn editor_view(
     }
     // Fold chevrons for every header show while the pointer is on the gutter.
     let show_chevrons = hover.is_some_and(|p| f.gutter.contains(p));
+    // The name of a special character under the pointer, while it is drawn.
+    let tip = hover.filter(|p| f.content.contains(*p)).and_then(|p| {
+        let (layout, x) = layout_at(editor, view, &mut state.cache, &f, top, x_off, ui, p);
+        let cell = layout
+            .specials
+            .iter()
+            .find(|s| s.x <= x && x < s.x + s.width)?;
+        let s = crate::invisible::special(&layout.text[cell.range.clone()])?;
+        (s.control || state.symbols.non_printing).then(|| crate::invisible::describe(&s))
+    });
 
     paint(
         ui,
@@ -847,7 +910,47 @@ pub fn editor_view(
         decorations.find_highlight,
         decorations.row_style,
     );
-    response
+    match tip {
+        Some(tip) => response.on_hover_text_at_pointer(tip),
+        None => response,
+    }
+}
+
+/// Where Ctrl+wheel zoom steps wait for the app (see [`take_zoom_steps`]).
+fn zoom_id() -> Id {
+    Id::new("ochrepad-zoom-steps")
+}
+
+/// Zoom steps in this frame's Ctrl+wheel events: one per notch of a mouse
+/// wheel, or per 50 points of a trackpad; positive zooms in.
+fn wheel_zoom_steps(events: &[Event]) -> f32 {
+    events
+        .iter()
+        .map(|e| match e {
+            Event::MouseWheel {
+                unit,
+                delta,
+                modifiers,
+                ..
+            } if modifiers.command => match unit {
+                egui::MouseWheelUnit::Line => delta.y,
+                egui::MouseWheelUnit::Point => delta.y / 50.0,
+                egui::MouseWheelUnit::Page => delta.y * 3.0,
+            },
+            _ => 0.0,
+        })
+        .sum()
+}
+
+/// The whole zoom steps Ctrl+wheel over an editor asked for since the last
+/// call; a trackpad's fraction of a step is kept for next time.
+pub fn take_zoom_steps(ctx: &egui::Context) -> i32 {
+    ctx.data_mut(|d| {
+        let acc = d.get_temp_mut_or_default::<f32>(zoom_id());
+        let whole = acc.trunc();
+        *acc -= whole;
+        whole as i32
+    })
 }
 
 /// A fold chevron in the fold margin of the row at `y`: pointing right when
@@ -975,6 +1078,267 @@ pub(crate) fn paint_line_text(
         } else {
             painter.galley(Pos2::new(px, y), galley, piece.color);
         }
+    }
+}
+
+/// Colours and sizes for Show Symbol's marks.
+struct MarkStyle {
+    /// Whitespace dots and arrows, line endings, the wrap mark.
+    symbol: egui::Color32,
+    /// Indent guides and the vertical edge.
+    guide: egui::Color32,
+    special_bg: egui::Color32,
+    special_text: egui::Color32,
+    /// The line-ending pills' text.
+    small: FontId,
+}
+
+impl MarkStyle {
+    fn new(visuals: &egui::Visuals, f: &Frame) -> Self {
+        let weak = visuals.weak_text_color();
+        let warn = visuals.warn_fg_color;
+        let alpha = if visuals.dark_mode { 80 } else { 70 };
+        Self {
+            symbol: weak.gamma_multiply(0.8),
+            guide: weak.gamma_multiply(0.5),
+            special_bg: egui::Color32::from_rgba_unmultiplied(warn.r(), warn.g(), warn.b(), alpha),
+            special_text: visuals.text_color(),
+            small: FontId::proportional(f.font.size * 0.62),
+        }
+    }
+}
+
+/// Show Symbol's marks over a row's text: dots for spaces and arrows for
+/// tabs, and the boxes of special characters (control characters always,
+/// the others with Show Non-Printing Characters). `x0` is the screen x of
+/// the line's first cell.
+fn paint_marks(
+    painter: &egui::Painter,
+    layout: &LineLayout,
+    x0: f32,
+    y: f32,
+    f: &Frame,
+    symbols: Symbols,
+    m: &MarkStyle,
+) {
+    let clip = painter.clip_rect();
+    let mid = y + f.line_h / 2.0;
+    if symbols.space_tab {
+        let (lo, hi) = (clip.min.x - x0, clip.max.x - x0);
+        let b = &layout.boundaries;
+        // From the grapheme that crosses the left edge (a tab may).
+        let from = b.partition_point(|&(_, x)| x <= lo).saturating_sub(1);
+        let bytes = layout.text.as_bytes();
+        let dot = (f.cell_w * 0.09).max(1.0);
+        for w in b[from..].windows(2) {
+            let ((at, x), (_, next)) = (w[0], w[1]);
+            if x > hi {
+                break;
+            }
+            match bytes[at] {
+                b' ' => {
+                    painter.circle_filled(Pos2::new(x0 + (x + next) / 2.0, mid), dot, m.symbol);
+                }
+                b'\t' => paint_tab_arrow(painter, x0 + x, x0 + next, mid, f.cell_w, m.symbol),
+                _ => {}
+            }
+        }
+    }
+    for cell in &layout.specials {
+        let left = x0 + cell.x;
+        if left > clip.max.x || left + cell.width < clip.min.x {
+            continue;
+        }
+        let Some(s) = crate::invisible::special(&layout.text[cell.range.clone()]) else {
+            continue;
+        };
+        if s.control || symbols.non_printing {
+            let r = Rect::from_min_size(
+                Pos2::new(left + 0.5, y + 1.5),
+                Vec2::new(cell.width - 1.0, f.line_h - 3.0),
+            );
+            paint_special(painter, r, s.abbrev, f.font.size, m);
+        }
+    }
+}
+
+/// A tab's arrow across its cells.
+fn paint_tab_arrow(
+    painter: &egui::Painter,
+    start: f32,
+    end: f32,
+    y: f32,
+    cell_w: f32,
+    color: egui::Color32,
+) {
+    let pad = cell_w * 0.2;
+    let (a, b) = (start + pad, end - pad);
+    if b <= a {
+        return;
+    }
+    let stroke = Stroke::new(1.0, color);
+    let head = (cell_w * 0.3).min(b - a);
+    painter.line_segment([Pos2::new(a, y), Pos2::new(b, y)], stroke);
+    painter.line(
+        vec![
+            Pos2::new(b - head, y - head),
+            Pos2::new(b, y),
+            Pos2::new(b - head, y + head),
+        ],
+        stroke,
+    );
+}
+
+/// Smallest text drawn in a special character's box, in points; below it
+/// the box stays empty and only its tooltip names the character.
+const MIN_LABEL_SIZE: f32 = 7.0;
+
+/// A special character's box, with its abbreviation in one row or two when
+/// that is still legible (a box is only as wide as the character's cells).
+fn paint_special(painter: &egui::Painter, r: Rect, abbrev: &str, font_size: f32, m: &MarkStyle) {
+    painter.rect_filled(r, 2.0, m.special_bg);
+    let layout = |text: &str, size: f32| {
+        painter.layout_no_wrap(text.to_owned(), FontId::proportional(size), m.special_text)
+    };
+    let avail = r.width() - 1.0;
+    let max = font_size * 0.62;
+    let one = layout(abbrev, max);
+    let size = max * (avail / one.size().x).min(1.0);
+    if size >= max * 0.8 || (size >= MIN_LABEL_SIZE && abbrev.len() <= 2) {
+        let g = if size < max {
+            layout(abbrev, size)
+        } else {
+            one
+        };
+        painter.galley(r.center() - g.size() / 2.0, g, m.special_text);
+        return;
+    }
+    let (upper, lower) = abbrev.split_at(abbrev.len().div_ceil(2));
+    let wide = layout(upper, max).size().x.max(layout(lower, max).size().x);
+    let size = (max * (avail / wide).min(1.0)).min(r.height() / 2.4);
+    if size < MIN_LABEL_SIZE {
+        return;
+    }
+    let (gu, gl) = (layout(upper, size), layout(lower, size));
+    let top = r.center().y - (gu.size().y + gl.size().y) / 2.0;
+    let (cx, h) = (r.center().x, gu.size().y);
+    painter.galley(Pos2::new(cx - gu.size().x / 2.0, top), gu, m.special_text);
+    painter.galley(
+        Pos2::new(cx - gl.size().x / 2.0, top + h),
+        gl,
+        m.special_text,
+    );
+}
+
+/// The line ending's name in a pill after the line's text.
+fn paint_eol(painter: &egui::Painter, x_end: f32, y: f32, f: &Frame, label: &str, m: &MarkStyle) {
+    let g = painter.layout_no_wrap(label.to_owned(), m.small.clone(), m.symbol);
+    let h = (f.line_h - 6.0).max(g.size().y);
+    let r = Rect::from_min_size(
+        Pos2::new(x_end + 2.0, y + (f.line_h - h) / 2.0),
+        Vec2::new(g.size().x + 6.0, h),
+    );
+    painter.rect_filled(r, 3.0, m.symbol.gamma_multiply(0.18));
+    painter.galley(r.center() - g.size() / 2.0, g, m.symbol);
+}
+
+/// The hooked arrow in the free cell after a row that its line continues
+/// from (word wrap).
+fn paint_wrap_mark(painter: &egui::Painter, x: f32, y: f32, f: &Frame, color: egui::Color32) {
+    let s = f.cell_w * 0.3;
+    let (cx, cy) = (x + f.cell_w * 0.5, y + f.line_h * 0.5);
+    let stroke = Stroke::new(1.0, color);
+    let tip = Pos2::new(cx - s, cy + s * 0.5);
+    painter.line(
+        vec![
+            Pos2::new(cx + s, cy - s),
+            Pos2::new(cx + s, cy + s * 0.5),
+            tip,
+        ],
+        stroke,
+    );
+    painter.line(
+        vec![
+            tip + Vec2::new(s * 0.6, -s * 0.6),
+            tip,
+            tip + Vec2::new(s * 0.6, s * 0.6),
+        ],
+        stroke,
+    );
+}
+
+/// The width in columns of `line`'s leading whitespace, or `None` when the
+/// line is blank (empty or only whitespace).
+fn leading_cols(doc: &Document, line: usize, tab_width: usize) -> Option<usize> {
+    let end = doc.line_end(line);
+    let mut at = doc.line_start(line);
+    let mut col = 0;
+    while at < end {
+        match doc.char_at(at)? {
+            ' ' => col += 1,
+            '\t' => col += tab_width - col % tab_width,
+            _ => return Some(col),
+        }
+        at = ByteOffset(at.0 + 1);
+    }
+    None
+}
+
+/// The indentation that indent guides follow on `line`: its own, or for a
+/// blank line the deeper of the nearest non-blank lines above and below
+/// (looking at most 100 lines each way), so guides run through blank lines
+/// inside a block.
+fn guide_indent(doc: &Document, line: usize, tab_width: usize) -> usize {
+    if let Some(cols) = leading_cols(doc, line, tab_width) {
+        return cols;
+    }
+    let above = (line.saturating_sub(100)..line)
+        .rev()
+        .find_map(|l| leading_cols(doc, l, tab_width));
+    let below =
+        (line + 1..doc.line_count().min(line + 101)).find_map(|l| leading_cols(doc, l, tab_width));
+    above.unwrap_or(0).max(below.unwrap_or(0))
+}
+
+/// Dotted indent guides on one row, at every indent level inside the
+/// line's indentation from the second level on (the first would sit on the
+/// text's left edge), as Notepad++ draws them. `x0` is the screen x of
+/// column 0.
+#[allow(clippy::too_many_arguments)]
+fn paint_indent_guides(
+    painter: &egui::Painter,
+    doc: &Document,
+    rows: &DisplayMap,
+    row: RowPos,
+    x0: f32,
+    y: f32,
+    f: &Frame,
+    width: usize,
+    color: egui::Color32,
+) {
+    let width = width.max(1);
+    let mut limit = guide_indent(doc, row.line, width);
+    if rows.text_sub(row) != Some(0) {
+        // A wrapped line's later rows are indented at most this much.
+        limit = limit.min(rows.row_indent(row));
+    }
+    let clip = painter.clip_rect();
+    let stroke = Stroke::new(1.0, color);
+    let mut col = width;
+    while col < limit {
+        let x = (x0 + col as f32 * f.cell_w).round() + 0.5;
+        if x > clip.max.x {
+            break;
+        }
+        if x >= clip.min.x {
+            painter.extend(egui::Shape::dashed_line(
+                &[Pos2::new(x, y), Pos2::new(x, y + f.line_h)],
+                stroke,
+                1.0,
+                2.0,
+            ));
+        }
+        col += width;
     }
 }
 
@@ -1139,6 +1503,26 @@ fn line_layout(
     )
 }
 
+/// The layout of the line under `p`, and `p`'s x in that layout.
+#[allow(clippy::too_many_arguments)]
+fn layout_at(
+    editor: &Editor,
+    view: ViewId,
+    cache: &mut LayoutCache,
+    f: &Frame,
+    top: Top,
+    x_off: f32,
+    ui: &Ui,
+    p: Pos2,
+) -> (std::sync::Arc<LineLayout>, f32) {
+    let rows = display_map(editor, view);
+    let row = row_at(&rows, f, top, p);
+    let buffer = editor.view(view).expect("view exists").buffer();
+    let layout = line_layout(editor, buffer, cache, row.line, f, ui, Styling::Any);
+    let x = p.x - f.text_left() + x_off + row_x0(&rows, &layout, row, f.cell_w);
+    (layout, x)
+}
+
 /// Pixel -> byte offset, through the same `LineLayout` painting uses.
 #[allow(clippy::too_many_arguments)]
 fn hit_test(
@@ -1293,6 +1677,16 @@ fn paint(
         .buffer(buffer)
         .map(|b| b.fold_strategy)
         .unwrap_or_default();
+    let symbols = state.symbols;
+    let marks = MarkStyle::new(&visuals, f);
+    let eol_label = editor
+        .buffer(buffer)
+        .map_or("LF", |b| match b.meta.line_ending {
+            ochrepad_core::LineEnding::CrLf => "CRLF",
+            ochrepad_core::LineEnding::Lf => "LF",
+            ochrepad_core::LineEnding::Cr => "CR",
+        });
+    let last_line = doc.line_count().saturating_sub(1);
 
     for (i, &row) in shown.iter().enumerate() {
         let line = row.line;
@@ -1392,6 +1786,20 @@ fn paint(
             }
         }
 
+        if symbols.indent_guides {
+            paint_indent_guides(
+                &text_painter,
+                doc,
+                &rows,
+                row,
+                x0,
+                y,
+                f,
+                tab_width,
+                marks.guide,
+            );
+        }
+
         // A wrapped row draws only its own slice of the line.
         let row_painter = if rows.wraps() {
             let right = if rows.is_last_in_line(row) {
@@ -1408,6 +1816,7 @@ fn paint(
             text_painter.clone()
         };
         paint_line_text(&row_painter, &layout, rx0, y, &f.font, f.line_h);
+        paint_marks(&row_painter, &layout, rx0, y, f, symbols, &marks);
         if let Some(p) = bracket {
             let color = if p.matching.is_some() {
                 accent
@@ -1434,6 +1843,12 @@ fn paint(
         if folded && row_end == line_end {
             paint_fold_pill(&text_painter, f, &visuals, rx0 + layout.width, y);
         }
+        if symbols.eol && row_end == line_end && !folded && line < last_line {
+            paint_eol(&text_painter, rx0 + layout.width, y, f, eol_label, &marks);
+        }
+        if symbols.wrap && rows.wraps() && !rows.is_last_in_line(row) {
+            paint_wrap_mark(&text_painter, x_at(row_end), y, f, marks.symbol);
+        }
 
         // The line number and fold chevron go on a line's first row.
         if rows.text_sub(row) == Some(0) {
@@ -1455,6 +1870,14 @@ fn paint(
             {
                 paint_chevron(&gutter_painter, f, &visuals, y, folded);
             }
+        }
+    }
+
+    // The vertical edge, after its column.
+    if let Some(col) = state.edge_column {
+        let x = (x0 + col as f32 * f.cell_w).round() + 0.5;
+        if x > f.content.min.x {
+            text_painter.vline(x, f.content.y_range(), Stroke::new(1.0, marks.guide));
         }
     }
 

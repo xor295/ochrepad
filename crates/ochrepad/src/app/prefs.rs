@@ -91,6 +91,9 @@ impl OchrepadApp {
         }
         if self.applied_settings.is_none() {
             crate::theme::install(ui.ctx());
+            // Ctrl+plus/minus/0 zoom the editors' text (View > Zoom), not the
+            // whole window as egui would.
+            ui.ctx().options_mut(|o| o.zoom_with_keyboard = false);
         }
         self.applied_settings = Some(self.settings.clone());
         let s = self.settings.clone();
