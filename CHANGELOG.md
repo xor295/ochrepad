@@ -19,7 +19,9 @@ people downloading the release.
   Bookmark button marks every line with a match. Bookmarks follow edits,
   are recorded in macros and are kept in the session.
 - The vertical scrollbar marks the bookmarks, the changed lines and the
-  caret's place in the document.
+  caret's place in the document; F8 and Shift+F8 go from change to change.
+- The right-click menu opens a file named at the caret (`src/main.rs:12:5`
+  goes to that line and column), and Search Results can copy its results.
 - A right-click menu in the editor: undo and redo, the clipboard, case,
   comments and the line's bookmark.
 - View > Function List: a panel listing the document's functions, types,

@@ -178,7 +178,7 @@ Windows and Linux. macOS is not supported.
 | Show all characters | Ctrl+Shift+8 |
 | Filter lines | Alt+Shift+L |
 | Show or hide the sidebar | Ctrl+Shift+E |
-| Next/previous difference | F8, Shift+F8 |
+| Next/previous difference (or change since saving) | F8, Shift+F8 |
 
 Double-click the empty part of a tab bar to open a new tab there. Sorting and
 the other line tools are in **Edit > Line Operations**.

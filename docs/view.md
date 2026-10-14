@@ -91,6 +91,10 @@ wedge between two lines where lines were deleted. The marks update a moment
 after you stop typing. Undoing back to the saved text clears them, and
 saving starts afresh from the saved text.
 
+**F8** goes to the next change (a run of changed lines, or where lines were
+deleted) and **Shift+F8** to the previous one, going round the document,
+as they go from difference to difference in a comparison.
+
 The vertical scrollbar shows the same marks in a narrow lane on its left,
 with the bookmarks in a lane on its right and a line where the caret is,
 each at its place in the document, so you can see where the changes are

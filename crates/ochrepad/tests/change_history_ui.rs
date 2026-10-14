@@ -184,3 +184,37 @@ fn the_scrollbar_shows_bookmarks_changes_and_the_caret() {
     wait_for(&mut h, |a| marks(a).is_some_and(|m| m.lines.len() == 2));
     util::snapshot(&mut h, "scrollbar_overview");
 }
+
+#[test]
+fn f8_goes_from_change_to_change() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut h = harness();
+    open(&mut h, &dir);
+    edit(&mut h);
+    wait_for(&mut h, |a| marks(a).is_some_and(|m| m.lines.len() == 2));
+    let line = |h: &Harness<'_, OchrepadApp>| {
+        let app = h.state();
+        let head = app
+            .editor
+            .view(app.active_view())
+            .unwrap()
+            .selections
+            .primary()
+            .head;
+        app.buffer().doc().line_of(head)
+    };
+    // Changed line 1 with the deletion just after it (one run), and added
+    // line 4.
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Home);
+    h.run();
+    let mut seen = Vec::new();
+    for _ in 0..3 {
+        h.key_press(Key::F8);
+        h.run();
+        seen.push(line(&h));
+    }
+    assert_eq!(seen, vec![1, 4, 1], "round to the first");
+    h.key_press_modifiers(Modifiers::SHIFT, Key::F8);
+    h.run();
+    assert_eq!(line(&h), 4, "round to the last");
+}

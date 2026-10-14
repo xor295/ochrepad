@@ -54,6 +54,27 @@ impl LineMarks {
         self.deleted_before.binary_search(&line).is_ok()
     }
 
+    /// The first line of each run of changes (a deletion counts at the line
+    /// after it), in order, within a document of `lines` lines.
+    pub fn starts(&self, lines: usize) -> Vec<usize> {
+        let last = lines.saturating_sub(1);
+        let mut marked: Vec<usize> = self
+            .lines
+            .iter()
+            .map(|m| m.0)
+            .chain(self.deleted_before.iter().map(|&l| l.min(last)))
+            .collect();
+        marked.sort_unstable();
+        marked.dedup();
+        let mut starts = Vec::new();
+        for (i, &l) in marked.iter().enumerate() {
+            if i == 0 || marked[i - 1] + 1 != l {
+                starts.push(l);
+            }
+        }
+        starts
+    }
+
     /// The marks from a diff of the saved text (left) with the current one
     /// (right) of `lines` lines.
     pub fn from_diff(diff: &LineDiff, lines: usize) -> Self {
@@ -264,5 +285,16 @@ mod tests {
         assert_eq!(m.deleted_before, vec![1]);
         assert_eq!(m.mark(0), None);
         assert!(marks("same\ntext", "same\ntext").is_empty());
+    }
+
+    #[test]
+    fn runs_of_changes_start_where_they_start() {
+        // Lines 1-2 changed, line 5 added, a deletion before line 7 and
+        // one at the end (clamped to the last line).
+        let m = LineMarks {
+            lines: vec![(1, Mark::Changed), (2, Mark::Changed), (5, Mark::Added)],
+            deleted_before: vec![7, 20],
+        };
+        assert_eq!(m.starts(10), vec![1, 5, 7, 9]);
     }
 }

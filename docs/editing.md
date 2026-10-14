@@ -157,8 +157,13 @@ bring back a bookmark it removed. The session keeps each file's bookmarks.
 Right-clicking the text moves the caret there, unless you click on the
 selection, and opens a menu with Undo and Redo, the clipboard (Cut, Copy,
 Paste, Delete, Select All), UPPERCASE and lowercase, the comment toggles,
-and the bookmark of the line. Right-clicking a line number does the same
-for that line.
+styling tokens, and the bookmark of the line. Right-clicking a line number
+does the same for that line.
+
+When the selection, or the text around the caret, names a file that exists
+(as it is, or next to the document, or in the open folder), the menu starts
+with **Open** that file. A line and column after it, as compilers and logs
+write them (`src/main.rs:12:5`), go to that place.
 
 ## Full screen and always on top
 

@@ -197,3 +197,55 @@ fn view_summary_counts_the_document() {
     click(&mut h, "Close");
     assert!(h.query_by_label("Summary").is_none());
 }
+
+#[test]
+fn open_file_from_the_right_click_menu_and_copy_results() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("lib.rs"), "one\ntwo\nthree\n").unwrap();
+    let log = dir.path().join("build.log");
+    std::fs::write(&log, "error at lib.rs:3:2 here\n").unwrap();
+    let mut h = harness();
+    h.state_mut().open_path(&log);
+    h.run();
+    // Right-click on "lib.rs:3:2" (the 11th column).
+    let rect = h.get_by_label("Editor: build.log").rect();
+    let font = egui::FontId::monospace(14.0);
+    let (cell_w, line_h) = h
+        .ctx
+        .fonts_mut(|f| (f.glyph_width(&font, 'M'), f.row_height(&font)));
+    let pos = egui::Pos2::new(
+        rect.min.x + 5.0 * cell_w + 8.0 + 11.5 * cell_w,
+        rect.min.y + 0.5 * line_h,
+    );
+    h.event(Event::PointerMoved(pos));
+    for pressed in [true, false] {
+        h.event(Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Secondary,
+            pressed,
+            modifiers: Modifiers::NONE,
+        });
+        h.step();
+    }
+    h.run();
+    click(&mut h, "Open lib.rs at Line 3");
+    assert_eq!(h.state().file_name(), "lib.rs");
+    h.get_by_label("Ln 3, Col 2");
+
+    // Search Results > Copy writes the results out as grep does.
+    h.state_mut().find.open = true;
+    h.state_mut().find.pattern = "t".into();
+    h.state_mut().find_all(false);
+    for _ in 0..50 {
+        h.step();
+        if !h.state().results.searches.iter().any(|s| !s.done) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    h.run();
+    assert_eq!(
+        h.state().results.as_text(),
+        "lib.rs:2: two\nlib.rs:3: three\n"
+    );
+}

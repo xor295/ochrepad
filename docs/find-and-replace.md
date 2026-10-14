@@ -42,6 +42,8 @@ and press Enter) to go to the match; its tab comes to the front.
 - Each search is added at the top of the panel and the older ones are
   folded away (click a heading to open or close it). The panel keeps the
   last 10 searches; **Clear** removes them and **Close** hides the panel.
+  **Copy** puts every result on the clipboard as `file:line: text` lines,
+  as grep writes them.
 - Results are not updated as you edit. If a document has changed since the
   search, clicking a result goes to the same line number and selects the
   match nearest to where it was on that line, or the start of the line if

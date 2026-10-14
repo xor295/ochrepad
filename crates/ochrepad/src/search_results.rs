@@ -296,6 +296,20 @@ impl SearchResults {
         }
     }
 
+    /// Every result, as "name:line: text" lines (newest search first), as
+    /// grep writes them.
+    pub fn as_text(&self) -> String {
+        let mut out = String::new();
+        for s in &self.searches {
+            for f in &s.files {
+                for h in &f.hits {
+                    out.push_str(&format!("{}:{}: {}\n", f.name, h.line + 1, h.text));
+                }
+            }
+        }
+        out
+    }
+
     pub fn clear(&mut self) {
         for s in self.searches.drain(..) {
             s.cancel.store(true, Ordering::Relaxed);
@@ -313,6 +327,14 @@ impl SearchResults {
                 }
                 if ui.button("Clear").clicked() {
                     self.clear();
+                }
+                if !self.searches.is_empty()
+                    && ui
+                        .button("Copy")
+                        .on_hover_text("Copy every result as \"file:line: text\"")
+                        .clicked()
+                {
+                    ui.ctx().copy_text(self.as_text());
                 }
                 if self.searches.iter().any(|s| !s.done) && ui.button("Stop").clicked() {
                     self.stop();

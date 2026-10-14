@@ -989,6 +989,7 @@ impl OchrepadApp {
                 document_map: self.settings.document_map,
                 changes: self.settings.change_history.then_some(&self.changes),
                 token_styles: &self.token_styles,
+                workspace_root: self.tree.as_ref().map(|t| t.root()),
                 compares: &mut self.compares,
                 previews: &mut self.previews,
                 find_highlight,
@@ -1060,6 +1061,12 @@ impl OchrepadApp {
                         crate::editor_menu::MenuCommand::ClearStyle(style) => {
                             let buffer = self.buffer_id();
                             self.token_styles.clear(buffer, style);
+                        }
+                        crate::editor_menu::MenuCommand::OpenFile(path, place) => {
+                            self.open_path(&path);
+                            if let Some((line, column)) = place {
+                                self.apply(Action::GoToLine { line, column });
+                            }
                         }
                     }
                 }
@@ -1271,19 +1278,21 @@ impl OchrepadApp {
         {
             self.play_macro(source, ochrepad_core::Repeat::Times(1));
         }
-        if pressed(ui, &PREV_DIFF)
-            && let Some(c) = self
+        // F8 and Shift+F8: a comparison's next or previous difference, or
+        // in an editor the next or previous change since the file was saved.
+        for (shortcut, backward) in [(&PREV_DIFF, true), (&NEXT_DIFF, false)] {
+            if !pressed(ui, shortcut) {
+                continue;
+            }
+            match self
                 .focused_compare()
                 .and_then(|id| self.compares.get_mut(id))
-        {
-            c.previous_change(&mut self.editor);
-        }
-        if pressed(ui, &NEXT_DIFF)
-            && let Some(c) = self
-                .focused_compare()
-                .and_then(|id| self.compares.get_mut(id))
-        {
-            c.next_change(&mut self.editor);
+            {
+                Some(c) if backward => c.previous_change(&mut self.editor),
+                Some(c) => c.next_change(&mut self.editor),
+                None if viewer.is_none() => self.go_to_change(backward),
+                None => {}
+            }
         }
         if pressed(ui, &PREVIEW) {
             self.open_preview();
@@ -2008,6 +2017,37 @@ impl OchrepadApp {
         }
     }
 
+    /// Goes to the start of the next (or previous) run of lines changed since
+    /// the file was saved, going round the document.
+    pub fn go_to_change(&mut self, backward: bool) {
+        let buffer = self.buffer_id();
+        let lines = self.buffer().doc().line_count();
+        let starts = self
+            .changes
+            .marks(buffer)
+            .filter(|_| self.settings.change_history)
+            .map(|m| m.starts(lines))
+            .unwrap_or_default();
+        if starts.is_empty() {
+            self.note_text("No changes since the file was saved");
+            return;
+        }
+        let caret = self.editor.view(self.active).map_or(0, |v| {
+            self.buffer().doc().line_of(v.selections.primary().head)
+        });
+        let target = if backward {
+            starts.iter().rev().find(|&&l| l < caret).or(starts.last())
+        } else {
+            starts.iter().find(|&&l| l > caret).or(starts.first())
+        };
+        if let Some(&line) = target {
+            self.apply(Action::GoToLine {
+                line: line + 1,
+                column: 1,
+            });
+        }
+    }
+
     /// Select and Find Next/Previous (Ctrl+F3, Ctrl+Shift+F3): finds the
     /// selected text, or the word at the caret, without opening the find
     /// panel; F3 and Shift+F3 then go on with it.
@@ -2642,6 +2682,8 @@ struct Tabs<'a> {
     document_map: bool,
     changes: Option<&'a crate::change_history::ChangeHistory>,
     token_styles: &'a crate::token_styles::TokenStyles,
+    /// The open folder, where Open File also looks.
+    workspace_root: Option<&'a Path>,
     compares: &'a mut Compares,
     previews: &'a mut Previews,
     find_highlight: Option<&'a ochrepad_core::Searcher>,
@@ -2815,8 +2857,19 @@ impl TabViewer for Tabs<'_> {
             },
         );
         let mut command = None;
+        let doc_dir = self
+            .editor
+            .buffer(buffer)
+            .and_then(|b| b.meta.path.as_deref())
+            .and_then(Path::parent)
+            .map(Path::to_path_buf);
+        let dirs: Vec<&Path> = doc_dir
+            .as_deref()
+            .into_iter()
+            .chain(self.workspace_root)
+            .collect();
         response.context_menu(|ui| {
-            command = crate::editor_menu::show(ui, self.editor, view, state);
+            command = crate::editor_menu::show(ui, self.editor, view, state, &dirs);
         });
         if let Some(command) = command {
             self.commands.push(TabCommand::Menu(view, command));
