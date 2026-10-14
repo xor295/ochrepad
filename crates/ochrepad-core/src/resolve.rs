@@ -128,6 +128,12 @@ pub(crate) fn resolve(
         Action::MoveLinesUp => transform::move_lines(doc, sels, true),
         Action::MoveLinesDown => transform::move_lines(doc, sels, false),
         Action::JoinLines => transform::join(doc, sels),
+        Action::RemoveEmptyLines { include_whitespace } => {
+            transform::remove_empty(doc, sels, *include_whitespace)
+        }
+        Action::RemoveDuplicateLines { consecutive_only } => {
+            transform::remove_duplicates(doc, sels, *consecutive_only)
+        }
         Action::PasteBlock(text) => {
             if sels.len() > 1 || !sels.primary().is_empty() {
                 return resolve(&Action::Paste(text.clone()), doc, sels, settings);

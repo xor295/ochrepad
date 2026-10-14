@@ -70,3 +70,20 @@ fn sort_from_the_edit_menu() {
     h.run();
     assert_eq!(text(&h), "apple\nfig\npear");
 }
+
+#[test]
+fn remove_lines_from_the_edit_menu() {
+    let mut h = with_text("b\n\na\n  \nb\na");
+    for item in [
+        "Remove Empty Lines (Containing Blank characters)",
+        "Remove Duplicate Lines",
+    ] {
+        h.get_by_label("Edit").click();
+        h.run();
+        h.get_by_label_contains("Line Operations").hover();
+        h.run();
+        h.get_by_label(item).click();
+        h.run();
+    }
+    assert_eq!(text(&h), "b\na");
+}

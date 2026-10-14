@@ -1050,6 +1050,37 @@ impl OchrepadApp {
             }
         }
         ui.separator();
+        for (label, action) in [
+            (
+                "Remove Empty Lines",
+                Action::RemoveEmptyLines {
+                    include_whitespace: false,
+                },
+            ),
+            (
+                "Remove Empty Lines (Containing Blank characters)",
+                Action::RemoveEmptyLines {
+                    include_whitespace: true,
+                },
+            ),
+            (
+                "Remove Duplicate Lines",
+                Action::RemoveDuplicateLines {
+                    consecutive_only: false,
+                },
+            ),
+            (
+                "Remove Consecutive Duplicate Lines",
+                Action::RemoveDuplicateLines {
+                    consecutive_only: true,
+                },
+            ),
+        ] {
+            if ui.button(label).clicked() {
+                self.apply(action);
+            }
+        }
+        ui.separator();
         let sort = |descending, case_insensitive, numeric, remove_duplicates| {
             Action::SortLines(SortOptions {
                 descending,

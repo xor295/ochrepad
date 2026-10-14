@@ -121,6 +121,18 @@ pub enum Action {
     MoveLinesDown,
     /// Join the selected lines (or the caret's line and the next).
     JoinLines,
+    /// Remove empty lines from the selected lines (all lines when nothing
+    /// is selected); with `include_whitespace`, also lines of only spaces
+    /// and tabs.
+    RemoveEmptyLines {
+        include_whitespace: bool,
+    },
+    /// Remove lines equal to an earlier selected line (all lines when
+    /// nothing is selected), keeping the order; with `consecutive_only`,
+    /// only lines equal to the line right before them.
+    RemoveDuplicateLines {
+        consecutive_only: bool,
+    },
     Undo,
     Redo,
 }

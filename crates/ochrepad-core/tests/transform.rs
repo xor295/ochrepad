@@ -182,3 +182,84 @@ fn moving_whole_lines_onto_the_last_line_keeps_the_selection_in_range() {
     assert_eq!(t.text(), "\na\nb");
     assert_eq!(t.show(), "\n^a\nb|");
 }
+
+fn remove_empty(include_whitespace: bool) -> Action {
+    Action::RemoveEmptyLines { include_whitespace }
+}
+
+fn remove_duplicates(consecutive_only: bool) -> Action {
+    Action::RemoveDuplicateLines { consecutive_only }
+}
+
+#[test]
+fn remove_empty_lines_keeps_the_final_newline() {
+    let mut t = setup("|a\n\nb\n  \n\nc\n");
+    t.apply(remove_empty(false));
+    assert_eq!(t.text(), "a\nb\n  \nc\n");
+    t.apply(Action::Undo);
+    assert_eq!(t.text(), "a\n\nb\n  \n\nc\n", "one undo step");
+
+    t.apply(remove_empty(true));
+    assert_eq!(t.text(), "a\nb\nc\n", "blank lines go too");
+}
+
+#[test]
+fn removing_lines_that_end_the_document_takes_the_break_before_them() {
+    let mut t = setup("|x\n\n \t");
+    t.apply(remove_empty(true));
+    assert_eq!(t.text(), "x");
+
+    let mut t = setup("|a\nb\na");
+    t.apply(remove_duplicates(false));
+    assert_eq!(
+        t.text(),
+        "a\nb",
+        "the last line has no newline but is equal"
+    );
+
+    let mut t = setup("|\n\n");
+    t.apply(remove_empty(false));
+    assert_eq!(t.text(), "");
+}
+
+#[test]
+fn nothing_to_remove_leaves_the_buffer_clean() {
+    let mut t = setup("a\nb|\nc\n");
+    t.apply(remove_empty(true)).apply(remove_duplicates(false));
+    assert_eq!(t.show(), "a\nb|\nc\n");
+    assert!(!t.buffer().is_dirty());
+}
+
+#[test]
+fn remove_duplicate_lines_keeps_the_first_and_the_order() {
+    let mut t = setup("|b\na\nb\nA\na\nb\n");
+    t.apply(remove_duplicates(false));
+    assert_eq!(t.text(), "b\na\nA\n", "case-sensitive, not sorted");
+
+    let mut t = setup("|a\na\nb\na\na\n\n\n");
+    t.apply(remove_duplicates(true));
+    assert_eq!(t.text(), "a\nb\na\n\n", "only repeats next to each other");
+}
+
+#[test]
+fn line_removal_works_on_the_selected_lines_only() {
+    // Lines 1-3 selected (the selection ends at the start of line 4).
+    let mut t = setup("a\na\n\na\n\na");
+    t.set_sels(vec![(2, 7)]);
+    t.apply(remove_duplicates(false));
+    assert_eq!(t.text(), "a\na\n\n\na");
+    t.apply(remove_empty(false));
+    assert_eq!(t.text(), "a\na\n\na");
+    assert_eq!(t.show(), "a\n^a\n|\na", "the selection keeps the rest");
+
+    // A column selection counts as its lines, even where it is empty.
+    let mut t = setup("x\n\ny\n\nz");
+    t.apply(Action::ColumnSelect {
+        anchor_line: 1,
+        anchor_col: VisualCol(0),
+        head_line: 2,
+        head_col: VisualCol(0),
+    });
+    t.apply(remove_empty(false));
+    assert_eq!(t.text(), "x\ny\n\nz");
+}

@@ -91,12 +91,14 @@ fn name(action: &Action) -> &'static str {
         Action::MoveLinesUp => "MoveLinesUp",
         Action::MoveLinesDown => "MoveLinesDown",
         Action::JoinLines => "JoinLines",
+        Action::RemoveEmptyLines { .. } => "RemoveEmptyLines",
+        Action::RemoveDuplicateLines { .. } => "RemoveDuplicateLines",
         Action::Undo => "Undo",
         Action::Redo => "Redo",
     }
 }
 
-const ALL: [&str; 32] = [
+const ALL: [&str; 34] = [
     "InsertText",
     "Paste",
     "InsertTab",
@@ -127,6 +129,8 @@ const ALL: [&str; 32] = [
     "MoveLinesUp",
     "MoveLinesDown",
     "JoinLines",
+    "RemoveEmptyLines",
+    "RemoveDuplicateLines",
     "Undo",
     "Redo",
 ];

@@ -14,6 +14,10 @@ people downloading the release.
 
 - Smart highlighting: selecting text highlights its other occurrences, as in
   Notepad++.
+- Edit > Line Operations: Remove Empty Lines, Remove Empty Lines (Containing
+  Blank characters), Remove Duplicate Lines and Remove Consecutive Duplicate
+  Lines. They work on the selected lines, or on the whole document when
+  nothing is selected.
 
 ### Changed
 

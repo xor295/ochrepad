@@ -115,6 +115,8 @@ Motions for `MoveCursor`:
 | `{"Action": "MoveLinesDown"}` | Moves the selected lines down one line. |
 | `{"Action": "JoinLines"}` | Joins the selected lines (or the caret's line and the next). |
 | `{"Action": "TrimTrailingWhitespace"}` | Removes trailing spaces and tabs from the selected lines, or from every line when nothing is selected. |
+| `{"Action": {"RemoveEmptyLines": {"include_whitespace": false}}}` | Removes empty lines from the selected lines, or from the whole document when nothing is selected. With `include_whitespace`, lines of only spaces and tabs go too. |
+| `{"Action": {"RemoveDuplicateLines": {"consecutive_only": false}}}` | Removes lines equal to an earlier line, keeping the first one and the order, in the selected lines or the whole document. Lines compare exactly. With `consecutive_only`, only a line equal to the one right before it is removed. |
 | `{"Action": {"ConvertCase": "Upper"}}` | Converts the selections (or the caret's line) to `"Upper"`, `"Lower"`, `"Title"` or `"Invert"` case. |
 | `{"Action": {"SortLines": {"descending": false, "case_insensitive": true, "numeric": false, "remove_duplicates": false}}}` | Sorts the selected lines, or the whole document when nothing is selected. All four options must be given. `numeric` compares the number at the start of each line; `remove_duplicates` drops repeated lines. With a column selection, lines are sorted by the text inside the column. |
 
