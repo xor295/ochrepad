@@ -20,7 +20,9 @@ A fast, native text editor in the spirit of Notepad++, written in Rust with
   ([more](docs/column-selection.md)).
 - **Find and replace** with regular expressions, match case, whole word, wrap
   around and in-selection, `$1`/`${name}` in replacements, Count, Select All
-  (one caret per match) and Replace All as a single undo step. See
+  (one caret per match) and Replace All as a single undo step. Find All
+  lists the matches in one or every open document in a results panel, and
+  Replace All can also work on every open document. See
   [docs/find-and-replace.md](docs/find-and-replace.md) for the regex dialect.
 - **Macros**: record, play back once, N times or to the end of the file, save
   them with a name and a shortcut ([more](docs/macros.md)).

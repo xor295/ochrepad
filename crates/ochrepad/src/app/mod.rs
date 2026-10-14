@@ -25,6 +25,7 @@ use crate::editor_view::{
 mod autosave;
 mod external;
 mod prefs;
+mod search;
 
 pub use autosave::{AutosaveSettings, Session, SessionBuffer, SessionTab};
 pub use external::DiskChange;
@@ -105,6 +106,9 @@ pub struct OchrepadApp {
     title: String,
     pub highlighting: Highlighting,
     pub find: FindPanel,
+    /// The Search Results panel.
+    pub results: crate::search_results::SearchResults,
+    replace_all_plan: Option<search::ReplaceAllPlan>,
     pub macros: Macros,
     persist: autosave::Persist,
     external: external::External,
@@ -157,6 +161,8 @@ impl OchrepadApp {
             title: String::new(),
             highlighting: Highlighting::new(Arc::new(ochrepad_syntax::Registry::load())),
             find: FindPanel::default(),
+            results: Default::default(),
+            replace_all_plan: None,
             macros: Macros::default(),
             persist: autosave::Persist::default(),
             external: external::External::default(),
@@ -690,7 +696,23 @@ impl OchrepadApp {
                         self.view_state_mut().request_focus();
                     }
                     FindRequest::Reveal => self.view_state_mut().reveal_caret(),
+                    FindRequest::FindAll { all_documents } => self.find_all(all_documents),
+                    FindRequest::ReplaceAllInAll => self.plan_replace_all_in_all(),
                 }
+            }
+        }
+        if self.results.poll() {
+            ui.ctx().request_repaint();
+        }
+        if self.results.open {
+            let match_bg = crate::theme::match_bg(ui.visuals());
+            let go = Panel::bottom("search-results")
+                .resizable(true)
+                .default_size(200.0)
+                .show(ui, |ui| self.results.ui(ui, match_bg))
+                .inner;
+            if let Some(go) = go {
+                self.go_to_result(go);
             }
         }
 
@@ -757,6 +779,7 @@ impl OchrepadApp {
 
         self.autosave_tick(ui);
         self.dialogs(ui);
+        self.replace_all_dialog(ui);
         self.external_dialog(ui);
         self.preferences_window(ui);
         if let Some((source, repeat)) = self.macros.dialogs(ui) {

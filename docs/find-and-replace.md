@@ -21,6 +21,31 @@ Options:
 **Select All** turns every match into a selection, so typing edits them all.
 **Replace All** is a single undo step.
 
+## Find All and the Search Results panel
+
+**Find All in Current Document** and **Find All in All Open Documents** list
+every match in the **Search Results** panel above the find panel, grouped by
+document, one row per line with the matches tinted. Click a row (or focus it
+and press Enter) to go to the match; its tab comes to the front.
+
+- The search runs in the background, so a very large document does not
+  freeze the window; the panel says "searching…" until it is done.
+- A search lists at most 10,000 matches and says so when there were more.
+- **In selection** applies to Find All in Current Document only.
+- Each search is added at the top of the panel and the older ones are
+  folded away (click a heading to open or close it). The panel keeps the
+  last 10 searches; **Clear** removes them and **Close** hides the panel.
+- Results are not updated as you edit. If a document has changed since the
+  search, clicking a result goes to the same line number and selects the
+  match nearest to where it was on that line, or the start of the line if
+  there is none.
+- Unsaved documents are searched as they are in the editor.
+
+**Replace All in All Open Documents** (in replace mode) first counts the
+matches and asks before replacing. Each document gets its own undo step,
+the documents become unsaved, and nothing is written to disk until you save.
+It is not recorded in a macro.
+
 ## Smart highlighting
 
 Selecting text on one line highlights every other place the same text appears,

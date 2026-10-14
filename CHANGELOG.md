@@ -27,6 +27,10 @@ people downloading the release.
 - Document map: a zoomed-out view of the document on the right of each
   editor. Drag its marker to scroll, or click to jump there. View >
   Document Map turns it off.
+- Find All in Current Document and Find All in All Open Documents list every
+  match in a new Search Results panel; click a result to go to it. Replace
+  All in All Open Documents replaces in every open document after asking,
+  one undo step per document.
 - Word wrap (View > Word Wrap). Long lines wrap at the edge of the pane,
   after spaces where possible, and their continuation rows are indented
   like the line. Up and Down move by row; Home and End go to the start or

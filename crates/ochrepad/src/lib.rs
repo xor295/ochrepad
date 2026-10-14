@@ -14,6 +14,7 @@ pub mod logo;
 pub mod macro_ui;
 pub mod preview;
 pub mod safe_images;
+pub mod search_results;
 pub mod settings;
 pub mod theme;
 

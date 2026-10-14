@@ -253,6 +253,16 @@ impl Editor {
         Ok(())
     }
 
+    /// Like [`apply`](Self::apply), but never recorded in a macro being
+    /// recorded: for commands that act outside the view the macro plays in
+    /// (Replace All in all open documents).
+    pub fn apply_unrecorded(&mut self, view: ViewId, action: Action) -> Result<(), ActionError> {
+        let recording = self.recording.take();
+        let result = self.apply(view, action);
+        self.recording = recording;
+        result
+    }
+
     /// Resolves `action` against the view's current state. The outer error
     /// is a missing view/buffer; the inner one the action's own failure.
     fn resolve_in(

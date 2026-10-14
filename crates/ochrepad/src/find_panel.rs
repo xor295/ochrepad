@@ -13,6 +13,11 @@ pub enum FindRequest {
     Close,
     /// The editor should scroll to its caret.
     Reveal,
+    /// List every match in the Search Results panel: in the current
+    /// document, or in every open one.
+    FindAll { all_documents: bool },
+    /// Replace every match in every open document (after confirming).
+    ReplaceAllInAll,
 }
 
 pub struct FindPanel {
@@ -86,6 +91,11 @@ impl FindPanel {
 
     pub fn message(&self) -> Option<&str> {
         self.message.as_ref().map(|(m, _)| m.as_str())
+    }
+
+    /// Shows `text` under the fields (an error in red).
+    pub fn set_message(&mut self, text: impl Into<String>, is_error: bool) {
+        self.message = Some((text.into(), is_error));
     }
 
     /// Opens the panel (Ctrl+F / Ctrl+H), taking a one-line selection as
@@ -227,6 +237,24 @@ impl FindPanel {
                     requests.push(FindRequest::Reveal);
                 }
             }
+            let valid = matches!(self.searcher(), Some(Ok(_)));
+            if ui
+                .add_enabled(valid, egui::Button::new("Find All in Current Document"))
+                .clicked()
+            {
+                requests.push(FindRequest::FindAll {
+                    all_documents: false,
+                });
+            }
+            if ui
+                .add_enabled(valid, egui::Button::new("Find All in All Open Documents"))
+                .on_hover_text("\"In selection\" does not apply")
+                .clicked()
+            {
+                requests.push(FindRequest::FindAll {
+                    all_documents: true,
+                });
+            }
             let label = if self.show_replace {
                 "Hide Replace"
             } else {
@@ -273,6 +301,16 @@ impl FindPanel {
                     {
                         self.message = n.map(|n| (format!("Replaced {n} occurrences"), false));
                     }
+                }
+                let valid = matches!(self.searcher(), Some(Ok(_)));
+                if ui
+                    .add_enabled(
+                        valid,
+                        egui::Button::new("Replace All in All Open Documents"),
+                    )
+                    .clicked()
+                {
+                    requests.push(FindRequest::ReplaceAllInAll);
                 }
             });
         }
