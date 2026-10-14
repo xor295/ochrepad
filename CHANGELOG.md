@@ -174,8 +174,8 @@ people downloading the release.
 
 ### Changed
 
-- iNVERT cASE moved from Ctrl+Alt+U to Ctrl+Alt+I, its Notepad++ key;
-  Ctrl+Alt+U is Sentence case, as there.
+- iNVERT cASE moved from Ctrl+Alt+U to Ctrl+Alt+I, because Ctrl+Alt+U is
+  Sentence case in Notepad++.
 - Edit's comment commands are in a Comment/Uncomment submenu, as in
   Notepad++, and a tab's right-click menu no longer lists Close twice.
 

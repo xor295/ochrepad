@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::buffer::BufferId;
 use crate::display::{Padding, WrapCache};
 use crate::fold::FoldSet;
+use crate::position::ByteOffset;
 use crate::selection::SelectionSet;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -45,6 +46,9 @@ pub struct View {
     /// Not a tab of its own (a compare view's side): left out of
     /// [`crate::Editor::views_of`].
     aux: bool,
+    /// Where Edit > Begin/End Select began, until it ends; `Editor` keeps
+    /// it in step with edits, as it does selections.
+    pub begin_select: Option<ByteOffset>,
 }
 
 impl View {
@@ -59,6 +63,7 @@ impl View {
             wrap_cache: RefCell::default(),
             padding: None,
             aux: false,
+            begin_select: None,
         }
     }
 

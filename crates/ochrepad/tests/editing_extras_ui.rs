@@ -324,13 +324,21 @@ fn begin_end_select_selects_from_where_it_began() {
     caret(&mut h, 2);
     click(&mut h, "Edit");
     click(&mut h, "Begin/End Select");
-    assert!(h.state().view_state().unwrap().begin_select.is_some());
+    let begun = |h: &Harness<'_, OchrepadApp>| {
+        let app = h.state();
+        app.editor
+            .view(app.active_view())
+            .unwrap()
+            .begin_select
+            .is_some()
+    };
+    assert!(begun(&h));
     // Moving the caret, then ending it.
     caret(&mut h, 8);
     click(&mut h, "Edit");
     click(&mut h, "Begin/End Select");
     assert_eq!(selected(&h), "llo wo");
-    assert!(h.state().view_state().unwrap().begin_select.is_none());
+    assert!(!begun(&h));
 
     // In column mode: a rectangle from the first corner (line 1, column 1)
     // to the caret (line 2, column 3).

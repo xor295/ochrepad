@@ -73,26 +73,36 @@ pub fn url_at(doc: &Document, sels: &SelectionSet) -> Option<String> {
         .map(|(i, _)| i)
         .find(|&i| i <= caret && starts_link(&run[i..]))?;
     let mut link = &run[begin..];
+    if link.len() > 4096 {
+        return None;
+    }
     // Punctuation after a link ends the sentence, and a closing bracket
-    // without its opening one closes the text around it.
-    loop {
-        let trimmed = link.trim_end_matches(['.', ',', ';', ':', '!', '?']);
-        let unbalanced = |open: char, close: char| {
-            trimmed.ends_with(close)
-                && trimmed.matches(open).count() < trimmed.matches(close).count()
+    // without its opening one closes the text around it. Each bracket is
+    // counted once (a run of closers is common, and recounting is slow).
+    const PAIRS: [(char, char); 3] = [('(', ')'), ('[', ']'), ('{', '}')];
+    let mut open = [0usize; 3];
+    let mut close = [0usize; 3];
+    for c in link.chars() {
+        for (k, (o, cl)) in PAIRS.iter().enumerate() {
+            open[k] += usize::from(c == *o);
+            close[k] += usize::from(c == *cl);
+        }
+    }
+    while let Some(last) = link.chars().next_back() {
+        let closer = PAIRS.iter().position(|p| p.1 == last);
+        let trim = match closer {
+            Some(k) => close[k] > open[k],
+            None => matches!(last, '.' | ',' | ';' | ':' | '!' | '?'),
         };
-        let trimmed = if unbalanced('(', ')') || unbalanced('[', ']') || unbalanced('{', '}') {
-            &trimmed[..trimmed.len() - 1]
-        } else {
-            trimmed
-        };
-        if trimmed.len() == link.len() {
+        if !trim {
             break;
         }
-        link = trimmed;
+        if let Some(k) = closer {
+            close[k] -= 1;
+        }
+        link = &link[..link.len() - last.len_utf8()];
     }
-    (starts_link(link) && link.len() <= 4096 && caret <= begin + link.len())
-        .then(|| link.to_owned())
+    (starts_link(link) && caret <= begin + link.len()).then(|| link.to_owned())
 }
 
 /// A file named in the text, and the line and column it gave.
@@ -336,6 +346,21 @@ mod tests {
         let doc = Document::new("x src/main.rs y");
         let sel = SelectionSet::single(Selection::new(ByteOffset(2), ByteOffset(13)));
         assert_eq!(file_at(&doc, &sel, &dirs), Some((main, None)));
+    }
+
+    /// A long run of closing brackets after a link is trimmed in one pass
+    /// (it took seconds when each one recounted the link), and a link
+    /// longer than 4096 bytes is not offered.
+    #[test]
+    fn many_closing_brackets_are_trimmed_quickly() {
+        let url = |text: &str| url_at(&Document::new(text), &SelectionSet::caret(ByteOffset(3)));
+        let t = std::time::Instant::now();
+        assert_eq!(
+            url(&format!("https://a.b/{}", ")".repeat(4000))),
+            Some("https://a.b/".to_owned())
+        );
+        assert_eq!(url(&format!("https://a.b/{}", ")".repeat(200_000))), None);
+        assert!(t.elapsed() < std::time::Duration::from_secs(2));
     }
 
     /// Spaces wider than a byte (no-break, ideographic) end a run too.

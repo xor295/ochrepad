@@ -114,6 +114,38 @@ fn comment_and_uncomment_add_and_remove_one_level() {
 }
 
 #[test]
+fn block_only_comments_work_per_run_of_lines() {
+    let css = |text: &str| with_comments(text, None, Some(("/*", "*/")));
+    // Two lines commented each: uncommenting both takes both off, and
+    // leaves no stray marker.
+    let text = "/* color: red; */\n/* margin: 0; */";
+    let mut t = css(text);
+    t.set_sels(vec![(0, text.len())]);
+    t.apply(Action::UncommentLines);
+    assert_eq!(t.text(), "color: red;\nmargin: 0;");
+    // The toggle does the same, and puts one block back.
+    let mut t = css(text);
+    t.set_sels(vec![(0, text.len())]);
+    t.apply(Action::ToggleLineComment);
+    assert_eq!(t.text(), "color: red;\nmargin: 0;");
+    t.set_sels(vec![(0, 22)]);
+    t.apply(Action::ToggleLineComment);
+    assert_eq!(t.text(), "/* color: red;\nmargin: 0; */");
+
+    // Carets on lines 1 and 3: two blocks, line 2 left alone.
+    let mut t = css("|a\nb\n|c");
+    t.apply(Action::CommentLines);
+    assert_eq!(t.text(), "/* a */\nb\n/* c */");
+    t.apply(Action::UncommentLines);
+    assert_eq!(t.text(), "a\nb\nc");
+
+    // Two comments on one line are not one comment around it.
+    let mut t = css("/* a */ b /* c */|");
+    t.apply(Action::ToggleLineComment);
+    assert_eq!(t.text(), "/* /* a */ b /* c */ */");
+}
+
+#[test]
 fn block_comments_wrap_and_unwrap() {
     let mut t = rust("let x = a + b;");
     t.set_sels(vec![(8, 13)]);
@@ -162,4 +194,28 @@ fn converting_indentation_keeps_widths_and_sets_the_buffer() {
     assert!(!t.buffer().indent.use_spaces);
     t.apply(Action::Undo);
     assert_eq!(t.text(), "a\n      b\n    c\n", "one undo step");
+}
+
+#[test]
+fn begin_select_follows_the_edits_before_it() {
+    use ochrepad_core::{ByteOffset, SelectionSet};
+    let mut t = setup("abcd");
+    let begin = |t: &T| t.ed.view(t.view).unwrap().begin_select;
+    let caret = |t: &mut T, at: usize| {
+        t.apply(Action::SetSelections(SelectionSet::caret(ByteOffset(at))));
+    };
+    t.ed.view_mut(t.view).unwrap().begin_select = Some(ByteOffset(2));
+    caret(&mut t, 0);
+    t.apply(Action::InsertText("XYZ".into()));
+    assert_eq!(begin(&t), Some(ByteOffset(5)));
+    // Typed where it began, the text goes before it, as in Notepad++.
+    caret(&mut t, 5);
+    t.apply(Action::InsertText("!".into()));
+    assert_eq!(begin(&t), Some(ByteOffset(6)));
+    // Undo and edits after it follow too; text after it leaves it alone.
+    t.apply(Action::Undo);
+    assert_eq!(begin(&t), Some(ByteOffset(5)));
+    caret(&mut t, 7);
+    t.apply(Action::InsertText("?".into()));
+    assert_eq!(begin(&t), Some(ByteOffset(5)));
 }

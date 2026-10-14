@@ -6,9 +6,9 @@
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::action::Action;
-use crate::changeset::{Bias, ChangeSet, Edit};
+use crate::changeset::{ChangeSet, Edit};
 use crate::history::EditKind;
-use crate::position::next_grapheme_boundary;
+use crate::position::{ByteOffset, next_grapheme_boundary};
 use crate::resolve::Resolved;
 use crate::selection::{Selection, SelectionSet};
 use crate::text::Document;
@@ -24,21 +24,26 @@ pub(crate) fn resolve(action: &Action, doc: &Document, sels: &SelectionSet) -> O
     }
     // One character of the text after the caret for each one typed.
     let typed = text.graphemes(true).count();
+    let ranges = sels.ranges();
     let mut over = false;
-    let edits: Vec<Edit> = sels
-        .ranges()
+    let edits: Vec<Edit> = ranges
         .iter()
-        .map(|s| {
+        .enumerate()
+        .map(|(i, s)| {
             if !s.is_empty() {
                 return Edit::new(s.start(), s.end(), text.as_str());
             }
-            let line_end = doc.line_end(doc.line_of(s.head));
+            // Up to the line's end, and never into the next selection.
+            let mut limit = doc.line_end(doc.line_of(s.head));
+            if let Some(next) = ranges.get(i + 1) {
+                limit = limit.min(next.start());
+            }
             let mut end = s.head;
             for _ in 0..typed {
-                if end >= line_end {
+                if end >= limit {
                     break;
                 }
-                end = next_grapheme_boundary(doc, end).min(line_end);
+                end = next_grapheme_boundary(doc, end).min(limit);
             }
             over |= end > s.head;
             Edit::new(s.head, end, text.as_str())
@@ -47,19 +52,25 @@ pub(crate) fn resolve(action: &Action, doc: &Document, sels: &SelectionSet) -> O
     if !over {
         return None;
     }
-    let kind = if sels.ranges().iter().all(Selection::is_empty) && typed == 1 {
+    let kind = if ranges.iter().all(Selection::is_empty) && typed == 1 {
         EditKind::Insert
     } else {
         EditKind::Other
     };
-    let ends: Vec<_> = edits.iter().map(|e| e.end).collect();
+    // Each caret goes after its own text. (Edits can touch, and a change
+    // set merges touching edits, so mapping their ends through it would
+    // put two carets in one place.)
+    let mut shift = 0isize;
+    let carets: Vec<Selection> = edits
+        .iter()
+        .map(|e| {
+            let start = e.start.0 as isize + shift;
+            shift += e.text.len() as isize - (e.end.0 - e.start.0) as isize;
+            Selection::caret(ByteOffset(start as usize + e.text.len()))
+        })
+        .collect();
     let changes = ChangeSet::new(doc.len(), edits);
-    let after = SelectionSet::new(
-        ends.into_iter()
-            .map(|e| Selection::caret(changes.map_position(e, Bias::After)))
-            .collect(),
-        sels.primary_index(),
-    );
+    let after = SelectionSet::new(carets, sels.primary_index());
     Some(Resolved::Edit {
         changes,
         after,

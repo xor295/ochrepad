@@ -116,15 +116,15 @@ pub fn convert_case(text: &str, mode: CaseMode) -> String {
                     continue;
                 }
                 out.push(c);
-                match c {
-                    '.' | '!' | '?' => {
-                        starts |= !chars.get(i + 1).is_some_and(|n| n.is_alphabetic());
+                if c == '\n' {
+                    starts |= after_break;
+                    after_break = true;
+                } else if !c.is_whitespace() {
+                    // Not a blank line; and "2.50" has no sentence end.
+                    after_break = false;
+                    if matches!(c, '.' | '!' | '?') {
+                        starts |= !chars.get(i + 1).is_some_and(|n| n.is_alphanumeric());
                     }
-                    '\n' => {
-                        starts |= after_break;
-                        after_break = true;
-                    }
-                    _ => after_break = false,
                 }
             }
             out
@@ -806,7 +806,11 @@ pub(crate) fn toggle_block_comment(
 /// Whether `text`, blanks aside, is one block comment.
 fn in_block_comment(text: &str, open: &str, close: &str) -> bool {
     let inner = text.trim();
-    inner.len() >= open.len() + close.len() && inner.starts_with(open) && inner.ends_with(close)
+    // The first close after the open is the one at the end: "/* a */ b
+    // /* c */" is two comments, not one.
+    inner.len() >= open.len() + close.len()
+        && inner.starts_with(open)
+        && inner[open.len()..].find(close) == Some(inner.len() - open.len() - close.len())
 }
 
 /// Line comments with the line marker, or a block comment around the lines'
@@ -821,21 +825,46 @@ pub(crate) fn comment_lines(
         return Some(line_comment(doc, sels, marker, op));
     }
     let (open, close) = syntax.block.as_ref()?;
-    // The text of the touched lines, as one selection per run of lines.
-    let lines = touched_lines(doc, sels);
-    let (first, last) = (*lines.first()?, *lines.last()?);
+    // Each run of touched lines is one block: from its first non-blank
+    // line's text to its last one's end.
     let text_start = |l: usize| ByteOffset(doc.line_start(l).0 + indent_len(&doc.line_text(l)));
-    let whole = SelectionSet::single(Selection::new(text_start(first), doc.line_end(last)));
-    let wrapped = in_block_comment(&doc.slice(whole.primary().range()), open, close);
-    let wanted = match op {
-        CommentOp::Toggle => true,
-        CommentOp::Add => !wrapped,
-        CommentOp::Remove => wrapped,
-    };
-    if !wanted {
+    let span = |a: usize, b: usize| Selection::new(text_start(a), doc.line_end(b));
+    let is_comment = |s: &Selection| in_block_comment(&doc.slice(s.range()), open, close);
+    let mut runs: Vec<(usize, usize)> = Vec::new();
+    for l in touched_lines(doc, sels) {
+        match runs.last_mut() {
+            Some((_, end)) if *end + 1 == l => *end = l,
+            _ => runs.push((l, l)),
+        }
+    }
+    // What to toggle: a run's block, or its lines that are comments each.
+    let mut targets = Vec::new();
+    for (a, b) in runs {
+        let filled: Vec<usize> = (a..=b)
+            .filter(|&l| !doc.line_text(l).trim().is_empty())
+            .collect();
+        let (Some(&first), Some(&last)) = (filled.first(), filled.last()) else {
+            continue;
+        };
+        let whole = span(first, last);
+        let each: Vec<Selection> = filled.iter().map(|&l| span(l, l)).collect();
+        let one = is_comment(&whole);
+        let every = each.iter().all(&is_comment);
+        match op {
+            CommentOp::Add if !one && !every => targets.push(whole),
+            CommentOp::Add => {}
+            _ if one => targets.push(whole),
+            CommentOp::Remove => targets.extend(each.into_iter().filter(&is_comment)),
+            CommentOp::Toggle if every => targets.extend(each),
+            CommentOp::Toggle => targets.push(whole),
+        }
+    }
+    if targets.is_empty() {
         return Some(Resolved::Selections(sels.clone()));
     }
-    match toggle_block_comment(doc, &whole, open, close) {
+    // Each target is wrapped if it is not a comment and unwrapped if it is.
+    let targets = SelectionSet::new(targets, 0);
+    match toggle_block_comment(doc, &targets, open, close) {
         Resolved::Edit { changes, kind, .. } => {
             let after = map_selections_around(sels, &changes);
             Some(Resolved::Edit {
@@ -1283,6 +1312,12 @@ mod tests {
             convert_case("3 apples. ok", CaseMode::Sentence),
             "3 Apples. Ok"
         );
+        // A decimal point ends no sentence; a line of blanks is blank.
+        assert_eq!(
+            convert_case("it costs 2.50 DOLLARS", CaseMode::Sentence),
+            "It costs 2.50 dollars"
+        );
+        assert_eq!(convert_case("a\n  \nb", CaseMode::Sentence), "A\n  \nB");
     }
 
     #[test]

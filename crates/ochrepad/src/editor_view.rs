@@ -118,8 +118,6 @@ pub struct EditorViewState {
     pub context_file: Option<Option<crate::editor_menu::FileAt>>,
     /// The web link the context menu offers to open, once it has looked.
     pub context_url: Option<Option<String>>,
-    /// Where Begin/End Select began, until it ends.
-    pub begin_select: Option<ByteOffset>,
     /// How many columns of text the pane shows (Split Lines' width when
     /// there is no vertical edge).
     pub text_cols: usize,
@@ -140,7 +138,6 @@ impl Default for EditorViewState {
             context_line: None,
             context_file: None,
             context_url: None,
-            begin_select: None,
             text_cols: 80,
             paste_to_bookmarks: None,
             cache: LayoutCache::default(),
@@ -1632,14 +1629,16 @@ pub fn begin_end_select(
     state: &mut EditorViewState,
     column: bool,
 ) {
-    let Some(v) = editor.view(view) else {
+    let Some(v) = editor.view_mut(view) else {
         return;
     };
     let head = v.selections.primary().head;
-    let Some(begin) = state.begin_select.take() else {
-        state.begin_select = Some(head);
+    // The editor keeps the place it began in step with edits.
+    let Some(begin) = v.begin_select.take() else {
+        v.begin_select = Some(head);
         return;
     };
+    let v = &*v;
     let action = if column {
         let buffer = v.buffer();
         let doc = doc_of(editor, buffer);

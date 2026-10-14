@@ -652,9 +652,9 @@ proptest! {
 proptest! {
     #![proptest_config(ProptestConfig { cases: 500, ..ProptestConfig::default() })]
 
-    /// With auto-closing on, brackets, quotes and Backspace typed among
-    /// random actions keep every invariant, and undoing still gets back to
-    /// the start.
+    /// With auto-closing on (and smart indentation and overtype, at
+    /// random), brackets, quotes and Backspace typed among random actions
+    /// keep every invariant, and undoing still gets back to the start.
     #[test]
     fn auto_closing_keeps_undo_working(
         initial in text(),
@@ -670,11 +670,13 @@ proptest! {
         ),
         layout in layout(),
         smart in any::<bool>(),
+        overtype in any::<bool>(),
     ) {
         let mut t = setup_wrapped(&initial, layout);
         t.ed.settings.auto_close = true;
-        // Smart indentation works on the same keys.
+        // Smart indentation and overtype work on the same keys.
         t.ed.settings.smart_indent = smart;
+        t.ed.settings.overtype = overtype;
         for a in actions {
             let _ = t.ed.apply(t.view, a);
             check(&t)?;

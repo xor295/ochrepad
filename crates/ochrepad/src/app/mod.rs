@@ -1602,7 +1602,10 @@ impl OchrepadApp {
         if item(ui, "Select All", "Ctrl+A") {
             self.apply(Action::SelectAll);
         }
-        let begun = self.view_state().is_some_and(|s| s.begin_select.is_some());
+        let begun = self
+            .editor
+            .view(self.active)
+            .is_some_and(|v| v.begin_select.is_some());
         for (label, column) in [
             ("Begin/End Select", false),
             ("Begin/End Select in Column Mode", true),

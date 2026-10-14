@@ -904,9 +904,16 @@ impl Editor {
 
     /// Shifts the selections of every other view of `buffer` through `changes`
     /// so their carets stay put relative to the text.
+    /// Maps the selections of `buffer`'s views other than `except` through
+    /// `changes`, and every view's Begin/End Select start.
     fn map_other_views(&mut self, buffer: BufferId, except: ViewId, changes: &ChangeSet) {
         for v in self.views.values_mut() {
-            if v.buffer() == buffer && v.id() != except {
+            if v.buffer() != buffer {
+                continue;
+            }
+            // As in Notepad++, text typed where it began goes before it.
+            v.begin_select = v.begin_select.map(|p| changes.map_position(p, Bias::After));
+            if v.id() != except {
                 v.selections = v.selections.map(|s| Selection {
                     anchor: changes.map_position(s.anchor, Bias::Before),
                     head: changes.map_position(s.head, Bias::Before),

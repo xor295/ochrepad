@@ -94,3 +94,21 @@ fn auto_close_still_applies_where_nothing_is_typed_over() {
     typed(&mut t, ")");
     assert_eq!(t.show(), "x()|");
 }
+
+#[test]
+fn carets_side_by_side_each_type_over_their_own_character() {
+    let mut t = over("|a|bc");
+    typed(&mut t, "X");
+    assert_eq!(t.show(), "X|X|c");
+    // Text from an input method: the first caret stops at the second,
+    // which types over as many characters as it was given.
+    let mut t = over("|a|bcdef");
+    t.apply(Action::InsertText("xy".into()));
+    assert_eq!(t.show(), "xy|xy|def");
+    // A caret just before a selection stops at it; the selection is
+    // replaced.
+    let mut t = over("ab");
+    t.set_sels(vec![(0, 0), (1, 2)]);
+    typed(&mut t, "Z");
+    assert_eq!(t.show(), "Z|Z|");
+}
