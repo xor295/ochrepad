@@ -27,7 +27,7 @@ pub use changeset::{Bias, ChangeSet, Edit};
 pub use display::{DisplayMap, Padding, RowPos};
 pub use editor::{Clock, Editor, ManualClock, Settings, SystemClock};
 pub use fold::{FoldSet, FoldStrategy};
-pub use history::{EditKind, Transaction};
+pub use history::{EditKind, SavedHistory, Transaction, sha256_hex};
 pub use macros::{MacroError, NamedMacro, Repeat};
 pub use position::{ByteOffset, CharIdx, LineCol, VisualCol};
 pub use search::{SearchError, SearchOptions, SearchQuery, Searcher};

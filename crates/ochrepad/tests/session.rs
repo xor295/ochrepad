@@ -348,3 +348,114 @@ fn a_crash_backup_brings_unsaved_work_back() {
     );
     assert!(h.state().buffer().is_dirty());
 }
+
+fn undo(h: &mut Harness<'_, OchrepadApp>) {
+    key(h, Modifiers::COMMAND, Key::Z);
+}
+
+fn histories(d: &Dirs) -> usize {
+    std::fs::read_dir(d.data.join("history")).map_or(0, |r| r.count())
+}
+
+#[test]
+fn undo_reaches_back_past_closing_and_reopening_a_file() {
+    let d = dirs();
+    let file = d.files.join("notes.txt");
+    write(&file, "first\n");
+    let mut h = app(&d);
+    h.state_mut().open_path(&file);
+    h.run();
+    key(&mut h, Modifiers::COMMAND, Key::End);
+    typ(&mut h, "second");
+    key(&mut h, Modifiers::COMMAND, Key::S);
+    h.state_mut().flush_disk();
+    h.run();
+    key(&mut h, Modifiers::COMMAND, Key::W);
+    h.state_mut().flush_disk();
+    assert_eq!(histories(&d), 1);
+
+    h.state_mut().open_path(&file);
+    h.run();
+    assert_eq!(text(&h), "first\nsecond");
+    assert!(!h.state().buffer().is_dirty());
+    undo(&mut h);
+    assert_eq!(text(&h), "first\n");
+    assert!(h.state().buffer().is_dirty());
+    key(&mut h, Modifiers::COMMAND, Key::Y);
+    assert!(
+        !h.state().buffer().is_dirty(),
+        "redo back to the saved text"
+    );
+}
+
+#[test]
+fn a_file_changed_since_gets_no_history() {
+    let d = dirs();
+    let file = d.files.join("notes.txt");
+    write(&file, "first\n");
+    let mut h = app(&d);
+    h.state_mut().open_path(&file);
+    h.run();
+    typ(&mut h, "x");
+    key(&mut h, Modifiers::COMMAND, Key::S);
+    h.state_mut().flush_disk();
+    key(&mut h, Modifiers::COMMAND, Key::W);
+    h.state_mut().flush_disk();
+    // Another program changes it while it is closed.
+    write(&file, "xfirst\nchanged\n");
+    h.state_mut().open_path(&file);
+    h.run();
+    undo(&mut h);
+    assert_eq!(text(&h), "xfirst\nchanged\n");
+}
+
+#[test]
+fn unsaved_work_comes_back_with_its_undo_history() {
+    let d = dirs();
+    {
+        let mut h = app(&d);
+        typ(&mut h, "one");
+        key(&mut h, Modifiers::NONE, Key::Enter);
+        typ(&mut h, "two");
+        h.state_mut().request_exit();
+        h.run();
+    }
+    let mut h = app(&d);
+    assert_eq!(text(&h), "one\ntwo");
+    assert!(h.state().buffer().is_dirty());
+    undo(&mut h);
+    assert_eq!(text(&h), "one\n");
+    undo(&mut h);
+    undo(&mut h);
+    assert_eq!(text(&h), "");
+}
+
+#[test]
+fn undo_history_can_be_turned_off_or_cleared() {
+    let d = dirs();
+    let file = d.files.join("notes.txt");
+    write(&file, "first\n");
+    let mut h = app(&d);
+    h.state_mut().open_path(&file);
+    h.run();
+    typ(&mut h, "x");
+    key(&mut h, Modifiers::COMMAND, Key::S);
+    h.state_mut().flush_disk();
+    h.run();
+    assert_eq!(histories(&d), 1);
+    // Cleared: gone here and on disk.
+    h.state_mut().clear_undo_history();
+    h.state_mut().flush_disk();
+    h.run();
+    assert_eq!(histories(&d), 0);
+    undo(&mut h);
+    assert_eq!(text(&h), "xfirst\n");
+    // Off: nothing is written.
+    h.state_mut().settings.undo_history = false;
+    h.run();
+    typ(&mut h, "y");
+    key(&mut h, Modifiers::COMMAND, Key::S);
+    key(&mut h, Modifiers::COMMAND, Key::W);
+    h.state_mut().flush_disk();
+    assert_eq!(histories(&d), 0);
+}

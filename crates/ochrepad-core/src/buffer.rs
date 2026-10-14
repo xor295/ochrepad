@@ -180,6 +180,46 @@ impl Buffer {
         self.history.break_coalescing();
     }
 
+    /// The history to keep between sessions: the newest steps within about
+    /// `max_bytes`, ending at the current text.
+    pub fn saved_history(&self, max_bytes: usize) -> crate::history::SavedHistory {
+        let (undo, redo) = self.history.newest(max_bytes);
+        crate::history::SavedHistory {
+            undo,
+            redo,
+            revision: self.revision,
+            next_revision: self.next_revision,
+        }
+    }
+
+    /// Takes a history kept from an earlier session for this same text
+    /// (the caller compares the text's hash first). It is checked step by
+    /// step against the text ([`SavedHistory::check`]) and refused if
+    /// anything does not fit. `on_disk`: the text is the file's (so undoing
+    /// and redoing back to it leaves the buffer clean); otherwise the buffer
+    /// stays unsaved.
+    pub fn restore_history(
+        &mut self,
+        saved: crate::history::SavedHistory,
+        on_disk: bool,
+    ) -> Result<(), String> {
+        saved.check(&self.doc)?;
+        self.history.replace(saved.undo, saved.redo);
+        self.revision = saved.revision;
+        self.next_revision = self.next_revision.max(saved.next_revision);
+        if on_disk {
+            self.saved_revision = saved.revision;
+        } else {
+            self.mark_modified();
+        }
+        Ok(())
+    }
+
+    /// Forgets the undo and redo history.
+    pub fn clear_history(&mut self) {
+        self.history.clear();
+    }
+
     /// Marks the buffer as differing from disk, e.g. when its text was
     /// restored from a backup snapshot.
     pub fn mark_modified(&mut self) {

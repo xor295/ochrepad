@@ -37,6 +37,11 @@ people downloading the release.
   spaces), Show All Characters (Ctrl+Shift+8), indent guides and the wrap
   symbol. Hovering a special character's box names it.
 - A vertical edge line after a chosen column (Preferences).
+- Undo survives closing a file and restarting ochrepad: each file's undo
+  history (up to about 2 MB of the newest changes) is kept and comes back
+  when the file is opened again unchanged, and with unsaved work restored
+  from a backup. Edit > Clear Undo History forgets it; a preference turns it
+  off.
 - Edit > Text Tools: Format, Minify and Validate JSON (object key order,
   numbers and strings are kept exactly; invalid JSON is reported with its
   line and column, and the caret moves there), Base64 and URL

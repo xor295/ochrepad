@@ -60,6 +60,27 @@ cover those.
 Saving works the same way as **Save**: the file keeps its encoding and line
 endings, and is replaced in one step (see [File handling](file-handling.md)).
 
+## Undo after closing
+
+Each file's undo history is kept when you close it or ochrepad, so **Undo**
+still works after you open it again: back through the edits you made in
+earlier sessions, and **Redo** forward again. Unsaved work restored from a
+backup comes back with its history too.
+
+- A history is used only if the file is exactly as it was when the history
+  was kept. If another program changed it in between, the file opens with
+  no history (nothing is undone into text that is not there).
+- Up to about 2 MB of the newest changes are kept per file, and the histories
+  of the 300 most recently edited files. A single change bigger than that
+  (replacing a whole large file, say) ends the kept history there.
+- Undoing back to the text on disk makes the tab clean again, as usual.
+- **Edit > Clear Undo History** forgets the current document's history,
+  also the copy on disk. **Settings > Preferences > Undo history** turns
+  keeping it off.
+- The histories are in the data folder, under `history`
+  (`%APPDATA%\ochrepad\data\history` on Windows,
+  `~/.local/share/ochrepad/history` on Linux).
+
 ## If ochrepad crashes
 
 If ochrepad hits a bug and has to close, it first backs up every unsaved tab

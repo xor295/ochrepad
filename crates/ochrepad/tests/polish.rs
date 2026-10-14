@@ -303,7 +303,7 @@ fn hovering_another_menu_title_switches_menus() {
     h.get_by_label_contains("Open…");
     h.get_by_label("Edit").hover();
     h.run();
-    h.get_by_label_contains("Undo");
+    h.get_by_label_contains("Undo Ctrl+Z");
     assert!(
         h.query_by_label_contains("Open…").is_none(),
         "the File menu closed"

@@ -93,7 +93,11 @@ pub(super) struct Persist {
     pub settings: AutosaveSettings,
     backup_dir: Option<PathBuf>,
     session_file: Option<PathBuf>,
-    snapshot_ids: HashMap<BufferId, String>,
+    pub(super) snapshot_ids: HashMap<BufferId, String>,
+    /// Where undo histories are kept (`history_store.rs`).
+    pub(super) history_dir: Option<PathBuf>,
+    /// The revision and file of each document's last history write.
+    pub(super) history_written: HashMap<BufferId, (u64, PathBuf)>,
     /// Revision of the last snapshot written for each buffer.
     snapshotted: HashMap<BufferId, u64>,
     pub saving: HashSet<BufferId>,
@@ -115,7 +119,9 @@ impl OchrepadApp {
         self.persist.settings.snapshots = self.settings.backups;
         self.persist.session_file = Some(config_dir.join("session.json"));
         self.persist.backup_dir = Some(data_dir.join("backup"));
+        self.persist.history_dir = Some(data_dir.join("history"));
         self.restore_session();
+        self.prune_histories();
     }
 
     pub(super) fn snapshots_active(&self) -> bool {
@@ -216,6 +222,7 @@ impl OchrepadApp {
         }
         if clean {
             self.delete_snapshot(buffer);
+            self.write_history(buffer);
         }
         self.record_disk_stamp(buffer);
         if self.is_keymap_file(&path) {
@@ -229,20 +236,22 @@ impl OchrepadApp {
         self.persist.pending.insert(tag, PendingJob::Other);
     }
 
-    /// Removes `buffer`'s backup snapshot, if it has one.
+    /// Removes `buffer`'s backup snapshot, if it has one, and the undo
+    /// history kept with it.
     pub(super) fn delete_snapshot(&mut self, buffer: BufferId) {
         if self.persist.snapshotted.remove(&buffer).is_none() {
             return;
         }
         let (Some(dir), Some(id)) = (
-            &self.persist.backup_dir,
-            self.persist.snapshot_ids.get(&buffer),
+            self.persist.backup_dir.clone(),
+            self.persist.snapshot_ids.get(&buffer).cloned(),
         ) else {
             return;
         };
-        let (txt, json) = snapshot_paths(dir, id);
+        let (txt, json) = snapshot_paths(&dir, &id);
         let tag = self.persist.worker.submit(Job::Delete(vec![txt, json]));
         self.persist.pending.insert(tag, PendingJob::Other);
+        self.delete_backup_history(&id);
     }
 
     fn snapshot_id(&mut self, buffer: BufferId) -> String {
@@ -294,6 +303,7 @@ impl OchrepadApp {
             let tag = self.persist.worker.submit(job);
             self.persist.pending.insert(tag, PendingJob::Other);
             self.persist.snapshotted.insert(id, revision);
+            self.write_history(id);
         }
     }
 
@@ -416,6 +426,7 @@ impl OchrepadApp {
             return false;
         }
         self.snapshot_dirty();
+        self.write_all_histories();
         self.write_session();
         self.flush_disk();
         true
@@ -425,6 +436,7 @@ impl OchrepadApp {
     /// for the disk, and close without asking.
     pub(super) fn exit_with_snapshots(&mut self) {
         self.snapshot_dirty();
+        self.write_all_histories();
         self.write_session();
         self.flush_disk();
         self.close_confirmed = true;
@@ -462,6 +474,8 @@ impl OchrepadApp {
             let buffer = if let Some((id, (text, info))) = from_snapshot {
                 let b = self.editor.add_buffer(&text, info.meta);
                 self.detect_indent(b);
+                // The history first: it sets the revision the backup is at.
+                self.restore_backup_history(b, &id);
                 if let Some(buf) = self.editor.buffer_mut(b) {
                     buf.mark_modified();
                     let revision = buf.revision();
@@ -477,6 +491,7 @@ impl OchrepadApp {
                     Ok(d) => {
                         let b = self.editor.add_buffer(&d.text, d.meta);
                         self.detect_indent(b);
+                        self.restore_file_history(b, path);
                         Some(b)
                     }
                     Err(e) => {

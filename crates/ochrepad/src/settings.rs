@@ -48,6 +48,9 @@ pub struct AppSettings {
     pub autosave_secs: f64,
     /// Save files with a name automatically.
     pub write_through: bool,
+    /// Keep each document's undo history after it is closed (PLAN_v0.3.0
+    /// P5).
+    pub undo_history: bool,
     /// Files larger than this are not highlighted.
     pub highlight_limit_mb: usize,
     /// Fold chevrons in the gutter.
@@ -90,6 +93,7 @@ impl Default for AppSettings {
             backups: true,
             autosave_secs: 7.0,
             write_through: false,
+            undo_history: true,
             highlight_limit_mb: 10,
             fold_margin: true,
             word_wrap: false,
@@ -237,6 +241,17 @@ impl AppSettings {
 
                 ui.label("");
                 ui.checkbox(&mut self.write_through, "Also save files that have a name");
+                ui.end_row();
+
+                ui.label("Undo history");
+                ui.checkbox(
+                    &mut self.undo_history,
+                    "Keep it after closing a file or ochrepad",
+                )
+                .on_hover_text(
+                    "Up to 2 MB of the newest changes per file, restored when the file is \
+                     opened again unchanged",
+                );
                 ui.end_row();
 
                 ui.label("Highlight files up to");

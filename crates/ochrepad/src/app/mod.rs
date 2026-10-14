@@ -23,6 +23,7 @@ use crate::editor_view::{
 mod autosave;
 mod document;
 mod external;
+mod history_store;
 mod prefs;
 mod search;
 mod tools;
@@ -365,6 +366,7 @@ impl OchrepadApp {
         let buffer = self.editor.add_buffer(&decoded.text, decoded.meta);
         self.attach_highlighting(buffer);
         self.detect_indent(buffer);
+        self.restore_file_history(buffer, path);
         self.record_disk_stamp(buffer);
         self.settings.add_recent(canonical(path));
         self.add_tab(buffer);
@@ -539,6 +541,7 @@ impl OchrepadApp {
             self.ask_about(buffer);
             return;
         }
+        self.write_all_histories();
         self.write_session();
         self.flush_disk();
         self.close_confirmed = true;
@@ -589,6 +592,11 @@ impl OchrepadApp {
         if let Some(buffer) = buffer
             && self.editor.views_of(buffer).next().is_none()
         {
+            // Its undo history is kept if the text is what is on disk.
+            if self.editor.buffer(buffer).is_some_and(|b| !b.is_dirty()) {
+                self.write_history(buffer);
+            }
+            self.persist.history_written.remove(&buffer);
             // Closed without saving: its backup goes too, and its preview.
             self.delete_snapshot(buffer);
             if let Some(path) = self.dock.find_tab(&Tab::Preview(buffer)) {
@@ -1131,6 +1139,13 @@ impl OchrepadApp {
         }
         if item(ui, "Redo", "Ctrl+Y") {
             self.apply(Action::Redo);
+        }
+        if ui
+            .button("Clear Undo History")
+            .on_hover_text("Forget this document's undo and redo steps, also the ones kept on disk")
+            .clicked()
+        {
+            self.clear_undo_history();
         }
         ui.separator();
         if item(ui, "Cut", "Ctrl+X") && copy_selection(ui.ctx(), &self.editor, self.active) {

@@ -452,8 +452,56 @@ proptest! {
     }
 }
 
+/// Whether `b` can undo, and its text.
+fn undo_state(ed: &ochrepad_core::Editor, b: ochrepad_core::BufferId) -> (bool, bool, String) {
+    let buffer = ed.buffer(b).unwrap();
+    (
+        buffer.history().can_undo(),
+        buffer.history().can_redo(),
+        buffer.doc().to_string(),
+    )
+}
+
 proptest! {
     #![proptest_config(ProptestConfig { cases: 2000, ..ProptestConfig::default() })]
+
+    /// A history saved as JSON and restored onto the same text in another
+    /// editor (a later session) undoes and redoes through the same texts as
+    /// the original.
+    #[test]
+    fn a_saved_history_replays_like_the_original(
+        initial in text(),
+        actions in prop::collection::vec(action(), 0..30),
+    ) {
+        let mut ed = ochrepad_core::Editor::new();
+        let b = ed.add_buffer(&initial, Default::default());
+        let v = ed.add_view(b).unwrap();
+        for a in actions {
+            let _ = ed.apply(v, a);
+        }
+        let saved = ed.buffer(b).unwrap().saved_history(usize::MAX);
+        let json = serde_json::to_string(&saved).unwrap();
+        let mut later = ochrepad_core::Editor::new();
+        let lb = later.add_buffer(&ed.buffer(b).unwrap().doc().to_string(), Default::default());
+        let lv = later.add_view(lb).unwrap();
+        let read: ochrepad_core::SavedHistory = serde_json::from_str(&json).unwrap();
+        prop_assert!(later.buffer_mut(lb).unwrap().restore_history(read, true).is_ok());
+        for action in [Action::Undo, Action::Redo] {
+            loop {
+                let (a, b2) = (undo_state(&ed, b), undo_state(&later, lb));
+                prop_assert_eq!(&a, &b2);
+                let more = if action == Action::Undo { a.0 } else { a.1 };
+                if !more {
+                    break;
+                }
+                ed.apply(v, action.clone()).unwrap();
+                later.apply(lv, action.clone()).unwrap();
+            }
+            if action == Action::Undo {
+                prop_assert_eq!(undo_state(&later, lb).2, initial.clone());
+            }
+        }
+    }
 
     /// Formatting and minifying change only the blank space between tokens:
     /// each undoes the other, and the value read back is the same.

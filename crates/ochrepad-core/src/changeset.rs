@@ -1,9 +1,11 @@
 //! `ChangeSet`: concrete, non-overlapping edits against one document state.
 
+use serde::{Deserialize, Serialize};
+
 use crate::position::ByteOffset;
 use crate::text::Document;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Edit {
     pub start: ByteOffset,
     pub end: ByteOffset,
@@ -33,7 +35,7 @@ pub enum Bias {
 
 /// Sorted, non-overlapping, non-touching edits against a document of `base_len`
 /// bytes.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChangeSet {
     base_len: ByteOffset,
     edits: Vec<Edit>,
@@ -69,6 +71,19 @@ impl ChangeSet {
 
     pub fn edits(&self) -> &[Edit] {
         &self.edits
+    }
+
+    /// Whether this applies to `doc`: its length matches, and the edits are
+    /// in order, inside the text and on character boundaries. A change set
+    /// read back from disk is checked with this before it is used.
+    pub fn fits(&self, doc: &Document) -> bool {
+        let char_boundary = |p: ByteOffset| p <= doc.len() && doc.is_char_boundary(p);
+        self.base_len == doc.len()
+            && self
+                .edits
+                .iter()
+                .all(|e| e.start <= e.end && char_boundary(e.start) && char_boundary(e.end))
+            && self.edits.windows(2).all(|w| w[0].end <= w[1].start)
     }
 
     pub fn is_empty(&self) -> bool {
