@@ -85,72 +85,32 @@ fn line_comments_toggle_at_the_common_indent() {
 #[test]
 fn comment_and_uncomment_add_and_remove_one_level() {
     // Comment adds a level even to lines that have one.
-    let mut t = rust(
-        "  // a
-  b|",
-    );
+    let mut t = rust("  // a\n  b|");
     t.set_sels(vec![(0, 10)]);
     t.apply(Action::CommentLines);
-    assert_eq!(
-        t.text(),
-        "  // // a
-  // b"
-    );
+    assert_eq!(t.text(), "  // // a\n  // b");
     // Uncomment takes one level off the lines that have one.
     t.apply(Action::UncommentLines);
-    assert_eq!(
-        t.text(),
-        "  // a
-  b"
-    );
+    assert_eq!(t.text(), "  // a\n  b");
     t.apply(Action::UncommentLines);
-    assert_eq!(
-        t.text(),
-        "  a
-  b"
-    );
+    assert_eq!(t.text(), "  a\n  b");
     // Nothing left to take off: nothing changes, not even the revision.
     let revision = t.buffer().revision();
     t.apply(Action::UncommentLines);
-    assert_eq!(
-        t.text(),
-        "  a
-  b"
-    );
+    assert_eq!(t.text(), "  a\n  b");
     assert_eq!(t.buffer().revision(), revision);
 
     // Only blocks: the lines are wrapped once, and unwrapped.
-    let mut t = with_comments(
-        "<a>
-<b>|",
-        None,
-        Some(("<!--", "-->")),
-    );
+    let mut t = with_comments("<a>\n<b>|", None, Some(("<!--", "-->")));
     t.set_sels(vec![(0, 7)]);
     t.apply(Action::CommentLines);
-    assert_eq!(
-        t.text(),
-        "<!-- <a>
-<b> -->"
-    );
+    assert_eq!(t.text(), "<!-- <a>\n<b> -->");
     t.apply(Action::CommentLines);
-    assert_eq!(
-        t.text(),
-        "<!-- <a>
-<b> -->"
-    );
+    assert_eq!(t.text(), "<!-- <a>\n<b> -->");
     t.apply(Action::UncommentLines);
-    assert_eq!(
-        t.text(),
-        "<a>
-<b>"
-    );
+    assert_eq!(t.text(), "<a>\n<b>");
     t.apply(Action::UncommentLines);
-    assert_eq!(
-        t.text(),
-        "<a>
-<b>"
-    );
+    assert_eq!(t.text(), "<a>\n<b>");
 }
 
 #[test]

@@ -202,3 +202,91 @@ fn files_that_would_change_beyond_the_matches_are_left_alone() {
     perms.set_readonly(false);
     std::fs::set_permissions(&locked, perms).unwrap();
 }
+
+fn find_in(h: &mut Harness<'_, OchrepadApp>, root: &std::path::Path) {
+    let app = h.state_mut();
+    app.find.open = true;
+    app.find.show_replace = true;
+    app.find.show_files = true;
+    app.find.pattern = "foo".into();
+    app.find.replacement = "baz".into();
+    app.find.folder = root.display().to_string();
+}
+
+/// A document opened by another spelling of its name is still the open
+/// document: replaced in the editor, not on disk behind its back.
+#[cfg(windows)]
+#[test]
+fn an_open_document_named_in_another_case_is_replaced_in_the_editor() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(root.join("Notes.txt"), "foo").unwrap();
+    let mut h = harness();
+    h.state_mut().open_path(&root.join("notes.txt"));
+    h.run();
+    let view = h.state().active_view();
+    h.state_mut()
+        .editor
+        .apply(view, ochrepad_core::Action::InsertText("x ".into()))
+        .unwrap();
+    find_in(&mut h, root);
+    settle(&mut h);
+    h.get_by_label("Replace in Files").click();
+    wait_for(&mut h, |h| {
+        h.query_by_label_contains("Replace 1 matches in 1 files")
+            .is_some()
+    });
+    h.get_by_label_contains("1 open documents get an undo step");
+    h.get_by_label("Replace All Matches").click();
+    h.run();
+    wait_for(&mut h, |h| !h.state().replacing_in_files());
+    h.state_mut().flush_disk();
+    h.run();
+    assert_eq!(
+        std::fs::read_to_string(root.join("Notes.txt")).unwrap(),
+        "foo"
+    );
+    assert_eq!(h.state().buffer().doc().to_string(), "x baz");
+}
+
+#[test]
+fn stop_writes_no_file_that_was_not_already_saving() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let name = |i: usize| root.join(format!("f{i:02}.txt"));
+    for i in 0..30 {
+        std::fs::write(name(i), "foo").unwrap();
+    }
+    let mut h = harness();
+    find_in(&mut h, root);
+    settle(&mut h);
+    h.get_by_label("Replace in Files").click();
+    wait_for(&mut h, |h| {
+        h.query_by_label_contains("Replace 30 matches in 30 files")
+            .is_some()
+    });
+    h.get_by_label("Replace All Matches").click();
+    // Writing starts; then at most four files go to the worker, and Stop
+    // shows.
+    h.step();
+    h.step();
+    // Long enough for the rewriting thread to queue up more.
+    std::thread::sleep(Duration::from_millis(300));
+    // By its accessibility node: the modal's first frame is a sizing pass,
+    // where a pointer click would miss.
+    h.get_by_label("Stop").click_accesskit();
+    h.step();
+    wait_for(&mut h, |h| !h.state().replacing_in_files());
+    h.state_mut().flush_disk();
+    h.run();
+    let written = (0..30)
+        .filter(|&i| std::fs::read_to_string(name(i)).unwrap() == "baz")
+        .count();
+    assert!(written <= 4, "{written} files rewritten after Stop");
+    // In the find panel and the status bar.
+    assert!(
+        h.get_all_by_label_contains("stopped before the rest")
+            .count()
+            >= 1
+    );
+}

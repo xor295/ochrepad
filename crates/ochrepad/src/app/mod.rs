@@ -1073,7 +1073,14 @@ impl OchrepadApp {
                         }
                         crate::editor_menu::MenuCommand::OpenFile(path, place) => {
                             self.open_path(&path);
-                            if let Some((line, column)) = place {
+                            // Only in the file itself: a large one opens in
+                            // the viewer, and one that can't be read leaves
+                            // the document clicked in active.
+                            let wanted = Some(canonical(&path));
+                            let opened = self.buffer().meta.path.as_deref().map(canonical);
+                            if let Some((line, column)) = place
+                                && opened == wanted
+                            {
                                 self.apply(Action::GoToLine { line, column });
                             }
                         }

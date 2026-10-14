@@ -164,9 +164,10 @@ When the selection, or the text around the caret, names a file that exists
 (as it is, or next to the document, or in the open folder), the menu starts
 with **Open** that file. A line and column after it, as compilers and logs
 write them (`src/main.rs:12:5`), go to that place. Only files on this
-computer are looked for: a network path (`\\server\share\...`) is not
-touched, since only looking at one sends your Windows credentials to that
-server.
+computer are looked for: a network path (`\\server\share\...`), or a link
+to one, is not touched, since only looking at one sends your Windows
+credentials to that server. So documents on a network share don't get
+the item.
 
 When the caret is in a web link (`http://` or `https://`), or the
 selection is one, the menu offers **Open Link**, which opens it in your

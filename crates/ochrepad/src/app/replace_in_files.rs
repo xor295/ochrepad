@@ -161,15 +161,16 @@ fn count(
     tx: &std::sync::mpsc::Sender<CountMsg>,
 ) -> Result<Option<Counted>, String> {
     let walk = ochrepad_fileio::tree::walk_files(dir, options)?;
-    // Open documents by canonical path; a walked file is canonicalized
-    // only if it has an open document's name.
-    let names: HashSet<OsString> = open
-        .iter()
-        .filter_map(|o| o.0.file_name().map(OsString::from))
-        .collect();
+    // Open documents by canonical path: the name on disk, whatever letter
+    // case, short name or link they were opened by. A walked file is
+    // canonicalized only if it has an open document's name on disk.
     let open: Vec<(PathBuf, BufferId, Option<Document>)> = open
         .into_iter()
         .map(|(p, id, doc)| (super::canonical(&p), id, doc))
+        .collect();
+    let names: HashSet<OsString> = open
+        .iter()
+        .filter_map(|o| o.0.file_name().map(OsString::from))
         .collect();
     let (mut files, mut in_open, mut skipped) = (Vec::new(), Vec::new(), Vec::new());
     for (seen, path) in walk.enumerate() {
@@ -567,9 +568,13 @@ impl OchrepadApp {
     }
 
     fn write_replace_in_files(&mut self, ui: &mut Ui, mut w: Writing) {
-        // New bytes go to the worker a few at a time.
-        while w.saving < MAX_IN_FLIGHT && !w.reading_done {
+        // New bytes go to the worker a few at a time. After Stop, files not
+        // with the worker yet are dropped (the thread finishes once it
+        // sees the stop, so its channel is drained to the end).
+        let stopped = w.stop.load(Ordering::Relaxed);
+        while (stopped || w.saving < MAX_IN_FLIGHT) && !w.reading_done {
             match w.rx.try_recv() {
+                Ok(WriteMsg::Ready { .. }) if stopped => {}
                 Ok(WriteMsg::Ready {
                     path,
                     bytes,

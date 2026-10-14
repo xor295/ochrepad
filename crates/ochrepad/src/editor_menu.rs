@@ -29,6 +29,19 @@ pub enum MenuCommand {
     OpenFile(PathBuf, Option<(usize, usize)>),
 }
 
+/// The bytes of `text` around byte `at`, up to the characters `stop`
+/// matches on either side (which can be wider than a byte, as a no-break
+/// space is).
+fn run_around(text: &str, at: usize, stop: impl Fn(char) -> bool) -> (usize, usize) {
+    let from = text[..at]
+        .char_indices()
+        .rev()
+        .find(|&(_, c)| stop(c))
+        .map_or(0, |(i, c)| i + c.len_utf8());
+    let to = text[at..].find(&stop).map_or(text.len(), |i| at + i);
+    (from, to)
+}
+
 /// The web link (`http://` or `https://`) the selection is, or the caret
 /// is in. Other kinds of link (`file:`, `javascript:` and the like) are
 /// not offered.
@@ -50,9 +63,7 @@ pub fn url_at(doc: &Document, sels: &SelectionSet) -> Option<String> {
     let text = doc.line_text(line);
     let at = sel.head.0 - doc.line_start(line).0;
     // A link runs between blanks and quotes; brackets can be part of it.
-    let stop = |c: char| c.is_whitespace() || "\"'<>`".contains(c);
-    let from = text[..at].rfind(stop).map_or(0, |i| i + 1);
-    let to = text[at..].find(stop).map_or(text.len(), |i| at + i);
+    let (from, to) = run_around(&text, at, |c| c.is_whitespace() || "\"'<>`".contains(c));
     let run = &text[from..to];
     // The last link start at or before the caret ("url=https://...").
     let caret = at - from;
@@ -100,8 +111,7 @@ pub fn file_at(doc: &Document, sels: &SelectionSet, dirs: &[&Path]) -> Option<Fi
         let text = doc.line_text(line);
         let at = sel.head.0 - start.0;
         let stop = |c: char| c.is_whitespace() || "\"'<>()[]{},;|`".contains(c);
-        let from = text[..at].rfind(stop).map_or(0, |i| i + 1);
-        let to = text[at..].find(stop).map_or(text.len(), |i| at + i);
+        let (from, to) = run_around(&text, at, stop);
         text[from..to].to_owned()
     } else {
         doc.slice(sel.range())
@@ -139,13 +149,14 @@ pub fn file_at(doc: &Document, sels: &SelectionSet, dirs: &[&Path]) -> Option<Fi
         }
     }
     let candidate = Path::new(path);
+    // Never a network path, written as one or reached through a link: only
+    // looking at `\\host\share\...` sends Windows' credentials to that host
+    // (and can hold the frame up while it does not answer).
+    let local = |p: &Path| crate::safe_images::is_local_path(p) && p.is_file();
     let found = if candidate.is_absolute() {
-        // Never a network path: only looking at `\\host\share\...` sends
-        // Windows' credentials to that host.
-        (crate::safe_images::is_local_path(candidate) && candidate.is_file())
-            .then(|| candidate.to_path_buf())
+        local(candidate).then(|| candidate.to_path_buf())
     } else {
-        dirs.iter().map(|d| d.join(candidate)).find(|p| p.is_file())
+        dirs.iter().map(|d| d.join(candidate)).find(|p| local(p))
     }?;
     Some((found, place))
 }
@@ -325,6 +336,24 @@ mod tests {
         let doc = Document::new("x src/main.rs y");
         let sel = SelectionSet::single(Selection::new(ByteOffset(2), ByteOffset(13)));
         assert_eq!(file_at(&doc, &sel, &dirs), Some((main, None)));
+    }
+
+    /// Spaces wider than a byte (no-break, ideographic) end a run too.
+    #[test]
+    fn a_wide_space_before_the_caret_is_one_character() {
+        assert_eq!(at("a\u{a0}b", 3, &[]), None);
+        assert_eq!(at("see\u{3000}main.rs", 8, &[]), None);
+        let url = |text: &str, caret: usize| {
+            url_at(
+                &Document::new(text),
+                &SelectionSet::caret(ByteOffset(caret)),
+            )
+        };
+        assert_eq!(
+            url("voir\u{a0}https://a.b/c\u{a0}!", 9),
+            Some("https://a.b/c".to_owned())
+        );
+        assert_eq!(url("\u{3000}x", 3), None);
     }
 
     #[test]

@@ -352,3 +352,44 @@ fn begin_end_select_selects_from_where_it_began() {
         .collect();
     assert_eq!(parts, ["el", "bc"]);
 }
+
+/// A file that opens in the viewer (or not at all) takes no line: the
+/// document clicked in keeps its caret.
+#[test]
+fn open_file_in_the_viewer_leaves_the_clicked_document_alone() {
+    let dir = tempfile::tempdir().unwrap();
+    let big: String = (0..40_000).map(|i| format!("line {i:>40}\n")).collect();
+    std::fs::write(dir.path().join("big.log"), &big).unwrap();
+    let log = dir.path().join("build.log");
+    std::fs::write(&log, "error at big.log:3:2 here\na\nb\nc\nd\n").unwrap();
+    let mut h = harness();
+    h.state_mut().settings.viewer_threshold_mb = 1;
+    h.state_mut().open_path(&log);
+    h.run();
+    let view = h.state().active_view();
+    let rect = h.get_by_label("Editor: build.log").rect();
+    let font = egui::FontId::monospace(14.0);
+    let (cell_w, line_h) = h
+        .ctx
+        .fonts_mut(|f| (f.glyph_width(&font, 'M'), f.row_height(&font)));
+    let pos = egui::Pos2::new(
+        rect.min.x + 5.0 * cell_w + 8.0 + 11.5 * cell_w,
+        rect.min.y + 0.5 * line_h,
+    );
+    h.event(Event::PointerMoved(pos));
+    for pressed in [true, false] {
+        h.event(Event::PointerButton {
+            pos,
+            button: PointerButton::Secondary,
+            pressed,
+            modifiers: Modifiers::NONE,
+        });
+        h.step();
+    }
+    h.run();
+    click(&mut h, "Open big.log at Line 3");
+    let app = h.state();
+    let v = app.editor.view(view).unwrap();
+    let doc = app.editor.buffer(v.buffer()).unwrap().doc();
+    assert_eq!(doc.line_of(v.selections.primary().head), 0);
+}

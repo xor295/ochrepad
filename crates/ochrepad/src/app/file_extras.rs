@@ -151,10 +151,8 @@ impl OchrepadApp {
             }
             Some(true) => {
                 let name = d.name.trim();
-                let bad =
-                    name.is_empty() || name.contains(['/', '\\']) || name == "." || name == "..";
-                if bad {
-                    d.error = Some("Give a file name, without a folder".to_owned());
+                if !crate::file_tree::is_plain_name(name) {
+                    d.error = Some("Give a file name, without a folder or a drive".to_owned());
                     return;
                 }
                 let to = d.from.with_file_name(name);

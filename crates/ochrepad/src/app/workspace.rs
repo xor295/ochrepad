@@ -128,6 +128,18 @@ impl OchrepadApp {
             }
             TreeAction::NewFile(_) | TreeAction::NewFolder(_) => {}
             TreeAction::Rename { from, to } => {
+                // Renamed in its folder, not moved out of it.
+                let plain = to
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(crate::file_tree::is_plain_name);
+                if !plain || to.parent() != from.parent() {
+                    self.message = Some(format!(
+                        "Could not rename {}: type a name without slashes or a drive.",
+                        from.display()
+                    ));
+                    return;
+                }
                 let tag = self.persist.worker.submit(Job::Rename {
                     from: from.clone(),
                     to: to.clone(),
@@ -193,8 +205,8 @@ impl OchrepadApp {
         match choice {
             Some(true) => {
                 let name = entry.name.trim().to_owned();
-                if name.is_empty() || name.contains(['/', '\\']) || name == "." || name == ".." {
-                    entry.error = Some("Type a name without slashes.".to_owned());
+                if !crate::file_tree::is_plain_name(&name) {
+                    entry.error = Some("Type a name without slashes or a drive.".to_owned());
                     return;
                 }
                 let path = entry.dir.join(&name);
