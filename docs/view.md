@@ -45,6 +45,42 @@ box also shows its abbreviation (`NUL`, `ESC`, `ZWSP`, `NBSP`, …).
 draws a thin line after that column (80 when first turned on), as a guide
 for line length.
 
+## Matching brackets and tags
+
+With the caret beside a bracket (`(`, `[` or `{`, or its closer), that
+bracket and its match are outlined in the accent colour, or in red when it
+has no match within 100 KB. **Ctrl+B** goes to the match and
+**Ctrl+Alt+B** selects up to it. Brackets are matched as plain text, so one
+in a string or a comment counts like any other.
+
+In HTML and XML, the names in the start and end tag of the element at the
+caret are outlined the same way, as Notepad++ highlights matching tags, so
+you can see where the element starts and ends:
+
+- With the caret in a tag, anywhere from its `<` to its `>`, that tag and
+  its partner. Right beside a tag, that tag if it has a partner (the one
+  after the caret first).
+- Anywhere else, the innermost element around the caret: in
+  `<p>Some <b>bold</b> text</p>`, a caret in "text" outlines both `p`s.
+- Tags pair by name, counting the nested tags of that name, so an `<li>` or
+  `<p>` left without its end tag, as HTML allows, does not stop the list or
+  `<div>` around it from pairing. A tag without a partner, a self-closing
+  tag (`<x/>`) and HTML's void elements (`<br>`, `<img>`, `<input>` and the
+  like) get no outline.
+- Comments, CDATA sections, `<!DOCTYPE …>`, `<?xml … ?>` and PHP's
+  `<?php … ?>`, and `<% … %>` blocks are skipped, and in HTML so is the
+  text of `<script>`, `<style>`, `<textarea>` and `<title>`. A `>` inside a
+  quoted attribute value does not end a tag.
+- HTML names match in any case (`<DIV>` … `</div>`); XML names must match
+  exactly.
+
+It follows the document's language (the status bar's language menu): HTML
+(also `.xhtml`), XML (also SVG, XSLT, XSD, RSS and XAML), PHP, JSP, ASP,
+Vue, Svelte, and the HTML templates of Rails, Twig, Jinja2, EEx, Erlang and
+Tcl. Nothing is outlined while text is selected or with more than one
+caret. ochrepad looks up to 100 KB either way of the caret, so in a larger
+file an element whose tags are further apart than that is not outlined.
+
 ## Document map
 
 The strip on the right of each editor shows the whole document zoomed out:

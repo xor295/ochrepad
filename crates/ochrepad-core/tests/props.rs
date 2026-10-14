@@ -3,6 +3,7 @@
 mod util;
 
 use ochrepad_core::position::{byte_to_visual_col, next_grapheme_boundary, visual_col_to_byte};
+use ochrepad_core::tags::matching_tags;
 use ochrepad_core::text_tools::{format_json, minify_json, validate_json};
 use ochrepad_core::{Action, ByteOffset, Codec, Document, Indent, Motion, SelectionSet};
 use proptest::prelude::*;
@@ -288,6 +289,42 @@ fn json_ish() -> impl Strategy<Value = String> {
         prop::sample::select(vec![
             "{", "}", "[", "]", ":", ",", "\"a\"", "\"", "\\", "1", "-", "0", ".", " ", "\n",
             "true", "nul", "x", "\t",
+        ]),
+        0..20,
+    )
+    .prop_map(|v| v.concat())
+}
+
+/// Strings of tags, near-tags and what holds no tags, mostly unbalanced.
+fn markup_ish() -> impl Strategy<Value = String> {
+    prop::collection::vec(
+        prop::sample::select(vec![
+            "<a>",
+            "</a>",
+            "<A>",
+            "<b x=\"1\">",
+            "</b>",
+            "<br>",
+            "<x/>",
+            "<!--",
+            "-->",
+            "<![CDATA[",
+            "]]>",
+            "<?",
+            "?>",
+            "<%",
+            "<script>",
+            "</script>",
+            "<漢>",
+            "</漢>",
+            "<",
+            "</",
+            ">",
+            "\"",
+            "=",
+            " ",
+            "\n",
+            "é",
         ]),
         0..20,
     )
@@ -609,6 +646,28 @@ proptest! {
         let ours = validate_json(&s).is_ok();
         let theirs = serde_json::from_str::<serde::de::IgnoredAny>(&s).is_ok();
         prop_assert_eq!(ours, theirs, "{:?}", s);
+    }
+
+    /// Matching tags never panics, and what it pairs are two names alike
+    /// (in any case for HTML), a start tag's before an end tag's, that pair
+    /// the same with the caret in either tag.
+    #[test]
+    fn matched_tags_have_names_alike(s in markup_ish(), html in any::<bool>()) {
+        let doc = Document::new(&s);
+        for pos in (0..=s.len()).filter(|&p| s.is_char_boundary(p)) {
+            let Some(pair) = matching_tags(&doc, ByteOffset(pos), html) else {
+                continue;
+            };
+            let (open, close) = (pair.open.start.0, pair.close.start.0);
+            prop_assert!(pair.open.end <= pair.close.start, "{:?} at {}", s, pos);
+            prop_assert!(s[..open].ends_with('<') && s[..close].ends_with("</"), "{:?} at {}", s, pos);
+            let a = &s[open..pair.open.end.0];
+            let b = &s[close..pair.close.end.0];
+            prop_assert!(if html { a.eq_ignore_ascii_case(b) } else { a == b }, "{:?} at {}", s, pos);
+            for from in [pair.open.start, pair.close.start] {
+                prop_assert_eq!(matching_tags(&doc, from, html), Some(pair.clone()), "{:?} at {}", s, pos);
+            }
+        }
     }
 
     /// The aligned rows list every line of each side exactly once, in

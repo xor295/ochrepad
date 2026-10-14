@@ -4,6 +4,7 @@ use egui::{
     Align2, CursorIcon, Event, EventFilter, FontId, Id, ImeEvent, Pos2, Rect, Response, Sense,
     Stroke, Ui, Vec2, WidgetInfo, WidgetType,
 };
+use ochrepad_core::tags::TagPair;
 use ochrepad_core::{
     Action, ByteOffset, DisplayMap, Document, Editor, Motion, RowPos, SearchOptions, SearchQuery,
     Searcher, Selection, SelectionSet, ViewId,
@@ -104,6 +105,8 @@ pub struct EditorViewState {
     request_focus: bool,
     /// The selected text and its searcher, for smart highlighting.
     smart: Option<(String, Option<Searcher>)>,
+    /// The tag names outlined for the caret, and what they were found for.
+    tags: Option<(TagsKey, Option<TagPair>)>,
     /// Show the fold margin (chevrons) in the gutter.
     pub fold_margin: bool,
     /// Wrap lines at the pane's width.
@@ -156,6 +159,7 @@ impl Default for EditorViewState {
             reveal_caret: true,
             request_focus: false,
             smart: None,
+            tags: None,
         }
     }
 }
@@ -179,6 +183,12 @@ impl EditorViewState {
 
     pub fn preedit(&self) -> Option<&str> {
         self.preedit.as_deref()
+    }
+
+    /// The tag names outlined for the caret: those in the start and end
+    /// tag of the element it is in.
+    pub fn matched_tags(&self) -> Option<&TagPair> {
+        self.tags.as_ref().and_then(|(_, pair)| pair.as_ref())
     }
 
     /// The next paste (asked for now, at `now`) replaces the text of each
@@ -1543,6 +1553,39 @@ fn smart_searcher<'s>(
     cache.as_ref().and_then(|(_, s)| s.as_ref())
 }
 
+/// What the tag names were found for: the buffer, its text's revision, the
+/// caret, and whether HTML's rules applied.
+type TagsKey = (
+    ochrepad_core::BufferId,
+    ochrepad_core::history::Revision,
+    ByteOffset,
+    bool,
+);
+
+/// The tag names to outline, as Notepad++ highlights matching tags: in a
+/// markup language, with one caret and nothing selected, the names in the
+/// start and end tag of the element at the caret. They are found again only
+/// when the text or the caret changes.
+fn matching_tag_names<'s>(
+    cache: &'s mut Option<(TagsKey, Option<TagPair>)>,
+    buffer: &ochrepad_core::Buffer,
+    sels: &SelectionSet,
+) -> Option<&'s TagPair> {
+    let caret = sels.primary();
+    let markup = buffer.language.as_deref().and_then(ochrepad_syntax::markup);
+    let Some(markup) = markup.filter(|_| sels.len() == 1 && caret.is_empty()) else {
+        *cache = None;
+        return None;
+    };
+    let html = markup == ochrepad_syntax::Markup::Html;
+    let key = (buffer.id(), buffer.revision(), caret.head, html);
+    if cache.as_ref().is_none_or(|(k, _)| *k != key) {
+        let pair = ochrepad_core::tags::matching_tags(buffer.doc(), caret.head, html);
+        *cache = Some((key, pair));
+    }
+    cache.as_ref().and_then(|(_, pair)| pair.as_ref())
+}
+
 pub fn editor_id(view: ViewId) -> Id {
     Id::new(("ochrepad-editor", view.0))
 }
@@ -1932,6 +1975,11 @@ fn paint(
         .is_empty()
         .then(|| ochrepad_core::brackets::bracket_at(doc, primary.head))
         .flatten();
+    // In markup, the names in the tags of the element at the caret.
+    let tags = editor
+        .buffer(buffer)
+        .and_then(|b| matching_tag_names(&mut state.tags, b, &v.selections))
+        .cloned();
     let tab_width = tab_width_of(editor, buffer);
     let strategy = editor
         .buffer(buffer)
@@ -2102,6 +2150,14 @@ fn paint(
         }
         paint_line_text(&row_painter, &layout, rx0, y, &f.font, f.line_h);
         paint_marks(&row_painter, &layout, rx0, y, f, symbols, &marks);
+        // Matching brackets and tag names are outlined.
+        let outline = |a: ByteOffset, b: ByteOffset, color: egui::Color32| {
+            let r = Rect::from_min_max(
+                Pos2::new(x_at(a), y + 1.0),
+                Pos2::new(x_at(b), y + f.line_h - 1.0),
+            );
+            text_painter.rect_stroke(r, 2.0, Stroke::new(1.0, color), egui::StrokeKind::Inside);
+        };
         if let Some(p) = bracket {
             let color = if p.matching.is_some() {
                 accent
@@ -2110,17 +2166,15 @@ fn paint(
             };
             for b in std::iter::once(p.at).chain(p.matching) {
                 if b >= row_start && b < row_end {
-                    let r = Rect::from_min_max(
-                        Pos2::new(x_at(b), y + 1.0),
-                        Pos2::new(x_at(ByteOffset(b.0 + 1)), y + f.line_h - 1.0),
-                    );
-                    text_painter.rect_stroke(
-                        r,
-                        2.0,
-                        Stroke::new(1.0, color),
-                        egui::StrokeKind::Inside,
-                    );
+                    outline(b, ByteOffset(b.0 + 1), color);
                 }
+            }
+        }
+        for name in tags.iter().flat_map(|t| [&t.open, &t.close]) {
+            // A name longer than the row wraps onto the next.
+            let (a, b) = (name.start.max(row_start), name.end.min(row_end));
+            if a < b {
+                outline(a, b, accent);
             }
         }
 

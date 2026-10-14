@@ -154,6 +154,10 @@ people downloading the release.
 - Matching brackets: the bracket beside the caret and its match are
   outlined (in red when there is no match). Ctrl+B jumps to the match and
   Ctrl+Alt+B selects up to it.
+- Matching tags, as in Notepad++: in HTML, XML and the languages built on
+  HTML (PHP, JSP, Vue and others), the names in the start and end tag of
+  the element at the caret are outlined, so you can see where it starts
+  and ends.
 - Optional closing of brackets and quotes as you type (Preferences, off by
   default as in Notepad++): typing `(`, `[`, `{`, `"` or `'` inserts the
   partner, typing it again steps over it, and Backspace deletes an empty

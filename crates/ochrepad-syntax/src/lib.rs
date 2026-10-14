@@ -8,9 +8,11 @@
 //! old one past every edit. The caller runs that pass in small time slices.
 
 pub mod comments;
+mod markup;
 mod symbols;
 
 pub use comments::comment_syntax;
+pub use markup::{Markup, markup};
 pub use symbols::{Symbol, SymbolKind};
 
 use std::collections::HashMap;
