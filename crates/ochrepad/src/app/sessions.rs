@@ -28,6 +28,11 @@ const SESSION_VERSION: u32 = 1;
 /// Session files larger than this are not read.
 const MAX_SESSION_FILE: u64 = 1024 * 1024;
 
+/// Load Session opens at most this many files: each is read as it opens,
+/// on the UI thread, and a session file from someone else could list
+/// thousands.
+const MAX_SESSION_FILES: usize = 200;
+
 /// A session file from someone else could hold any number of entries, of
 /// any length: Load Session's message lists at most this many problems,
 const MAX_LISTED: usize = 20;
@@ -326,7 +331,19 @@ impl OchrepadApp {
             }
         }
         let (mut opened, mut active) = (0, None);
-        for (i, entry) in session.files.into_iter().enumerate() {
+        let listed = session.files.len();
+        if listed > MAX_SESSION_FILES {
+            problems.push(format!(
+                "{} files not opened: a session opens at most {MAX_SESSION_FILES}",
+                listed - MAX_SESSION_FILES
+            ));
+        }
+        for (i, entry) in session
+            .files
+            .into_iter()
+            .enumerate()
+            .take(MAX_SESSION_FILES)
+        {
             let entry = match entry {
                 Ok(entry) => entry,
                 Err(e) => {

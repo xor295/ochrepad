@@ -139,7 +139,8 @@ A session file is JSON, so you can also write or change one by hand:
 - Everything but `version` and each file's `path` can be left out.
 
 A session file may come from someone else, so ochrepad reads one only if it
-is no larger than 1 MB, and skips (and lists) an entry it can't read. On
+is no larger than 1 MB, opens at most 200 of its files, and skips (and
+lists) an entry it can't read. On
 Windows it also opens only files on this computer's drives: a network path
 such as `\\server\share\notes.txt` is skipped as "not on this computer",
 because opening it would send your Windows credentials to that server.

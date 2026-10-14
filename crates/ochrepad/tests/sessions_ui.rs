@@ -209,6 +209,28 @@ fn files_that_cannot_be_opened_are_listed_and_the_rest_open() {
 }
 
 #[test]
+fn a_session_opens_at_most_two_hundred_files() {
+    let dir = tempfile::tempdir().unwrap();
+    for i in 0..205 {
+        file(dir.path(), &format!("f{i:03}.txt"), "x\n");
+    }
+    let entries: Vec<String> = (0..205)
+        .map(|i| format!(r#"{{"path": "f{i:03}.txt"}}"#))
+        .collect();
+    let session = file(
+        dir.path(),
+        "many.json",
+        &format!(r#"{{"version": 1, "files": [{}]}}"#, entries.join(",")),
+    );
+    let mut h = harness();
+    h.state_mut().load_session_from(&session);
+    h.run();
+    assert_eq!(h.state().tabs().len(), 200);
+    let msg = h.state().message().unwrap_or_default().to_owned();
+    assert!(msg.contains("5 files not opened"), "{msg}");
+}
+
+#[test]
 fn a_file_too_large_or_not_a_session_changes_nothing() {
     let dir = tempfile::tempdir().unwrap();
     let a = file(dir.path(), "a.txt", "a\n");
