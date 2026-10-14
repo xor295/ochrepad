@@ -67,10 +67,16 @@ A fast, native text editor in the spirit of Notepad++, written in Rust with
 - **Backups and session restore**: unsaved work is backed up every few seconds
   and comes back, with your tabs and layout, the next time you start. Optional
   automatic saving of named files ([more](docs/backups-and-session.md)).
-- **Text tools**: UPPER/lower/Title/Sentence/iNVERT/random case, sort lines (ascending,
-  descending, case-insensitive, numeric, by length, by a column selection)
-  or put them in a random order, duplicate,
-  move, join lines, trim trailing whitespace, and remove empty or duplicate
+- **Notepad++'s editing habits**: overtype (Insert), Begin/End Select,
+  Split Lines (Ctrl+I), comment and uncomment (Ctrl+Q, Ctrl+K,
+  Ctrl+Shift+K), closing brackets and smart indentation as you type
+  (optional), a right-click menu that opens the file or web link at the
+  caret, and Ctrl+Shift+PageUp/PageDown to move tabs
+  ([more](docs/editing.md)).
+- **Text tools**: UPPER/lower/Title/Sentence/iNVERT/random case, sort lines
+  (ascending, descending, case-insensitive, numeric, by length, by a column
+  selection) or put them in a random order, duplicate, move, join lines,
+  trim trailing whitespace, and remove empty or duplicate
   lines. JSON format, minify and validate (key order and numbers kept),
   Base64, URL and hex encoding, and MD5, SHA-1 and SHA-256 hashes
   ([more](docs/text-tools.md)). Notepad++'s line and blank operations
