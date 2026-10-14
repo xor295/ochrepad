@@ -431,6 +431,7 @@ impl Compare {
                         styler: styler.as_mut().map(|s| s as &mut dyn LineStyler),
                         find_highlight,
                         row_style: Some(&style),
+                        changes: None,
                     },
                 );
             });
@@ -491,11 +492,7 @@ impl Compare {
 /// Built from straight RGB (Color32 is premultiplied, so a weak tint cannot
 /// be made strong again).
 fn tint(kind: RowKind, alpha: u8) -> Color32 {
-    let (r, g, b) = match kind {
-        RowKind::Removed => (225, 70, 70),
-        RowKind::Added => (60, 185, 90),
-        _ => (80, 145, 235),
-    };
+    let (r, g, b) = crate::theme::diff_rgb(kind);
     Color32::from_rgba_unmultiplied(r, g, b, alpha)
 }
 

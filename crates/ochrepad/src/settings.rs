@@ -61,6 +61,8 @@ pub struct AppSettings {
     pub word_wrap: bool,
     /// The zoomed-out map beside the text.
     pub document_map: bool,
+    /// Mark the lines changed since the file was saved, in the gutter.
+    pub change_history: bool,
     /// Editor text size in percent of `font_size` (View > Zoom).
     pub zoom: u32,
     /// View > Show Symbol: spaces as dots and tabs as arrows.
@@ -110,6 +112,7 @@ impl Default for AppSettings {
             fold_margin: true,
             word_wrap: false,
             document_map: true,
+            change_history: true,
             zoom: 100,
             show_space_tab: false,
             show_eol: false,

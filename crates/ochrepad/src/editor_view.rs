@@ -294,6 +294,8 @@ pub struct Decorations<'a> {
     pub find_highlight: Option<&'a ochrepad_core::Searcher>,
     /// Row backgrounds and spans (the compare view).
     pub row_style: Option<&'a dyn RowStyle>,
+    /// The lines changed since the file was saved.
+    pub changes: Option<&'a crate::change_history::LineMarks>,
 }
 
 /// Shows the editor for `view` filling the available space. `label` names the
@@ -970,6 +972,7 @@ pub fn editor_view(
         decorations.styler,
         decorations.find_highlight,
         decorations.row_style,
+        decorations.changes,
     );
     match tip {
         Some(tip) => response.on_hover_text_at_pointer(tip),
@@ -1044,6 +1047,52 @@ fn paint_chevron(
         visuals.weak_text_color()
     };
     painter.line(points.to_vec(), Stroke::new(1.5, color));
+}
+
+/// The change history's bar for `line` on the row at `y`, at the gutter's
+/// right edge, and on its first row a wedge if lines were deleted above it.
+fn paint_change_marks(
+    painter: &egui::Painter,
+    f: &Frame,
+    marks: &crate::change_history::LineMarks,
+    line: usize,
+    first_row: bool,
+    y: f32,
+) {
+    use crate::change_history::Mark;
+    use ochrepad_core::diff::RowKind;
+    if let Some(mark) = marks.mark(line) {
+        let kind = match mark {
+            Mark::Added => RowKind::Added,
+            Mark::Changed => RowKind::Changed,
+        };
+        let (r, g, b) = crate::theme::diff_rgb(kind);
+        let bar = Rect::from_min_max(
+            Pos2::new(f.gutter.max.x - 4.0, y),
+            Pos2::new(f.gutter.max.x - 1.0, y + f.line_h),
+        );
+        painter.rect_filled(bar, 0.0, egui::Color32::from_rgb(r, g, b));
+    }
+    if first_row && marks.deleted_before(line) {
+        paint_deleted_wedge(painter, f, y);
+    }
+}
+
+/// A red wedge pointing at the text, on the boundary at `y` where lines
+/// were deleted.
+fn paint_deleted_wedge(painter: &egui::Painter, f: &Frame, y: f32) {
+    let (r, g, b) = crate::theme::diff_rgb(ochrepad_core::diff::RowKind::Removed);
+    let s = (f.line_h * 0.22).round().max(3.0);
+    let tip = Pos2::new(f.gutter.max.x - 1.0, y);
+    painter.add(egui::Shape::convex_polygon(
+        vec![
+            tip + Vec2::new(-s * 1.4, -s),
+            tip,
+            tip + Vec2::new(-s * 1.4, s),
+        ],
+        egui::Color32::from_rgb(r, g, b),
+        Stroke::NONE,
+    ));
 }
 
 /// The `⋯` marker after a folded line whose text ends at `x_end`.
@@ -1682,6 +1731,7 @@ fn paint(
     styler: Option<&mut dyn LineStyler>,
     find_highlight: Option<&ochrepad_core::Searcher>,
     row_style: Option<&dyn RowStyle>,
+    changes: Option<&crate::change_history::LineMarks>,
 ) {
     let Some(v) = editor.view(view) else { return };
     let doc = doc_of(editor, buffer);
@@ -1929,6 +1979,22 @@ fn paint(
         }
         if symbols.wrap && rows.wraps() && !rows.is_last_in_line(row) {
             paint_wrap_mark(&text_painter, x_at(row_end), y, f, marks.symbol);
+        }
+
+        // Change history: a bar beside every row of a changed line, and a
+        // wedge where lines were deleted.
+        if let Some(c) = changes {
+            paint_change_marks(
+                &gutter_painter,
+                f,
+                c,
+                line,
+                rows.text_sub(row) == Some(0),
+                y,
+            );
+            if line == last_line && rows.is_last_in_line(row) && c.deleted_before(line + 1) {
+                paint_deleted_wedge(&gutter_painter, f, y + f.line_h);
+            }
         }
 
         // The line number and fold chevron go on a line's first row. A

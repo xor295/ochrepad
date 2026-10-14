@@ -142,6 +142,8 @@ pub struct OchrepadApp {
     pub find: FindPanel,
     /// Each tab's filter (Search > Filter Lines).
     pub filter: crate::filter_bar::FilterBar,
+    /// The lines changed since each file was saved (the gutter's marks).
+    pub changes: crate::change_history::ChangeHistory,
     /// The log highlight rules from the settings, compiled.
     log_rules: crate::log_rules::LogRules,
     /// The Search Results panel.
@@ -216,6 +218,7 @@ impl OchrepadApp {
             highlighting: Highlighting::new(Arc::new(ochrepad_syntax::Registry::load())),
             find: FindPanel::default(),
             filter: Default::default(),
+            changes: Default::default(),
             log_rules: Default::default(),
             results: Default::default(),
             replace_all_plan: None,
@@ -911,6 +914,11 @@ impl OchrepadApp {
             ui.ctx().request_repaint();
         }
         self.visible.clear();
+        let limit = self.settings.highlight_limit_mb * 1024 * 1024;
+        if self.settings.change_history && self.changes.tick(&self.editor, self.now, limit) {
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(50));
+        }
 
         let mut commands = Vec::new();
         let mut tab_rects = Vec::new();
@@ -925,6 +933,7 @@ impl OchrepadApp {
                 fold_margin: self.settings.fold_margin,
                 word_wrap: self.settings.word_wrap,
                 document_map: self.settings.document_map,
+                changes: self.settings.change_history.then_some(&self.changes),
                 compares: &mut self.compares,
                 previews: &mut self.previews,
                 find_highlight,
@@ -1940,6 +1949,8 @@ impl OchrepadApp {
         ui.checkbox(&mut self.settings.fold_margin, "Show Fold Margin");
         ui.checkbox(&mut self.settings.word_wrap, "Word Wrap");
         ui.checkbox(&mut self.settings.document_map, "Document Map");
+        ui.checkbox(&mut self.settings.change_history, "Change History")
+            .on_hover_text("Mark the lines changed since the file was saved, in the gutter");
         let buffer = self.buffer_id();
         if let Some(id) = self.focused_viewer() {
             // A viewer reads what the file gains by itself; following keeps
@@ -2191,6 +2202,7 @@ struct Tabs<'a> {
     fold_margin: bool,
     word_wrap: bool,
     document_map: bool,
+    changes: Option<&'a crate::change_history::ChangeHistory>,
     compares: &'a mut Compares,
     previews: &'a mut Previews,
     find_highlight: Option<&'a ochrepad_core::Searcher>,
@@ -2356,6 +2368,7 @@ impl TabViewer for Tabs<'_> {
                 row_style: log_style
                     .as_ref()
                     .map(|s| s as &dyn crate::editor_view::RowStyle),
+                changes: self.changes.and_then(|c| c.marks(buffer)),
             },
         );
         response.context_menu(|ui| crate::editor_menu::show(ui, self.editor, view, state));

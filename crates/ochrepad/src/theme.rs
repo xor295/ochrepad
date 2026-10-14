@@ -186,6 +186,18 @@ pub fn smart_highlight_bg(visuals: &Visuals) -> Color32 {
     Color32::from_rgba_unmultiplied(OCHRE.r(), OCHRE.g(), OCHRE.b(), alpha)
 }
 
+/// The colour of a kind of change, as straight RGB (tints are built from
+/// it with an alpha): removed red, added green, and changed blue, so it
+/// never looks like the ochre selection. The compare view and the change
+/// history use it.
+pub fn diff_rgb(kind: ochrepad_core::diff::RowKind) -> (u8, u8, u8) {
+    match kind {
+        ochrepad_core::diff::RowKind::Removed => (225, 70, 70),
+        ochrepad_core::diff::RowKind::Added => (60, 185, 90),
+        _ => (80, 145, 235),
+    }
+}
+
 /// A bookmarked line's number sits on a tag in the accent colour
 /// (Search > Bookmark)...
 pub fn bookmark_bg(visuals: &Visuals) -> Color32 {

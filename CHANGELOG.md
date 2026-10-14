@@ -20,6 +20,9 @@ people downloading the release.
   are recorded in macros and are kept in the session.
 - A right-click menu in the editor: undo and redo, the clipboard, case,
   comments and the line's bookmark.
+- Change history: the gutter marks the lines changed (blue), added (green)
+  and deleted (red) since the file was saved. View > Change History turns
+  it off.
 - A read-only viewer for large files: files over 256 MB (a setting) open
   without being read into memory, so a log of several gigabytes shows its
   first screen at once. The line index builds in the background while you

@@ -98,6 +98,8 @@ pub(super) enum PendingJob {
         buffer: BufferId,
         revision: u64,
         path: PathBuf,
+        /// The text written (the change history compares with it).
+        doc: ochrepad_core::Document,
     },
     /// A file operation for the file tree.
     Tree(super::workspace::TreeJob),
@@ -163,6 +165,7 @@ impl OchrepadApp {
             meta: b.meta.clone(),
         };
         let revision = b.revision();
+        let doc = b.doc().clone();
         let tag = self.persist.worker.submit(job);
         self.persist.pending.insert(
             tag,
@@ -170,6 +173,7 @@ impl OchrepadApp {
                 buffer,
                 revision,
                 path,
+                doc,
             },
         );
         self.persist.saving.insert(buffer);
@@ -199,10 +203,14 @@ impl OchrepadApp {
                     buffer,
                     revision,
                     path,
+                    doc,
                 }) => {
                     self.persist.saving.remove(&buffer);
                     match d.result {
-                        Ok(()) => self.save_finished(buffer, revision, path),
+                        Ok(()) => {
+                            self.changes.saved(buffer, doc, revision);
+                            self.save_finished(buffer, revision, path);
+                        }
                         Err(e) => {
                             self.message = Some(format!("Could not save {}:\n{e}", path.display()));
                             // A close or exit waiting on this save stops.

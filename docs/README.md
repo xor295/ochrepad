@@ -9,8 +9,8 @@ menu item to explain:
 - [Column selection and multiple cursors](column-selection.md): making
   rectangles and extra carets, and how copy, paste and sorting work with them.
 - [The editor view](view.md): zoom, Show Symbol (spaces, tabs, line
-  endings, invisible characters, indent guides), the document map, word
-  wrap, and folding (where blocks can be folded, the shortcuts, how folded
+  endings, invisible characters, indent guides), the document map, the
+  change history, word wrap, and folding (where blocks can be folded, the shortcuts, how folded
   text behaves).
 - [Logs and large files](logs.md): filtering lines, highlight rules for log
   levels, following a file as it grows (tail -f), and the read-only viewer

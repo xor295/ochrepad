@@ -63,6 +63,20 @@ colour, so you can see the shape of the file and jump around in it.
 - **View > Document Map** turns it off for every editor. It also hides
   itself while a pane is too narrow to show 40 columns of text beside it.
 
+## Change history
+
+The gutter marks the lines that differ from the file as it was when you
+opened or last saved it, in the compare view's colours: a **blue** bar
+beside a changed line, a **green** bar beside an added one, and a **red**
+wedge between two lines where lines were deleted. The marks update a moment
+after you stop typing. Undoing back to the saved text clears them, and
+saving starts afresh from the saved text.
+
+A document that came back from a backup with unsaved changes is compared
+with its file on disk. New documents that were never saved, and files over
+the highlighting size limit (Settings > Preferences), have no marks.
+**View > Change History** turns the marks off.
+
 ## Word wrap
 
 **View > Word Wrap** wraps long lines at the edge of the pane instead of

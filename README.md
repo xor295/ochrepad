@@ -36,6 +36,8 @@ A fast, native text editor in the spirit of Notepad++, written in Rust with
   ([more](docs/view.md)).
 - **Document map**: a zoomed-out view of the file beside the text, to see
   its shape and jump around ([more](docs/view.md#document-map)).
+- **Change history**: the gutter marks the lines you changed, added or
+  deleted since the file was saved ([more](docs/view.md#change-history)).
 - **Word wrap** at the pane's edge, with continuation rows indented like
   the line ([more](docs/view.md#word-wrap)).
 - **Folders**: open a folder to browse its files in a sidebar, with
