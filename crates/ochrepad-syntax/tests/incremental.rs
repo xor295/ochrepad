@@ -176,6 +176,28 @@ fn changing_theme_or_language_restarts() {
     assert_eq!(h.line_spans(&REG, &doc, 0..1)[0].as_ref().unwrap().len(), 1);
 }
 
+#[test]
+fn a_whole_document_is_highlighted_as_the_editor_does() {
+    // File > Export highlights everything at once, on a thread.
+    let doc = Document::new(&rust_file(300));
+    let all = REG.highlight_all("Rust", theme(), &doc);
+    let editor: Vec<LineSpans> = full(&doc, "Rust").into_iter().flatten().collect();
+    assert_eq!(all, editor);
+    // Text without a scope of its own is in the theme's default colour.
+    let colors = REG.theme_colors(theme());
+    let plain = REG.highlight_all(PLAIN_TEXT, theme(), &Document::new("just text"));
+    assert_eq!(plain[0][0].color, colors.foreground);
+}
+
+#[test]
+fn themes_say_their_text_and_background_colors() {
+    let luma = |[r, g, b, _]: [u8; 4]| u32::from(r) * 3 + u32::from(g) * 6 + u32::from(b);
+    let dark = REG.theme_colors(Registry::default_theme(true));
+    assert!(luma(dark.background) < luma(dark.foreground), "{dark:?}");
+    let light = REG.theme_colors(Registry::default_theme(false));
+    assert!(luma(light.background) > luma(light.foreground), "{light:?}");
+}
+
 // ---------------------------------------------------------------------------
 
 const PIECES: &[&str] = &[

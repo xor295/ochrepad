@@ -110,6 +110,12 @@ pub(super) enum PendingJob {
     },
     /// File > Save a Copy As.
     Copy(PathBuf),
+    /// A page File > Export > HTML… made, and whether it has the
+    /// highlighting's colours.
+    Export {
+        path: PathBuf,
+        colored: bool,
+    },
     Other,
 }
 
@@ -232,6 +238,9 @@ impl OchrepadApp {
                     self.replace_in_files_saved(&path, matches, d.result);
                 }
                 Some(PendingJob::Copy(path)) => self.copy_saved(&path, d.result),
+                Some(PendingJob::Export { path, colored }) => {
+                    self.exported(&path, colored, d.result);
+                }
                 Some(PendingJob::Other) | None => {
                     if let Err(e) = d.result {
                         self.message = Some(format!("Could not write a backup:\n{e}"));

@@ -8,6 +8,7 @@ pub mod doc_map;
 pub mod document_list;
 pub mod editor_menu;
 pub mod editor_view;
+pub mod export;
 pub mod file_tree;
 pub mod filter_bar;
 pub mod find_panel;

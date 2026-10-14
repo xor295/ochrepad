@@ -1,11 +1,11 @@
-//! More of Notepad++'s File menu: Save All, Save a Copy As…, Reload from
-//! Disk and Rename…. Writes and renames go through the worker, as every
-//! write to a user file does.
+//! More of Notepad++'s File menu: Save All, Save a Copy As…, Export >
+//! HTML…, Reload from Disk and Rename…. Writes and renames go through the
+//! worker, as every write to a user file does.
 
 use std::path::{Path, PathBuf};
 
 use egui::{Id, Key, Modal, TextEdit, Ui};
-use ochrepad_core::BufferId;
+use ochrepad_core::{BufferId, FileMeta};
 use ochrepad_fileio::worker::Job;
 
 use super::OchrepadApp;
@@ -88,6 +88,113 @@ impl OchrepadApp {
             Err(e) => {
                 self.message = Some(format!("Could not save a copy as {}:\n{e}", path.display()));
             }
+        }
+    }
+
+    /// File > Export > HTML…: asks where to write the document as a web
+    /// page, suggesting its name with `.html` in its folder.
+    pub fn export_html(&mut self) {
+        let buffer = self.buffer_id();
+        let mut dialog = rfd::FileDialog::new()
+            .add_filter("HTML", &["html", "htm"])
+            .set_file_name(format!("{}.html", self.buffer_name(buffer)));
+        if let Some(dir) = self.buffer().meta.path.as_deref().and_then(Path::parent) {
+            dialog = dialog.set_directory(dir);
+        }
+        let Some(path) = dialog.save_file() else {
+            return;
+        };
+        self.export_html_to(buffer, &path);
+    }
+
+    /// Writes `buffer` as a web page to `path` (Export > HTML… without the
+    /// dialog): its text as it is now, in the current syntax theme's
+    /// colours. The page is made on a thread and written by the worker.
+    pub fn export_html_to(&mut self, buffer: BufferId, path: &Path) {
+        let Some(b) = self.editor.buffer(buffer) else {
+            return;
+        };
+        let own = b.meta.path.as_deref().map(super::canonical);
+        if own == Some(super::canonical(path)) {
+            self.message = Some(format!(
+                "{} is the document's own file. Export it to another file.",
+                path.display()
+            ));
+            return;
+        }
+        // Over the size limit the editor shows no colours, and neither
+        // does the page.
+        let colored = b.doc().len().0 <= self.highlighting.size_limit;
+        let request = crate::export::Request {
+            doc: b.doc().clone(),
+            title: self.buffer_name(buffer),
+            language: colored.then(|| self.highlighting.language(buffer).to_owned()),
+            theme: self.highlighting.effective_theme(self.dark),
+            tab_width: b.indent.width,
+        };
+        let registry = self.highlighting.registry();
+        match crate::export::Export::start(registry, request, path.to_path_buf()) {
+            Some(export) => self.exports.push(export),
+            None => self.message = Some("Could not start the export".to_owned()),
+        }
+    }
+
+    /// Whether an export is still making its page.
+    pub fn exporting(&self) -> bool {
+        !self.exports.is_empty()
+    }
+
+    /// Per frame: hands the pages made since the last frame to the worker.
+    pub(super) fn poll_exports(&mut self, ui: &Ui) {
+        for export in std::mem::take(&mut self.exports) {
+            match export.poll() {
+                None => self.exports.push(export),
+                Some(Ok(page)) => {
+                    // UTF-8 without a BOM, with LF line breaks.
+                    let tag = self.persist.worker.submit(Job::Save {
+                        path: export.path.clone(),
+                        doc: page,
+                        meta: FileMeta::default(),
+                    });
+                    self.persist.pending.insert(
+                        tag,
+                        PendingJob::Export {
+                            path: export.path,
+                            colored: export.colored,
+                        },
+                    );
+                }
+                Some(Err(e)) => {
+                    self.message = Some(format!(
+                        "Could not export to {}:\n{e}",
+                        export.path.display()
+                    ));
+                }
+            }
+        }
+        if !self.exports.is_empty() {
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(50));
+        }
+    }
+
+    /// The worker finished writing an exported page.
+    pub(super) fn exported(&mut self, path: &Path, colored: bool, result: Result<(), String>) {
+        if let Err(e) = result {
+            self.message = Some(format!("Could not export to {}:\n{e}", path.display()));
+            return;
+        }
+        let name = path.file_name().map_or_else(
+            || path.display().to_string(),
+            |n| n.to_string_lossy().into_owned(),
+        );
+        if colored {
+            self.note_text(format!("Exported to {name}"));
+        } else {
+            let limit = self.highlighting.size_limit_text();
+            self.note_text(format!(
+                "Exported to {name} without colours (over the {limit} highlighting limit)"
+            ));
         }
     }
 

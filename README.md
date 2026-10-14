@@ -13,7 +13,8 @@ A fast, native text editor in the spirit of Notepad++, written in Rust with
   [two-face](https://github.com/CosmicHorrorDev/two-face) syntax set), detected
   by extension, file name or shebang. Highlighting is incremental, so typing
   stays smooth in very large files; files over a size limit (10 MB by default)
-  open without it.
+  open without it. File > Export > HTML… saves a document as a web page in
+  its highlighting colours ([more](docs/file-handling.md#saving)).
 - **Column selection and multiple cursors**: Alt+drag or Alt+Shift+arrows for
   a rectangle, Ctrl+click to add a caret, Ctrl+Alt+Up/Down to add one above or
   below. Rectangular copy and paste work as blocks

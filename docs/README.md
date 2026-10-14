@@ -32,4 +32,5 @@ menu item to explain:
   how unsaved work is kept, what happens on exit, automatic saving, and
   reloading files other programs change.
 - [How ochrepad reads and writes files](file-handling.md): encodings, line
-  endings, which files are refused, and atomic saves.
+  endings, which files are refused, atomic saves, and exporting a document
+  as a web page.

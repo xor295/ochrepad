@@ -75,6 +75,10 @@ people downloading the release.
 - Edit > Paste from History offers the last ten texts copied in ochrepad.
 - Edit > Read-Only refuses edits to a document until turned off.
 - File > Save All, Save a Copy As…, Reload from Disk and Rename….
+- File > Export > HTML… saves the document as a web page that looks as it
+  does in the editor, in the syntax theme's colours (as Notepad++'s
+  NppExport does). Unsaved changes are included; a document over the
+  highlighting limit is exported without colours.
 - Ctrl+PageUp and Ctrl+PageDown switch tabs, and Ctrl+Q and Ctrl+Shift+Q
   toggle comments, as in Notepad++. Clicking the caret's position in the
   status bar opens Go to Line.

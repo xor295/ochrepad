@@ -55,6 +55,14 @@ pub struct Span {
 
 pub type LineSpans = Arc<[Span]>;
 
+/// A theme's default text and background colours, straight (unmultiplied)
+/// RGBA.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ThemeColors {
+    pub foreground: [u8; 4],
+    pub background: [u8; 4],
+}
+
 /// All syntaxes and themes, loaded once.
 pub struct Registry {
     syntaxes: SyntaxSet,
@@ -111,6 +119,40 @@ impl Registry {
         } else {
             EmbeddedThemeName::OneHalfLight.as_name()
         }
+    }
+
+    /// The default text and background colours of the theme `name` (black
+    /// on white where it sets none, as syntect does).
+    pub fn theme_colors(&self, name: &str) -> ThemeColors {
+        let style = Highlighter::new(self.theme(name)).get_default();
+        let (fg, bg) = (style.foreground, style.background);
+        ThemeColors {
+            foreground: [fg.r, fg.g, fg.b, fg.a],
+            background: [bg.r, bg.g, bg.b, bg.a],
+        }
+    }
+
+    /// The spans of every line of `doc`, highlighted from its start in the
+    /// language `syntax` and the theme `theme`: what File > Export needs,
+    /// where the editor highlights only what it shows. Long lines are left
+    /// plain, as in the editor; after a parse error the list stops, and the
+    /// lines past its end have no spans.
+    pub fn highlight_all(&self, syntax: &str, theme: &str, doc: &Document) -> Vec<LineSpans> {
+        let hl = Highlighter::new(self.theme(theme));
+        let mut s = State {
+            line: 0,
+            parse: ParseState::new(self.syntax(syntax)),
+            highlight: HighlightState::new(&hl, ScopeStack::new()),
+        };
+        let mut out = Vec::with_capacity(doc.line_count());
+        while s.line < doc.line_count() {
+            match highlight_line(&mut s, doc, &self.syntaxes, &hl) {
+                Ok(spans) => out.push(spans),
+                Err(_) => break,
+            }
+            s.line += 1;
+        }
+        out
     }
 
     fn theme(&self, name: &str) -> &Theme {

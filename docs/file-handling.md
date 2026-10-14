@@ -118,6 +118,15 @@ The File menu also has:
   says how many.
 - **Save a Copy As…**: writes the document to another file, in its encoding
   and line endings. The tab stays on its own file, still unsaved if it was.
+- **Export > HTML…**: writes the document as a web page that looks as it
+  does in the editor: the text in a monospace font and the syntax theme's
+  colours, with tabs as wide as the document's. The dialog suggests the
+  document's name with `.html` added (`main.rs.html`) in its folder. The
+  page holds the text as it is in the editor, unsaved changes included, as
+  UTF-8 with LF line breaks. A document over the highlighting limit (see
+  [Large files](#large-files)) is exported without colours, and the status
+  bar says so. The page is made in the background and saved like any file;
+  it can't replace the document's own file.
 - **Reload from Disk**: reads the file again (asking first if there are
   unsaved changes; Undo brings them back).
 - **Rename…**: renames the document's file in its folder. An existing file

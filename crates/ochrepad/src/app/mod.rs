@@ -178,6 +178,8 @@ pub struct OchrepadApp {
     summary: Option<summary::SummaryDialog>,
     /// The File > Rename… prompt, while it is open.
     rename: Option<file_extras::RenameDialog>,
+    /// Pages File > Export > HTML… is still making.
+    exports: Vec<crate::export::Export>,
     /// Replace in Files, while it counts, asks or writes.
     replace_in_files: replace_in_files::Stage,
     /// Saves Replace in Files made that the worker finished: whether it
@@ -263,6 +265,7 @@ impl OchrepadApp {
             token_styles: Default::default(),
             summary: None,
             rename: None,
+            exports: Vec::new(),
             replace_in_files: Default::default(),
             replace_saves: Vec::new(),
             closed_files: Vec::new(),
@@ -866,6 +869,7 @@ impl OchrepadApp {
         self.now = ui.input(|i| i.time);
         self.apply_settings(ui);
         self.poll_disk(ui);
+        self.poll_exports(ui);
         self.watch_files(ui);
         self.drag_and_drop(ui);
         self.shortcuts(ui);
@@ -1485,6 +1489,19 @@ impl OchrepadApp {
         {
             self.save_copy_as();
         }
+        ui.add_enabled_ui(editing, |ui| {
+            ui.menu_button("Export", |ui| {
+                if ui
+                    .button("HTML…")
+                    .on_hover_text(
+                        "Write the document as a web page, in the syntax theme's colours",
+                    )
+                    .clicked()
+                {
+                    self.export_html();
+                }
+            });
+        });
         if ui.add_enabled(editing, Button::new("Save All")).clicked() {
             self.save_all();
         }
