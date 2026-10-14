@@ -117,6 +117,9 @@ a word only matches whole words.
 - **Search > Clear Style** removes one style's highlights, or all of them.
 - **Search > Jump Down** and **Jump Up** select the next or previous
   occurrence of a style's tokens, going round the document.
+- **Search > Copy Styled Text** copies every occurrence of a style's
+  tokens (or of every style's), in the order they come in the document,
+  one per line.
 
 Unlike Notepad++, an occurrence you type later is highlighted too. Styles
 belong to the document and last until you clear them or close it.

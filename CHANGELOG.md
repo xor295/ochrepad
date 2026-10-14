@@ -44,6 +44,8 @@ people downloading the release.
 - Edit > Line Operations > Split Lines (Ctrl+I), as in Notepad++: long
   lines are split between words to fit the vertical edge, or the window,
   keeping their indentation.
+- Search > Copy Styled Text copies every occurrence of a style's tokens,
+  one per line, as in Notepad++.
 - Overtype: Insert switches to typing over the text, as in Notepad++. The
   status bar shows OVR and the caret becomes a bar under the character it
   replaces; typing never runs past the end of a line.

@@ -23,6 +23,9 @@ pub const NAMES: [&str; STYLES] = ["1st", "2nd", "3rd", "4th", "5th"];
 /// Tokens longer than this are not styled (a token is for a word or so).
 const MAX_TOKEN: usize = 1000;
 
+/// Copy Styled Text copies at most this many occurrences.
+pub const MAX_COPIED: usize = 100_000;
+
 /// One styled token.
 struct Token {
     text: String,
@@ -122,6 +125,32 @@ impl TokenStyles {
         })
     }
 
+    /// Copy Styled Text: each occurrence of the tokens of `style` (of every
+    /// style with `None`) in `buffer`, in document order, at most
+    /// [`MAX_COPIED`] of them.
+    pub fn styled_text(
+        &self,
+        buffer: BufferId,
+        doc: &Document,
+        style: Option<usize>,
+    ) -> Vec<String> {
+        let Some(tokens) = self.docs.get(&buffer) else {
+            return Vec::new();
+        };
+        let mut found: Vec<Range<ByteOffset>> = tokens
+            .iter()
+            .filter(|t| style.is_none_or(|s| t.style == s))
+            .flat_map(|t| t.searcher.find_all(doc, ByteOffset(0)..doc.len()))
+            .collect();
+        found.sort_by_key(|m| (m.start, m.end));
+        found.dedup();
+        found
+            .into_iter()
+            .take(MAX_COPIED)
+            .map(|m| doc.slice(m))
+            .collect()
+    }
+
     /// Forgets the styles of buffers that are gone.
     pub fn retain(&mut self, alive: impl Fn(BufferId) -> bool) {
         self.docs.retain(|b, t| alive(*b) && !t.is_empty());
@@ -194,6 +223,24 @@ mod tests {
         assert!(!s.has(b, 0) && s.has(b, 1));
         s.clear(b, None);
         assert!(s.tokens(b).is_empty());
+    }
+
+    #[test]
+    fn styled_text_lists_the_occurrences_in_order() {
+        let doc = Document::new("alpha beta alpha gamma beta");
+        let b = BufferId(1);
+        let mut s = TokenStyles::default();
+        s.add(b, "beta".into(), 0);
+        s.add(b, "alpha".into(), 0);
+        s.add(b, "gamma".into(), 1);
+        assert_eq!(
+            s.styled_text(b, &doc, Some(0)),
+            ["alpha", "beta", "alpha", "beta"]
+        );
+        assert_eq!(s.styled_text(b, &doc, Some(1)), ["gamma"]);
+        assert_eq!(s.styled_text(b, &doc, None).len(), 5);
+        assert!(s.styled_text(b, &doc, Some(2)).is_empty());
+        assert!(s.styled_text(BufferId(2), &doc, None).is_empty());
     }
 
     #[test]

@@ -1990,6 +1990,22 @@ impl OchrepadApp {
                     }
                 });
             }
+            ui.menu_button("Copy Styled Text", |ui| {
+                for (i, name) in crate::token_styles::NAMES.iter().enumerate() {
+                    if ui
+                        .add_enabled(
+                            self.token_styles.has(buffer, i),
+                            Button::new(format!("Using {name} Style")),
+                        )
+                        .clicked()
+                    {
+                        self.copy_styled_text(ui, Some(i));
+                    }
+                }
+                if ui.button("Using All Styles").clicked() {
+                    self.copy_styled_text(ui, None);
+                }
+            });
             ui.menu_button("Bookmark", |ui| self.bookmark_menu(ui));
         }
     }
@@ -2027,6 +2043,26 @@ impl OchrepadApp {
                 ochrepad_core::Selection::new(m.start, m.end),
             )));
         }
+    }
+
+    /// Search > Copy Styled Text: every occurrence of a style's tokens (or
+    /// every style's), one per line, as in Notepad++.
+    fn copy_styled_text(&mut self, ui: &Ui, style: Option<usize>) {
+        let buffer = self.buffer_id();
+        let found = self
+            .token_styles
+            .styled_text(buffer, self.buffer().doc(), style);
+        if found.is_empty() {
+            self.note_text("No styled text to copy");
+            return;
+        }
+        let n = found.len();
+        ui.ctx().copy_text(found.join("\n"));
+        self.note_text(if n == crate::token_styles::MAX_COPIED {
+            format!("Copied the first {n} styled occurrences")
+        } else {
+            format!("Copied {n} styled occurrences")
+        });
     }
 
     /// Search > Bookmark, as in Notepad++.

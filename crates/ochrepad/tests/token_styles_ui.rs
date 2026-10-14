@@ -91,6 +91,43 @@ fn style_jump_and_clear() {
 }
 
 #[test]
+fn copy_styled_text_copies_each_occurrence() {
+    let mut h = harness();
+    // Tall enough for the whole Search menu.
+    h.set_size(Vec2::new(760.0, 700.0));
+    h.run();
+    style(&mut h, 6, "1st");
+    style(&mut h, 14, "2nd");
+    submenu(&mut h, "Search", "Copy Styled Text");
+    h.get_by_label("Using 1st Style").click();
+    h.step();
+    let copied = h
+        .output()
+        .platform_output
+        .commands
+        .iter()
+        .find_map(|c| match c {
+            egui::OutputCommand::CopyText(t) => Some(t.clone()),
+            _ => None,
+        });
+    assert_eq!(copied.as_deref(), Some("total\ntotal\ntotal"));
+    h.run();
+    submenu(&mut h, "Search", "Copy Styled Text");
+    h.get_by_label("Using All Styles").click();
+    h.step();
+    let copied = h
+        .output()
+        .platform_output
+        .commands
+        .iter()
+        .find_map(|c| match c {
+            egui::OutputCommand::CopyText(t) => Some(t.clone()),
+            _ => None,
+        });
+    assert_eq!(copied.as_deref(), Some("total\nprice\ntotal\ntotal"));
+}
+
+#[test]
 fn the_right_click_menu_styles_too() {
     let mut h = harness();
     // On "tax" (line 2, columns 5 to 7): the gutter's 3 digits and fold
