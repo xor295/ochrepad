@@ -24,8 +24,8 @@ menu item to explain:
 - [Editing lines, blanks and columns](editing.md): Notepad++'s line and
   blank operations, the Column Editor, the tab menu and reopening closed
   files, bookmarks, the right-click menu, the summary, multi-select, paste
-  from history,
-  read-only documents, full screen, and closing brackets as you type.
+  from history, read-only documents, full screen, closing brackets as you
+  type, and smart indentation.
 - [Key bindings](keymap.md): the `keymap.json` format and every command you
   can bind.
 - [Backups, sessions and files changed elsewhere](backups-and-session.md):

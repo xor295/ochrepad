@@ -656,14 +656,18 @@ proptest! {
                 3 => prop::sample::select(vec!["(", ")", "[", "]", "{", "}", "\"", "'"])
                     .prop_map(|s| Action::InsertText(s.to_owned())),
                 1 => Just(Action::DeleteBackward),
+                2 => Just(Action::InsertNewline),
                 4 => action(),
             ],
             0..30,
         ),
         layout in layout(),
+        smart in any::<bool>(),
     ) {
         let mut t = setup_wrapped(&initial, layout);
         t.ed.settings.auto_close = true;
+        // Smart indentation works on the same keys.
+        t.ed.settings.smart_indent = smart;
         for a in actions {
             let _ = t.ed.apply(t.view, a);
             check(&t)?;

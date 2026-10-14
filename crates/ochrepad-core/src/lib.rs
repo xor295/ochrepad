@@ -21,6 +21,7 @@ pub mod position;
 mod resolve;
 pub mod search;
 pub mod selection;
+mod smart_indent;
 pub mod text;
 pub mod text_tools;
 pub mod transform;

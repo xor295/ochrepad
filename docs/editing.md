@@ -179,3 +179,22 @@ windows, and is remembered.
 - With a selection, typing replaces it as usual. With several carets, each
   gets its pair, or none of them does.
 - The pair and what you type inside it undo together, like typing.
+
+## Smart indentation
+
+**Settings > Preferences > Auto-indent: Indent after { ( [ and Python's :**
+(off by default) makes Enter and the closing brackets indent for you.
+Without it, Enter starts the new line with the same indentation as the
+line before, as always.
+
+- **Enter** after an opening `{`, `(` or `[` (and after a `:` in a Python
+  file) indents the new line one level more than its line, with the
+  document's tabs or spaces.
+- **Enter** between a pair, as in `{|}`, also puts the closing bracket on
+  a line of its own, back at the opening line's indentation, with the
+  caret on the indented line between. With closing brackets as you type,
+  `{` then Enter gives a block ready to fill.
+- A closing `}`, `)` or `]` typed on a line of only blanks moves to the
+  indentation of the line its partner is on.
+- Brackets are matched as plain text, as for matching brackets; with
+  several carets on one line it stays out of the way.

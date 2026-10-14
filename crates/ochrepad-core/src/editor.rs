@@ -65,6 +65,9 @@ pub struct Settings {
     /// Typing an opening bracket or quote inserts its partner (Notepad++'s
     /// Auto-Insert; see `autoclose`).
     pub auto_close: bool,
+    /// Enter after an opening bracket indents, and a closing bracket lines
+    /// up with its partner (see `smart_indent`).
+    pub smart_indent: bool,
 }
 
 impl Settings {
@@ -83,6 +86,7 @@ impl Default for Settings {
             tab_width: 4,
             use_spaces: false,
             auto_close: false,
+            smart_indent: false,
         }
     }
 }
@@ -382,6 +386,17 @@ impl Editor {
             _ => {
                 if self.settings.auto_close
                     && let Some(r) = crate::autoclose::resolve(action, &buffer.doc, sels)
+                {
+                    return Ok(Ok(r));
+                }
+                if self.settings.smart_indent
+                    && let Some(r) = crate::smart_indent::resolve(
+                        action,
+                        &buffer.doc,
+                        sels,
+                        buffer.indent,
+                        buffer.language.as_deref(),
+                    )
                 {
                     return Ok(Ok(r));
                 }

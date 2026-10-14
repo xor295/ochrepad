@@ -42,6 +42,9 @@ pub struct AppSettings {
     pub use_spaces: bool,
     /// Typing an opening bracket or quote inserts its partner.
     pub auto_close: bool,
+    /// Enter after an opening bracket (or a colon in Python) indents, and a
+    /// closing bracket lines up with its partner.
+    pub smart_indent: bool,
     pub theme: ThemeChoice,
     /// `None` follows light/dark mode.
     pub syntax_theme: Option<String>,
@@ -105,6 +108,7 @@ impl Default for AppSettings {
             tab_width: 4,
             use_spaces: false,
             auto_close: false,
+            smart_indent: false,
             theme: ThemeChoice::System,
             syntax_theme: None,
             backups: true,
@@ -247,6 +251,15 @@ impl AppSettings {
                     .on_hover_text(
                         "Typing ( [ { \" or ' inserts the closing one after the caret; \
                          typing it again steps over it",
+                    );
+                ui.end_row();
+
+                ui.label("Auto-indent");
+                ui.checkbox(&mut self.smart_indent, "Indent after { ( [ and Python's :")
+                    .on_hover_text(
+                        "Enter after an opening bracket indents the new line one level \
+                         more; a closing bracket typed on a blank line lines up with its \
+                         partner's line",
                     );
                 ui.end_row();
 

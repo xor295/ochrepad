@@ -29,6 +29,10 @@ people downloading the release.
 - Edit > Multi-select Next and Multi-select All put selections on the
   other occurrences of the selected text (or the word at the caret), with
   Notepad++'s case and whole-word choices.
+- Smart indentation (a preference, off by default): Enter after an opening
+  bracket, or a colon in Python, indents one level more, Enter between a
+  pair puts the closer on its own line, and a closing bracket typed on a
+  blank line lines up with its partner.
 - Replace in Files: the find panel replaces every match in a folder's files,
   after counting them and asking. Open documents get an undo step; the
   other files are saved in their own encoding and line endings.
