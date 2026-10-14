@@ -23,6 +23,13 @@ pub enum Motion {
     Home,
     LineStart,
     LineEnd,
+    /// Home with word wrap: to the start of the caret's display row, or
+    /// `Home` when already there or on a line's first row. Without wrap it
+    /// is `Home`.
+    RowHome,
+    /// End with word wrap: to the end of the caret's display row, or the
+    /// line end when already there. Without wrap it is `LineEnd`.
+    RowEnd,
     DocStart,
     DocEnd,
     /// Vertical moves keep a remembered visual column.

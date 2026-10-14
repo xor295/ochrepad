@@ -43,6 +43,8 @@ fn motion() -> impl Strategy<Value = Motion> {
         Just(Motion::Home),
         Just(Motion::LineStart),
         Just(Motion::LineEnd),
+        Just(Motion::RowHome),
+        Just(Motion::RowEnd),
         Just(Motion::DocStart),
         Just(Motion::DocEnd),
         Just(Motion::Up),
@@ -176,17 +178,37 @@ fn check(t: &util::T) -> Result<(), TestCaseError> {
             t.show()
         );
     }
-    let rows = ochrepad_core::DisplayMap::new(doc, view, 4);
+    let rows = ochrepad_core::DisplayMap::new(t.buffer(), view, 4);
     let visible: Vec<usize> = (0..doc.line_count())
         .filter(|&l| !folds.is_hidden(l))
         .collect();
     prop_assert_eq!(rows.visible_line_count(), visible.len());
-    let shown: Vec<usize> = rows
-        .rows_from(rows.first_row(), usize::MAX)
-        .map(|r| r.line)
-        .collect();
+    let all: Vec<_> = rows.rows_from(rows.first_row(), usize::MAX).collect();
+    let mut shown: Vec<usize> = all.iter().map(|r| r.line).collect();
+    shown.dedup();
     prop_assert_eq!(shown, visible);
+    // A line's rows cover it exactly, and each row's start maps back to it.
+    for (i, &r) in all.iter().enumerate() {
+        let range = rows.row_range(r);
+        prop_assert_eq!(rows.row_of(range.start), r);
+        if r.sub == 0 {
+            prop_assert_eq!(range.start, doc.line_start(r.line));
+        } else {
+            prop_assert_eq!(rows.row_range(all[i - 1]).end, range.start);
+        }
+        if rows.is_last_in_line(r) {
+            prop_assert_eq!(range.end, doc.line_end(r.line));
+        }
+        prop_assert!(rows.row_end(r) >= range.start && rows.row_end(r) <= range.end);
+    }
     Ok(())
+}
+
+/// A document with a random wrap width (or none) on its view.
+fn setup_wrapped(initial: &str, wrap: Option<usize>) -> util::T {
+    let mut t = util::setup(initial);
+    t.ed.view_mut(t.view).unwrap().wrap_cols = wrap;
+    t
 }
 
 proptest! {
@@ -196,8 +218,12 @@ proptest! {
     /// range; undoing everything restores the original text, and the
     /// selections from just before the first edit still in the history.
     #[test]
-    fn undo_all_restores_original(initial in text(), actions in prop::collection::vec(action(), 0..40)) {
-        let mut t = util::setup(&initial);
+    fn undo_all_restores_original(
+        initial in text(),
+        actions in prop::collection::vec(action(), 0..40),
+        wrap in prop::option::of(10usize..16),
+    ) {
+        let mut t = setup_wrapped(&initial, wrap);
         let mut first_edit_sels: Option<SelectionSet> = None;
         for a in actions {
             let before = t.sels();
@@ -226,8 +252,12 @@ proptest! {
     /// Undo then redo returns to the same text and revision, and to the same
     /// selections when the last action was an edit.
     #[test]
-    fn undo_then_redo_is_identity(initial in text(), actions in prop::collection::vec(action(), 1..40)) {
-        let mut t = util::setup(&initial);
+    fn undo_then_redo_is_identity(
+        initial in text(),
+        actions in prop::collection::vec(action(), 1..40),
+        wrap in prop::option::of(10usize..16),
+    ) {
+        let mut t = setup_wrapped(&initial, wrap);
         let mut last_was_edit = false;
         for a in actions {
             let rev = t.buffer().revision();
@@ -252,8 +282,12 @@ proptest! {
     /// The line-edit log accounts for every change in line count, and every
     /// reported line is in range at the moment it is reported.
     #[test]
-    fn line_edits_track_line_count(initial in text(), actions in prop::collection::vec(action(), 0..40)) {
-        let mut t = util::setup(&initial);
+    fn line_edits_track_line_count(
+        initial in text(),
+        actions in prop::collection::vec(action(), 0..40),
+        wrap in prop::option::of(10usize..16),
+    ) {
+        let mut t = setup_wrapped(&initial, wrap);
         let id = t.buffer().id();
         for a in actions {
             let before = t.buffer().doc().line_count() as isize;

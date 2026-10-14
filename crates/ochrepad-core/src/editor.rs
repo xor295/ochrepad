@@ -276,7 +276,7 @@ impl Editor {
             | Action::ReplaceAll { .. }
             | Action::SelectAllMatches(_) => resolve_search(action, &buffer.doc, sels),
             _ => {
-                let rows = DisplayMap::new(&buffer.doc, v, self.settings.tab_width);
+                let rows = DisplayMap::new(buffer, v, self.settings.tab_width);
                 Ok(resolve(action, &buffer.doc, sels, &self.settings, &rows))
             }
         })

@@ -38,6 +38,8 @@ pub struct AppSettings {
     pub highlight_limit_mb: usize,
     /// Fold chevrons in the gutter.
     pub fold_margin: bool,
+    /// Wrap long lines at the pane's width.
+    pub word_wrap: bool,
     pub recent_files: Vec<PathBuf>,
 }
 
@@ -55,6 +57,7 @@ impl Default for AppSettings {
             write_through: false,
             highlight_limit_mb: 10,
             fold_margin: true,
+            word_wrap: false,
             recent_files: Vec::new(),
         }
     }

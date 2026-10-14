@@ -1,4 +1,31 @@
-# Folding and the editor view
+# Folding, word wrap and the editor view
+
+## Word wrap
+
+**View > Word Wrap** wraps long lines at the edge of the pane instead of
+scrolling sideways. It applies to every tab and is remembered.
+
+- Lines break after a space or tab where possible; a word longer than the
+  pane breaks where it reaches the edge. Wide characters and emoji are never
+  split.
+- The rows after a line's first are indented like the line itself (up to
+  half the pane's width), so wrapped code keeps its shape.
+- The line number shows on a line's first row only.
+- **Up and Down** move by row. **Home** goes to the start of the row, and a
+  second press goes to the start of the line (the first non-blank
+  character, as without wrap). **End** goes to the end of the row, then to
+  the end of the line.
+- At the end of a row that is not the line's last, the caret stops before
+  the last character of the row (usually the space the line breaks after):
+  the position after it is the start of the next row.
+- Resizing the window or a pane rewraps the text and keeps the same line at
+  the top.
+- The scrollbar counts lines, not rows, so in a file with many long lines
+  its thumb is a little off. Rewrapping a whole large file to measure it
+  exactly would make every resize slow.
+- Column selection (Alt+drag) still selects the same columns of each line;
+  on a wrapped line the columns may be on different rows.
+
 
 ## Folding
 

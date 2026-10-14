@@ -27,6 +27,8 @@ A fast, native text editor in the spirit of Notepad++, written in Rust with
 - **Code folding** by indentation (and by heading in Markdown), with
   Notepad++'s fold shortcuts; folds are kept with the session
   ([more](docs/view.md)).
+- **Word wrap** at the pane's edge, with continuation rows indented like
+  the line ([more](docs/view.md#word-wrap)).
 - **Tabs and split screen**: drag tabs into side-by-side or stacked panes, or
   open a second view of the same file; edits show in both.
 - **Compare**: a side-by-side diff of two files (or a file against its saved
@@ -51,7 +53,7 @@ A fast, native text editor in the spirit of Notepad++, written in Rust with
 - Preferences for font, size, tabs or spaces, tab width, theme, and backups;
   an editable keymap; recent files; drag and drop to open.
 
-Not included (by design, for now): word wrap, right-to-left
+Not included (by design, for now): right-to-left
 text, proportional fonts, plugins and language servers.
 
 ## Download

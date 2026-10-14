@@ -179,9 +179,144 @@ pub fn line_visual_width(doc: &Document, line: usize, tab_width: usize) -> Visua
     VisualCol(advance(&doc.line_text(line), 0, tab_width))
 }
 
+/// The narrowest wrap width, in cells.
+pub const MIN_WRAP_WIDTH: usize = 10;
+
+/// How one line wraps into display rows.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Wrapped {
+    /// Byte offset (within the line) where each row starts; the first is 0.
+    pub starts: Vec<usize>,
+    /// The visual column (of the line) where each row starts.
+    pub start_cols: Vec<usize>,
+    /// Cells that rows after the first are indented by.
+    pub indent: usize,
+}
+
+/// Wraps `text` (one line, without its line break) to rows of `width`
+/// cells. Rows break after a run of whitespace when there is one in the
+/// row, otherwise before the grapheme that does not fit; a grapheme is never
+/// split, and one wider than a row gets a row of its own. Tab stops count
+/// from the start of the line, so wrapping never changes a grapheme's
+/// visual column. Rows after the first are indented like the line, by at
+/// most half the width.
+pub fn wrap_line(text: &str, width: usize, tab_width: usize) -> Wrapped {
+    let width = width.max(MIN_WRAP_WIDTH);
+    // Most lines fit; for plain ASCII that is a length check.
+    if text.len() <= width && text.bytes().all(|b| b.is_ascii() && b != b'\t') {
+        let lead = text.len() - text.trim_start_matches(' ').len();
+        return Wrapped {
+            starts: vec![0],
+            start_cols: vec![0],
+            indent: lead.min(width / 2),
+        };
+    }
+    let lead = text.len() - text.trim_start_matches([' ', '\t']).len();
+    let indent = advance(&text[..lead], 0, tab_width).min(width / 2);
+    let mut out = Wrapped {
+        starts: vec![0],
+        start_cols: vec![0],
+        indent,
+    };
+    // (byte, column, width, is whitespace) of each grapheme.
+    let mut col = 0;
+    let gs: Vec<(usize, usize, usize, bool)> = if text.is_ascii() {
+        // Most lines: every byte is a grapheme one cell wide (a line holds
+        // no `\n`, so there is no CR LF pair), except tabs.
+        text.bytes()
+            .enumerate()
+            .map(|(i, b)| {
+                let w = if b == b'\t' {
+                    let tw = tab_width.max(1);
+                    tw - col % tw
+                } else {
+                    1
+                };
+                col += w;
+                (i, col - w, w, b == b' ' || b == b'\t')
+            })
+            .collect()
+    } else {
+        text.grapheme_indices(true)
+            .map(|(i, g)| {
+                let w = grapheme_width(g, col, tab_width);
+                col += w;
+                (i, col - w, w, g == " " || g == "\t")
+            })
+            .collect()
+    };
+    // Never break right after the leading indentation.
+    let lead_graphemes = gs.iter().take_while(|g| g.3).count();
+    let (mut row_start, mut cap) = (0, width);
+    // The last place this row could break: just after whitespace.
+    let mut candidate = None;
+    let mut j = 0;
+    while j < gs.len() {
+        let (_, col, w, space) = gs[j];
+        if j > row_start.max(lead_graphemes) && gs[j - 1].3 && !space {
+            candidate = Some(j);
+        }
+        let row_col = gs[row_start].1;
+        if col + w - row_col > cap && j > row_start {
+            let at = candidate.unwrap_or(j);
+            out.starts.push(gs[at].0);
+            out.start_cols.push(gs[at].1);
+            row_start = at;
+            cap = width - indent;
+            candidate = None;
+            // Look at the new row from its start.
+            j = at;
+            continue;
+        }
+        j += 1;
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The rows of `text` wrapped at `width` (tab width 4).
+    fn rows(text: &str, width: usize) -> Vec<&str> {
+        let w = wrap_line(text, width, 4);
+        let mut ends = w.starts[1..].to_vec();
+        ends.push(text.len());
+        w.starts
+            .iter()
+            .zip(ends)
+            .map(|(&a, b)| &text[a..b])
+            .collect()
+    }
+
+    #[test]
+    fn wrapping_breaks_after_whitespace_or_inside_long_words() {
+        assert_eq!(rows("short", 10), vec!["short"]);
+        assert_eq!(rows("aaaa bbbb cccc", 10), vec!["aaaa bbbb ", "cccc"]);
+        assert_eq!(
+            rows("abcdefghijklmnopqrstuvwxy", 10),
+            vec!["abcdefghij", "klmnopqrst", "uvwxy"]
+        );
+        // Indented by 4: continuation rows hold 6 cells; the indentation
+        // itself is never a row on its own.
+        assert_eq!(
+            rows("    xxxxxxxxxxxxxxxx", 10),
+            vec!["    xxxxxx", "xxxxxx", "xxxx"]
+        );
+        assert_eq!(wrap_line("    x x", 10, 4).indent, 4);
+        // Wide glyphs are not split; a tab keeps its line column.
+        assert_eq!(rows("漢字漢字漢字", 10), vec!["漢字漢字漢", "字"]);
+        assert_eq!(rows("ab\tcdefghijk", 10), vec!["ab\t", "cdefghijk"]);
+        assert_eq!(wrap_line("ab\tcdefghijk", 10, 4).start_cols, vec![0, 4]);
+        // Combining marks and emoji stay whole.
+        let marks = "e\u{301}e\u{301}e\u{301}👨\u{200d}👩\u{200d}👧xxxxxxx";
+        assert_eq!(
+            rows(marks, 10),
+            vec!["e\u{301}e\u{301}e\u{301}👨\u{200d}👩\u{200d}👧xxxxx", "xx"]
+        );
+        // Very narrow widths are raised to the minimum.
+        assert_eq!(rows("aaaaaaaaaaaa", 3), vec!["aaaaaaaaaa", "aa"]);
+    }
 
     fn boundaries(text: &str) -> Vec<usize> {
         let doc = Document::new(text);

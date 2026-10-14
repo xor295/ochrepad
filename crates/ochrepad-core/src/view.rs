@@ -1,8 +1,11 @@
 //! `View`: a window onto a buffer with its own selections and scroll position.
 
+use std::cell::RefCell;
+
 use serde::{Deserialize, Serialize};
 
 use crate::buffer::BufferId;
+use crate::display::WrapCache;
 use crate::fold::FoldSet;
 use crate::selection::SelectionSet;
 
@@ -31,6 +34,10 @@ pub struct View {
     /// Folded regions; changed only through `Editor`, which keeps them in
     /// step with the text.
     pub(crate) folds: FoldSet,
+    /// Wrap width in cells, or `None` when lines do not wrap. The editor
+    /// widget sets it from the pane's width.
+    pub wrap_cols: Option<usize>,
+    pub(crate) wrap_cache: RefCell<WrapCache>,
 }
 
 impl View {
@@ -41,6 +48,8 @@ impl View {
             selections: SelectionSet::caret(Default::default()),
             scroll: ScrollPos::default(),
             folds: FoldSet::default(),
+            wrap_cols: None,
+            wrap_cache: RefCell::default(),
         }
     }
 

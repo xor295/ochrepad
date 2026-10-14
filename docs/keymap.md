@@ -84,11 +84,13 @@ Motions for `MoveCursor`:
 |---|---|
 | `"Left"`, `"Right"` | the previous or next character (a whole accented letter or emoji counts as one) |
 | `"WordLeft"`, `"WordRight"` | the previous or next word boundary |
-| `"Up"`, `"Down"` | the line above or below, keeping the column you started from |
+| `"Up"`, `"Down"` | the line above or below (the row, with word wrap), keeping the column you started from; folded lines are skipped |
 | `"Home"` | the first non-blank character of the line, or the line start if already there |
+| `"RowHome"` | with word wrap, the start of the caret's row, then `"Home"` on a second press; without wrap, the same as `"Home"` (the Home key) |
+| `"RowEnd"` | with word wrap, the end of the caret's row, then the end of the line; without wrap, the line end (the End key) |
 | `"LineStart"`, `"LineEnd"` | the very start or end of the line |
 | `"DocStart"`, `"DocEnd"` | the start or end of the document |
-| `{"PageUp": 20}`, `{"PageDown": 20}` | the given number of lines up or down |
+| `{"PageUp": 20}`, `{"PageDown": 20}` | the given number of rows up or down |
 
 ### Typing and deleting
 

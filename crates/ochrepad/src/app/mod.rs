@@ -711,6 +711,7 @@ impl OchrepadApp {
             let mut tabs = Tabs {
                 font_size: self.settings.font_size,
                 fold_margin: self.settings.fold_margin,
+                word_wrap: self.settings.word_wrap,
                 compares: &mut self.compares,
                 previews: &mut self.previews,
                 find_highlight,
@@ -1397,6 +1398,7 @@ impl OchrepadApp {
             });
         }
         ui.checkbox(&mut self.settings.fold_margin, "Show Fold Margin");
+        ui.checkbox(&mut self.settings.word_wrap, "Word Wrap");
         ui.separator();
         let theme = &mut self.settings.theme;
         ui.radio_value(theme, ThemeChoice::System, "System theme");
@@ -1566,6 +1568,7 @@ impl OchrepadApp {
 struct Tabs<'a> {
     font_size: f32,
     fold_margin: bool,
+    word_wrap: bool,
     compares: &'a mut Compares,
     previews: &'a mut Previews,
     find_highlight: Option<&'a ochrepad_core::Searcher>,
@@ -1658,6 +1661,7 @@ impl TabViewer for Tabs<'_> {
         let state = self.view_states.entry(view).or_default();
         state.font_size = self.font_size;
         state.fold_margin = self.fold_margin;
+        state.word_wrap = self.word_wrap;
         if *self.focus_request == Some(view) {
             state.request_focus();
             *self.focus_request = None;

@@ -401,12 +401,22 @@ fn move_selection(
         Motion::Right => (next_grapheme_boundary(doc, head), None),
         Motion::WordLeft => (word_left(doc, head), None),
         Motion::WordRight => (word_right(doc, head), None),
-        Motion::Home => {
-            let first_non_blank = first_non_blank(doc, line);
-            if head == first_non_blank {
-                (doc.line_start(line), None)
+        Motion::Home => (smart_home(doc, line, head), None),
+        Motion::RowHome => {
+            let row = rows.row_of(head);
+            let start = rows.row_range(row).start;
+            if row.sub > 0 && head != start {
+                (start, None)
             } else {
-                (first_non_blank, None)
+                (smart_home(doc, line, head), None)
+            }
+        }
+        Motion::RowEnd => {
+            let end = rows.row_end(rows.row_of(head));
+            if head != end {
+                (end, None)
+            } else {
+                (doc.line_end(line), None)
             }
         }
         Motion::LineStart => (doc.line_start(line), None),
@@ -539,6 +549,16 @@ fn add_cursor(rows: &DisplayMap, sels: &SelectionSet, delta: isize) -> Resolved 
     ranges.push(Selection::caret(pos).with_goal(goal));
     let primary = ranges.len() - 1;
     Resolved::Selections(SelectionSet::new(ranges, primary))
+}
+
+/// Home: the first non-blank of the line, or column 0 if already there.
+fn smart_home(doc: &Document, line: usize, head: ByteOffset) -> ByteOffset {
+    let first_non_blank = first_non_blank(doc, line);
+    if head == first_non_blank {
+        doc.line_start(line)
+    } else {
+        first_non_blank
+    }
 }
 
 fn first_non_blank(doc: &Document, line: usize) -> ByteOffset {

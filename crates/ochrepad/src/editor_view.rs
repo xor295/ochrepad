@@ -64,12 +64,15 @@ pub struct EditorViewState {
     smart: Option<(String, Option<Searcher>)>,
     /// Show the fold margin (chevrons) in the gutter.
     pub fold_margin: bool,
+    /// Wrap lines at the pane's width.
+    pub word_wrap: bool,
 }
 
 impl Default for EditorViewState {
     fn default() -> Self {
         Self {
             fold_margin: true,
+            word_wrap: false,
             cache: LayoutCache::default(),
             font_size: 14.0,
             last_activity: 0.0,
@@ -179,7 +182,8 @@ impl Top {
 /// The display rows of `view`.
 fn display_map(editor: &Editor, view: ViewId) -> DisplayMap<'_> {
     let v = editor.view(view).expect("view exists");
-    DisplayMap::new(doc_of(editor, v.buffer()), v, editor.settings.tab_width)
+    let b = editor.buffer(v.buffer()).expect("view's buffer exists");
+    DisplayMap::new(b, v, editor.settings.tab_width)
 }
 
 enum Op {
@@ -223,12 +227,15 @@ pub fn editor_view(
 
     let fold_margin = state.fold_margin;
     let fold_w = if fold_margin { 2.0 } else { 1.0 } * cell_w;
+    let wrap = state.word_wrap;
+    // No horizontal scrollbar while lines wrap.
+    let hbar_h = if wrap { 0.0 } else { SCROLLBAR_W };
     let geometry = |line_count: usize, visible_lines: usize| {
         let digits = line_count.to_string().len().max(3);
         let gutter_w = digits as f32 * cell_w + fold_w + TEXT_PAD;
         let body = Rect::from_min_max(
             rect.min,
-            Pos2::new(rect.max.x - SCROLLBAR_W, rect.max.y - SCROLLBAR_W),
+            Pos2::new(rect.max.x - SCROLLBAR_W, rect.max.y - hbar_h),
         );
         let gutter = Rect::from_min_max(body.min, Pos2::new(body.min.x + gutter_w, body.max.y));
         let content = Rect::from_min_max(Pos2::new(gutter.max.x, body.min.y), body.max);
@@ -274,6 +281,21 @@ pub fn editor_view(
                 },
             )
         });
+    }
+
+    // The wrap width follows the pane (the core's motions use it). One cell
+    // stays free at the right for the caret at the end of a full row.
+    let wrap_cols = wrap.then(|| {
+        let line_count = doc_of(editor, buffer_id).line_count();
+        let content = geometry(line_count, line_count).content;
+        ((content.width() - TEXT_PAD - cell_w) / cell_w)
+            .floor()
+            .max(1.0) as usize
+    });
+    if let Some(v) = editor.view_mut(view)
+        && v.wrap_cols != wrap_cols
+    {
+        v.wrap_cols = wrap_cols;
     }
 
     // --- Keyboard, clipboard and IME ------------------------------------------
@@ -382,8 +404,12 @@ pub fn editor_view(
         })
         .expect("view exists");
     let rows = display_map(editor, view);
-    // The document may have shrunk since the last frame.
+    // The document may have shrunk, or rewrapped, since the last frame.
+    top.row = rows.clamp_row(top.row);
     top = top.clamped(&rows, f.rows_full);
+    if wrap {
+        x_off = 0.0;
+    }
     let max_offset = Top {
         row: rows.max_top(f.rows_full),
         frac: 0.0,
@@ -401,7 +427,11 @@ pub fn editor_view(
     }
 
     // --- Scrollbars ---------------------------------------------------------------
-    let h_max = (state.max_width + 4.0 * cell_w - f.content.width()).max(0.0);
+    let h_max = if wrap {
+        0.0
+    } else {
+        (state.max_width + 4.0 * cell_w - f.content.width()).max(0.0)
+    };
     let (v_thumb, h_thumb) = thumbs(
         &f,
         top.offset(&rows),
@@ -688,7 +718,9 @@ pub fn editor_view(
             let x = layout.x_of(head.0 - line_start) - layout.x_of(row_start.0 - line_start);
             let margin = 4.0 * cell_w;
             let visible = f.content.width() - TEXT_PAD - cell_w;
-            if x < x_off {
+            if wrap {
+                // Rows fit the pane.
+            } else if x < x_off {
                 x_off = (x - margin).max(0.0);
             } else if x > x_off + visible {
                 x_off = x - visible + margin;
@@ -828,7 +860,7 @@ fn fold_target(
     }
     let layout = line_layout(editor, v.buffer(), cache, row.line, f, ui, Styling::Any);
     let y = f.content.min.y + (down - top.frac) * f.line_h;
-    let x_end = f.text_left() - x_off - row_x0(&rows, &layout, row) + layout.width;
+    let x_end = f.text_left() - x_off - row_x0(&rows, &layout, row, f.cell_w) + layout.width;
     f.fold_pill(x_end, y).contains(p).then_some(row.line)
 }
 
@@ -983,11 +1015,12 @@ fn row_at(rows: &DisplayMap, f: &Frame, top: Top, p: Pos2) -> RowPos {
     rows.advance(top.row, down as isize)
 }
 
-/// The x (in the line's layout) of the start of `row`: rows after the first
-/// of a line draw their slice of the layout shifted left by this much.
-fn row_x0(rows: &DisplayMap, layout: &LineLayout, row: RowPos) -> f32 {
+/// The x (in the line's layout) of the start of `row`, less its
+/// continuation indent: a wrapped row draws its slice of the line's layout
+/// shifted left by this much.
+fn row_x0(rows: &DisplayMap, layout: &LineLayout, row: RowPos, cell_w: f32) -> f32 {
     let line_start = rows.doc().line_start(row.line).0;
-    layout.x_of(rows.row_range(row).start.0 - line_start)
+    layout.x_of(rows.row_range(row).start.0 - line_start) - rows.row_indent(row) as f32 * cell_w
 }
 
 /// Line and visual column under `p` (columns may lie past the line end).
@@ -1006,7 +1039,7 @@ fn line_col_at(
     let row = row_at(&rows, f, top, p);
     let buffer = editor.view(view).expect("view exists").buffer();
     let layout = line_layout(editor, buffer, cache, row.line, f, ui, Styling::Any);
-    let x = p.x - f.text_left() + x_off + row_x0(&rows, &layout, row);
+    let x = p.x - f.text_left() + x_off + row_x0(&rows, &layout, row, f.cell_w);
     (row.line, visual_col_at_x(x, f.cell_w))
 }
 
@@ -1047,10 +1080,11 @@ fn hit_test(
     let row = row_at(&rows, f, top, p);
     let buffer = editor.view(view).expect("view exists").buffer();
     let layout = line_layout(editor, buffer, cache, row.line, f, ui, Styling::Any);
-    let x = p.x - f.text_left() + x_off + row_x0(&rows, &layout, row);
+    let x = p.x - f.text_left() + x_off + row_x0(&rows, &layout, row, f.cell_w);
     let range = rows.row_range(row);
     let line_start = rows.doc().line_start(row.line).0;
-    ByteOffset(line_start + layout.byte_at_x(x)).clamp(range.start, range.end)
+    // A click past a wrapped row's end stays on that row.
+    ByteOffset(line_start + layout.byte_at_x(x)).clamp(range.start, rows.row_end(row))
 }
 
 /// The vertical and horizontal scrollbar thumbs. `offset` and `max_offset`
@@ -1193,7 +1227,7 @@ fn paint(
         let range = rows.row_range(row);
         let (row_start, row_end) = (range.start, range.end);
         // Screen x of the line's text on this row, and of a byte in it.
-        let rx0 = x0 - row_x0(&rows, &layout, row);
+        let rx0 = x0 - row_x0(&rows, &layout, row, f.cell_w);
         let x_at = |b: ByteOffset| rx0 + layout.x_of(b.0 - line_start.0);
         let rect = Rect::from_min_size(
             Pos2::new(f.content.min.x, y),
@@ -1254,7 +1288,22 @@ fn paint(
             text_painter.rect_filled(r, 0.0, sel_bg);
         }
 
-        paint_line_text(&text_painter, &layout, rx0, y, &f.font, f.line_h);
+        // A wrapped row draws only its own slice of the line.
+        let row_painter = if rows.wraps() {
+            let right = if rows.is_last_in_line(row) {
+                f.content.max.x
+            } else {
+                x_at(row_end)
+            };
+            let slice = Rect::from_min_max(
+                Pos2::new(x_at(row_start), y),
+                Pos2::new(right, y + f.line_h),
+            );
+            text_painter.with_clip_rect(slice.intersect(text_painter.clip_rect()))
+        } else {
+            text_painter.clone()
+        };
+        paint_line_text(&row_painter, &layout, rx0, y, &f.font, f.line_h);
 
         let folded = v.folds().is_folded(line);
         if folded && row_end == line_end {
@@ -1295,7 +1344,8 @@ fn paint(
         };
         let line = row.line;
         let layout = line_layout(editor, buffer, cache, line, f, ui, Styling::Any);
-        let x = x0 - row_x0(&rows, &layout, row) + layout.x_of(head.0 - doc.line_start(line).0);
+        let x = x0 - row_x0(&rows, &layout, row, f.cell_w)
+            + layout.x_of(head.0 - doc.line_start(line).0);
         (Pos2::new(x, y0 + i * f.line_h), on_screen)
     };
     if focused {

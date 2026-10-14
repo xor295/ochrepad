@@ -117,8 +117,9 @@ impl Default for Keymap {
             (Chord::new(ArrowRight).cmd(), Motion::WordRight),
             (Chord::new(ArrowUp), Motion::Up),
             (Chord::new(ArrowDown), Motion::Down),
-            (Chord::new(Home), Motion::Home),
-            (Chord::new(End), Motion::LineEnd),
+            // Row-aware: the same as Home and LineEnd unless lines wrap.
+            (Chord::new(Home), Motion::RowHome),
+            (Chord::new(End), Motion::RowEnd),
             (Chord::new(Home).cmd(), Motion::DocStart),
             (Chord::new(End).cmd(), Motion::DocEnd),
         ];

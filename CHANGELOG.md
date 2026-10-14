@@ -24,6 +24,10 @@ people downloading the release.
   Alt+0 and Alt+Shift+0 for everything, Alt+1 to Alt+8 (with Shift to
   unfold) for one level. The same commands are in the View menu. Folds are
   kept with the session. See docs/view.md.
+- Word wrap (View > Word Wrap). Long lines wrap at the edge of the pane,
+  after spaces where possible, and their continuation rows are indented
+  like the line. Up and Down move by row; Home and End go to the start or
+  end of the row first, then of the line.
 
 ### Changed
 
