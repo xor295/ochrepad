@@ -87,7 +87,8 @@ impl Shown {
     pub fn row_of(&self, line: u64) -> u64 {
         match self {
             Shown::All => line,
-            Shown::Lines(v) => v.rank(line + 1).saturating_sub(1),
+            // `line` can come from a session file: any number at all.
+            Shown::Lines(v) => v.rank(line.saturating_add(1)).saturating_sub(1),
             Shown::AllExcept { excluded, .. } => {
                 let hidden = excluded.contains(line);
                 (line - excluded.rank(line)).saturating_sub(u64::from(hidden))

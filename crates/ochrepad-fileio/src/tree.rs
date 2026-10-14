@@ -29,8 +29,34 @@ fn on_this_machine(path: &Path) -> bool {
     use std::path::{Component, Prefix};
     match path.components().next() {
         Some(Component::Prefix(p)) => matches!(p.kind(), Prefix::Disk(_) | Prefix::VerbatimDisk(_)),
+        // Rooted without a drive: `\??\UNC\host\share` (which Windows hands
+        // to the network redirector) parses this way, as does `\x`.
+        Some(Component::RootDir) => false,
         _ => true,
     }
+}
+
+/// `path` followed through links (a few deep): where it really is, or
+/// `None` if a link on the way points off this machine.
+fn resolve_links(path: &Path) -> Option<PathBuf> {
+    let mut path = path.to_path_buf();
+    for _ in 0..8 {
+        match std::fs::symlink_metadata(&path) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                let t = std::fs::read_link(&path).ok()?;
+                let target = match path.parent() {
+                    Some(parent) if t.is_relative() => parent.join(t),
+                    _ => t,
+                };
+                if !on_this_machine(&target) {
+                    return None;
+                }
+                path = target;
+            }
+            _ => return Some(path),
+        }
+    }
+    None
 }
 
 /// The first line of a small text file.
@@ -57,23 +83,17 @@ pub fn ignore_files_stay_local(dir: &Path) -> bool {
     if !cfg!(windows) {
         return true;
     }
-    // A link's target, relative to its folder.
-    let link_stays = |path: &Path| match std::fs::symlink_metadata(path) {
-        Ok(meta) if meta.file_type().is_symlink() => std::fs::read_link(path).is_ok_and(|t| {
-            let target = match path.parent() {
-                Some(parent) if t.is_relative() => parent.join(t),
-                _ => t,
-            };
-            on_this_machine(&target)
-        }),
-        _ => true,
-    };
+    let link_stays = |path: &Path| resolve_links(path).is_some();
     if !link_stays(&dir.join(".gitignore")) || !link_stays(&dir.join(".ignore")) {
         return false;
     }
-    let git = dir.join(".git");
+    // `.git` as the walk will find it, through any links.
+    let Some(git) = resolve_links(&dir.join(".git")) else {
+        return false;
+    };
     match std::fs::symlink_metadata(&git) {
-        Ok(meta) if meta.file_type().is_symlink() => link_stays(&git),
+        // Still a link: too many in a row to follow.
+        Ok(meta) if meta.file_type().is_symlink() => false,
         Ok(meta) if meta.is_file() => {
             let Some(line) = first_line(&git) else {
                 return true;
@@ -386,6 +406,18 @@ mod tests {
         std::fs::write(real.join("commondir"), "../common").unwrap();
         assert!(ignore_files_stay_local(&evil));
         std::fs::write(real.join("commondir"), r"\\host.invalid\share").unwrap();
+        // NT paths: Windows hands `\??\UNC\...` to the network redirector.
+        let nt = root.join("nt");
+        std::fs::create_dir(&nt).unwrap();
+        for gitdir in [
+            r"\??\UNC\host.invalid\share\x",
+            r"\??\GLOBALROOT\Device\Mup\host.invalid\share\x",
+        ] {
+            assert!(!on_this_machine(Path::new(gitdir)), "{gitdir}");
+            std::fs::write(nt.join(".git"), format!("gitdir: {gitdir}\n")).unwrap();
+            assert!(!ignore_files_stay_local(&nt), "{gitdir}");
+        }
+        std::fs::remove_file(nt.join(".git")).unwrap();
 
         std::fs::write(root.join("b.txt"), "x").unwrap();
         let o = WalkOptions {
