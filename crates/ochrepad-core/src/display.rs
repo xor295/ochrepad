@@ -188,6 +188,11 @@ impl<'a> DisplayMap<'a> {
         self.doc.line_count() - self.folds.hidden_count()
     }
 
+    /// The `index`-th line that is not hidden (0-based), or the last one.
+    pub fn visible_line_at(&self, index: usize) -> usize {
+        self.folds.visible_line(index, self.doc.line_count())
+    }
+
     /// `line`, or if it is hidden the shown line above it (a fold's header),
     /// or below it when nothing above is shown (a filter can hide the first
     /// lines).

@@ -2210,7 +2210,119 @@ fn paint(
     if h_max > 0.0 {
         painter.rect_filled(h_thumb.shrink(2.0), 3.0, thumb_color);
     }
+    let caret_offset = rows.offset_of(rows.row_of(v.selections.primary().head), 0.0);
+    paint_overview(
+        &painter,
+        f,
+        &rows,
+        editor.buffer(buffer).map(|b| b.bookmarks()),
+        changes,
+        caret_offset,
+        &visuals,
+    );
     state.cache.retain_near(first, last.max(first + 1));
+}
+
+/// The overview on the vertical scrollbar: the bookmarks (right) and the
+/// changed lines (left) at their places in the document, and the caret's
+/// line across it. Worked out per pixel row, so a document with a million
+/// bookmarks costs no more than one with ten.
+fn paint_overview(
+    painter: &egui::Painter,
+    f: &Frame,
+    rows: &DisplayMap,
+    bookmarks: Option<&ochrepad_core::Bookmarks>,
+    changes: Option<&crate::change_history::LineMarks>,
+    caret_offset: f64,
+    visuals: &egui::Visuals,
+) {
+    let bar = f.vbar;
+    let visible = rows.visible_line_count();
+    // A short document maps to the part of the bar its lines fill.
+    let total = visible.max(f.rows_full) as f64;
+    let height = bar.height().floor();
+    if height < 1.0 || visible == 0 {
+        return;
+    }
+    let y_of = |offset: f64| bar.min.y + (offset / total) as f32 * height;
+    let caret_y = y_of(caret_offset).round();
+    let caret = Rect::from_min_max(
+        Pos2::new(bar.min.x + 1.0, caret_y),
+        Pos2::new(bar.max.x - 1.0, caret_y + 2.0),
+    );
+    painter.rect_filled(caret, 0.0, visuals.text_color().gamma_multiply(0.55));
+
+    let marks = bookmarks.filter(|b| !b.is_empty());
+    let changed = changes.filter(|c| !c.is_empty());
+    if marks.is_none() && changed.is_none() {
+        return;
+    }
+    let doc_lines = rows.doc().line_count();
+    // The document lines pixel row `y` covers, hidden ones included.
+    let lines_at = |y: usize| -> Option<std::ops::Range<usize>> {
+        let i0 = (y as f64 / height as f64 * total) as usize;
+        if i0 >= visible {
+            return None;
+        }
+        let i1 = (((y + 1) as f64 / height as f64 * total) as usize).max(i0 + 1);
+        let start = rows.visible_line_at(i0);
+        let end = if i1 >= visible {
+            doc_lines + 1
+        } else {
+            rows.visible_line_at(i1)
+        };
+        Some(start..end.max(start + 1))
+    };
+    let any_in = |sorted: &[usize], r: &std::ops::Range<usize>| {
+        let i = sorted.partition_point(|&l| l < r.start);
+        sorted.get(i).is_some_and(|&l| l < r.end)
+    };
+    let accent = crate::theme::bookmark_bg(visuals);
+    let lane = |y: f32, left: bool| {
+        let (x0, x1) = if left {
+            (bar.min.x + 1.0, bar.min.x + 4.0)
+        } else {
+            (bar.min.x + 6.0, bar.max.x - 1.0)
+        };
+        Rect::from_min_max(Pos2::new(x0, y), Pos2::new(x1, y + 2.0))
+    };
+    for y in 0..height as usize {
+        let Some(r) = lines_at(y) else {
+            break;
+        };
+        let top = bar.min.y + y as f32;
+        if marks.is_some_and(|m| any_in(m.lines(), &r)) {
+            painter.rect_filled(lane(top, false), 0.0, accent);
+        }
+        if let Some(c) = changed {
+            let i = c.lines.partition_point(|m| m.0 < r.start);
+            let here = c.lines[i..].iter().take_while(|m| m.0 < r.end);
+            // A changed line shows over added ones, and both over deletions.
+            let mut kind = None;
+            for (_, mark) in here {
+                match mark {
+                    crate::change_history::Mark::Changed => {
+                        kind = Some(ochrepad_core::diff::RowKind::Changed);
+                        break;
+                    }
+                    crate::change_history::Mark::Added => {
+                        kind = Some(ochrepad_core::diff::RowKind::Added);
+                    }
+                }
+            }
+            if kind.is_none() && any_in(&c.deleted_before, &r) {
+                kind = Some(ochrepad_core::diff::RowKind::Removed);
+            }
+            if let Some(kind) = kind {
+                let (red, green, blue) = crate::theme::diff_rgb(kind);
+                painter.rect_filled(
+                    lane(top, true),
+                    0.0,
+                    egui::Color32::from_rgb(red, green, blue),
+                );
+            }
+        }
+    }
 }
 
 #[cfg(test)]

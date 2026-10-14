@@ -91,6 +91,11 @@ wedge between two lines where lines were deleted. The marks update a moment
 after you stop typing. Undoing back to the saved text clears them, and
 saving starts afresh from the saved text.
 
+The vertical scrollbar shows the same marks in a narrow lane on its left,
+with the bookmarks in a lane on its right and a line where the caret is,
+each at its place in the document, so you can see where the changes are
+and drag there.
+
 A document that came back from a backup with unsaved changes is compared
 with its file on disk. New documents that were never saved, and files over
 the highlighting size limit (Settings > Preferences), have no marks.

@@ -145,6 +145,8 @@ on its line number.
 The find panel's **Bookmark** button bookmarks every line with a match
 (the lines with "ERROR" in a log, say); then F2 steps through them.
 
+The vertical scrollbar marks where the bookmarks are in the document.
+
 Bookmarks move with the text: lines added above push them down, and a
 bookmarked line joined to the one before takes its bookmark along. Adding
 and removing bookmarks is not an undo step, and undoing an edit doesn't

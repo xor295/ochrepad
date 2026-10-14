@@ -138,3 +138,49 @@ fn change_marks_look_right() {
     wait_for(&mut h, |a| marks(a).is_some_and(|m| m.lines.len() == 2));
     util::snapshot(&mut h, "change_history");
 }
+
+#[test]
+fn the_scrollbar_shows_bookmarks_changes_and_the_caret() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("long.txt");
+    let text: String = (1..=300).map(|i| format!("line {i}\n")).collect();
+    std::fs::write(&file, &text).unwrap();
+    let mut h = harness();
+    h.state_mut().open_path(&file);
+    h.run();
+    let view = h.state().active_view();
+    {
+        let ed = &mut h.state_mut().editor;
+        for action in [
+            ochrepad_core::Action::GoToLine {
+                line: 40,
+                column: 1,
+            },
+            ochrepad_core::Action::InsertText("changed ".into()),
+            ochrepad_core::Action::GoToLine {
+                line: 120,
+                column: 1,
+            },
+            ochrepad_core::Action::InsertText("new line\n".into()),
+            ochrepad_core::Action::GoToLine {
+                line: 200,
+                column: 1,
+            },
+            ochrepad_core::Action::DeleteLine,
+            ochrepad_core::Action::GoToLine {
+                line: 150,
+                column: 1,
+            },
+        ] {
+            ed.apply(view, action).unwrap();
+        }
+    }
+    let b = h.state().buffer_id();
+    h.state_mut()
+        .editor
+        .buffer_mut(b)
+        .unwrap()
+        .set_bookmarks([70, 250]);
+    wait_for(&mut h, |a| marks(a).is_some_and(|m| m.lines.len() == 2));
+    util::snapshot(&mut h, "scrollbar_overview");
+}
