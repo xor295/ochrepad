@@ -108,12 +108,16 @@ fn name(action: &Action) -> &'static str {
         Action::ToggleBlockComment => "ToggleBlockComment",
         Action::GoToMatchingBracket => "GoToMatchingBracket",
         Action::SelectToMatchingBracket => "SelectToMatchingBracket",
+        Action::FormatJson { .. } => "FormatJson",
+        Action::MinifyJson => "MinifyJson",
+        Action::Encode(_) => "Encode",
+        Action::Decode(_) => "Decode",
         Action::Undo => "Undo",
         Action::Redo => "Redo",
     }
 }
 
-const ALL: [&str; 49] = [
+const ALL: [&str; 53] = [
     "InsertText",
     "Paste",
     "InsertTab",
@@ -161,6 +165,10 @@ const ALL: [&str; 49] = [
     "ToggleBlockComment",
     "GoToMatchingBracket",
     "SelectToMatchingBracket",
+    "FormatJson",
+    "MinifyJson",
+    "Encode",
+    "Decode",
     "Undo",
     "Redo",
 ];

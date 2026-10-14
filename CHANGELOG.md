@@ -37,6 +37,13 @@ people downloading the release.
   spaces), Show All Characters (Ctrl+Shift+8), indent guides and the wrap
   symbol. Hovering a special character's box names it.
 - A vertical edge line after a chosen column (Preferences).
+- Edit > Text Tools: Format, Minify and Validate JSON (object key order,
+  numbers and strings are kept exactly; invalid JSON is reported with its
+  line and column, and the caret moves there), Base64 and URL
+  encode/decode, and a dialog with the MD5, SHA-1 and SHA-256 hashes of the
+  selection or the document. They work on each selection, or on the whole
+  document when nothing is selected, and can be bound to keys and recorded
+  in macros.
 
 ### Fixed
 

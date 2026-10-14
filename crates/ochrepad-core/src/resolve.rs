@@ -259,6 +259,10 @@ pub(crate) fn resolve(
         | Action::UnfoldLevel(_)
         | Action::ToggleLineComment
         | Action::ToggleBlockComment
+        | Action::FormatJson { .. }
+        | Action::MinifyJson
+        | Action::Encode(_)
+        | Action::Decode(_)
         | Action::Find { .. }
         | Action::Replace { .. }
         | Action::ReplaceAll { .. }

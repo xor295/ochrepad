@@ -53,7 +53,9 @@ A fast, native text editor in the spirit of Notepad++, written in Rust with
 - **Text tools**: UPPER/lower/Title/iNVERT case, sort lines (ascending,
   descending, case-insensitive, numeric, by a column selection), duplicate,
   move, join lines, trim trailing whitespace, and remove empty or duplicate
-  lines.
+  lines. JSON format, minify and validate (key order and numbers kept),
+  Base64 and URL encoding, and MD5, SHA-1 and SHA-256 hashes
+  ([more](docs/text-tools.md)).
 - **Faithful file handling**: UTF-8, UTF-16 and legacy encodings are detected,
   and files are saved back with the same encoding, BOM and line endings
   (CRLF, LF or CR). Saves are atomic, so a crash never leaves a half-written
