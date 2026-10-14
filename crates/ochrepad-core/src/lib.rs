@@ -3,6 +3,7 @@
 
 pub mod action;
 mod autoclose;
+pub mod bookmarks;
 pub mod brackets;
 pub mod buffer;
 pub mod changeset;
@@ -25,6 +26,7 @@ pub mod transform;
 pub mod view;
 
 pub use action::{Action, ActionError, Direction, Motion};
+pub use bookmarks::Bookmarks;
 pub use buffer::{Buffer, BufferId, CommentSyntax, FileMeta, Indent, LineEdit, LineEnding};
 pub use changeset::{Bias, ChangeSet, Edit};
 pub use column_edit::{ColumnInsert, Leading, NumberFormat, NumberSequence};

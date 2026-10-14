@@ -216,6 +216,26 @@ fn action() -> impl Strategy<Value = Action> {
             prop::sample::select(vec![Codec::Base64, Codec::Url]).prop_map(Action::Encode),
             prop::sample::select(vec![Codec::Base64, Codec::Url]).prop_map(Action::Decode),
         ],
+        // Bookmarks, and the commands on the lines they mark.
+        2 => prop_oneof![
+            Just(Action::ToggleBookmark),
+            Just(Action::NextBookmark),
+            Just(Action::PrevBookmark),
+            Just(Action::ClearBookmarks),
+            Just(Action::InverseBookmarks),
+            Just(Action::RemoveBookmarkedLines),
+            Just(Action::RemoveUnbookmarkedLines),
+            short_text().prop_map(Action::ReplaceBookmarkedLines),
+            prop::sample::select(vec!["a", "b", "\\n"]).prop_map(|p| {
+                Action::BookmarkMatches(ochrepad_core::SearchQuery::new(
+                    p,
+                    ochrepad_core::SearchOptions {
+                        regex: true,
+                        ..Default::default()
+                    },
+                ))
+            }),
+        ],
     ]
 }
 
@@ -270,6 +290,14 @@ fn check(t: &util::T) -> Result<(), TestCaseError> {
     let doc = t.buffer().doc();
     sels.validate(doc)
         .map_err(|e| TestCaseError::fail(format!("{e}\nstate: {}", t.show())))?;
+    // Bookmarks: sorted, apart, on lines of the text.
+    let marks = t.buffer().bookmarks().lines();
+    prop_assert!(marks.windows(2).all(|w| w[0] < w[1]), "{marks:?}");
+    prop_assert!(
+        marks.iter().all(|&l| l < doc.line_count()),
+        "{marks:?} in {} lines",
+        doc.line_count()
+    );
     // Folds: no caret is hidden, and the display rows are the lines that are
     // not hidden, in order.
     let view = t.ed.view(t.view).unwrap();

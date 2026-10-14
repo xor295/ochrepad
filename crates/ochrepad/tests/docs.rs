@@ -123,12 +123,21 @@ fn name(action: &Action) -> &'static str {
         Action::MinifyJson => "MinifyJson",
         Action::Encode(_) => "Encode",
         Action::Decode(_) => "Decode",
+        Action::ToggleBookmark => "ToggleBookmark",
+        Action::NextBookmark => "NextBookmark",
+        Action::PrevBookmark => "PrevBookmark",
+        Action::ClearBookmarks => "ClearBookmarks",
+        Action::InverseBookmarks => "InverseBookmarks",
+        Action::BookmarkMatches(_) => "BookmarkMatches",
+        Action::RemoveBookmarkedLines => "RemoveBookmarkedLines",
+        Action::RemoveUnbookmarkedLines => "RemoveUnbookmarkedLines",
+        Action::ReplaceBookmarkedLines(_) => "ReplaceBookmarkedLines",
         Action::Undo => "Undo",
         Action::Redo => "Redo",
     }
 }
 
-const ALL: [&str; 64] = [
+const ALL: [&str; 73] = [
     "InsertText",
     "Paste",
     "InsertTab",
@@ -191,6 +200,15 @@ const ALL: [&str; 64] = [
     "MinifyJson",
     "Encode",
     "Decode",
+    "ToggleBookmark",
+    "NextBookmark",
+    "PrevBookmark",
+    "ClearBookmarks",
+    "InverseBookmarks",
+    "BookmarkMatches",
+    "RemoveBookmarkedLines",
+    "RemoveUnbookmarkedLines",
+    "ReplaceBookmarkedLines",
     "Undo",
     "Redo",
 ];

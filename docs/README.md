@@ -22,8 +22,8 @@ menu item to explain:
 - [Text tools](text-tools.md): formatting and checking JSON, Base64 and URL
   encoding, and hashes.
 - [Editing lines, blanks and columns](editing.md): Notepad++'s line and
-  blank operations, the Column Editor, the tab menu, full screen, and
-  closing brackets as you type.
+  blank operations, the Column Editor, bookmarks, the right-click menu, the
+  tab menu, full screen, and closing brackets as you type.
 - [Key bindings](keymap.md): the `keymap.json` format and every command you
   can bind.
 - [Backups, sessions and files changed elsewhere](backups-and-session.md):

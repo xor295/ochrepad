@@ -12,6 +12,14 @@ people downloading the release.
 
 ### Added
 
+- Bookmarks, as in Notepad++: Ctrl+F2 bookmarks a line (its number gets a
+  tag in the accent colour), F2 and Shift+F2 go from one to the next, and
+  Search > Bookmark clears and inverts them and cuts, copies, removes or
+  replaces the bookmarked lines (or removes the others). The find panel's
+  Bookmark button marks every line with a match. Bookmarks follow edits,
+  are recorded in macros and are kept in the session.
+- A right-click menu in the editor: undo and redo, the clipboard, case,
+  comments and the line's bookmark.
 - A read-only viewer for large files: files over 256 MB (a setting) open
   without being read into memory, so a log of several gigabytes shows its
   first screen at once. The line index builds in the background while you

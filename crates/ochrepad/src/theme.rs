@@ -186,6 +186,17 @@ pub fn smart_highlight_bg(visuals: &Visuals) -> Color32 {
     Color32::from_rgba_unmultiplied(OCHRE.r(), OCHRE.g(), OCHRE.b(), alpha)
 }
 
+/// A bookmarked line's number sits on a tag in the accent colour
+/// (Search > Bookmark)...
+pub fn bookmark_bg(visuals: &Visuals) -> Color32 {
+    accent(visuals)
+}
+
+/// ...drawn in the editor's background colour.
+pub fn bookmark_fg(visuals: &Visuals) -> Color32 {
+    visuals.extreme_bg_color
+}
+
 /// The dock (tab bar, split separators, drop overlay).
 pub fn dock_style(style: &Style) -> egui_dock::Style {
     let v = &style.visuals;

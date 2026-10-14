@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::bookmarks::Bookmarks;
 use crate::fold::FoldStrategy;
 use crate::history::{History, Revision};
 use crate::text::Document;
@@ -124,6 +125,8 @@ pub struct Buffer {
     pub meta: FileMeta,
     /// Line edits since the last `take_line_edits`, for the highlighter.
     line_edits: Vec<LineEdit>,
+    /// The bookmarked lines; edits move them (`Editor` maps them).
+    pub(crate) bookmarks: Bookmarks,
 }
 
 impl Buffer {
@@ -144,6 +147,7 @@ impl Buffer {
             indent_mixed: false,
             meta,
             line_edits: Vec::new(),
+            bookmarks: Bookmarks::default(),
         }
     }
 
@@ -157,6 +161,23 @@ impl Buffer {
 
     pub fn history(&self) -> &History {
         &self.history
+    }
+
+    pub fn bookmarks(&self) -> &Bookmarks {
+        &self.bookmarks
+    }
+
+    /// Replaces the bookmarks (a session restoring them); lines past the
+    /// end are dropped.
+    pub fn set_bookmarks(&mut self, lines: impl IntoIterator<Item = usize>) {
+        let count = self.doc.line_count();
+        self.bookmarks.set(lines, count);
+    }
+
+    /// Bookmarks `line`, or removes its bookmark (a click in the margin);
+    /// returns whether it has one now.
+    pub fn toggle_bookmark(&mut self, line: usize) -> bool {
+        line < self.doc.line_count() && self.bookmarks.toggle(line)
     }
 
     /// Identifies the current text state; returns to an earlier value on undo.

@@ -1609,6 +1609,66 @@ impl OchrepadApp {
                 }
             }
         }
+        if viewer.is_none() {
+            ui.separator();
+            ui.menu_button("Bookmark", |ui| self.bookmark_menu(ui));
+        }
+    }
+
+    /// Search > Bookmark, as in Notepad++.
+    fn bookmark_menu(&mut self, ui: &mut Ui) {
+        let item = |ui: &mut Ui, enabled: bool, label: &str, shortcut: &str| {
+            let button = if shortcut.is_empty() {
+                Button::new(label)
+            } else {
+                Button::new(label).shortcut_text(shortcut)
+            };
+            ui.add_enabled(enabled, button).clicked()
+        };
+        let marked = !self.buffer().bookmarks().is_empty();
+        if item(ui, true, "Toggle Bookmark", "Ctrl+F2") {
+            self.apply(Action::ToggleBookmark);
+        }
+        if item(ui, marked, "Next Bookmark", "F2") {
+            self.apply(Action::NextBookmark);
+        }
+        if item(ui, marked, "Previous Bookmark", "Shift+F2") {
+            self.apply(Action::PrevBookmark);
+        }
+        if item(ui, marked, "Clear All Bookmarks", "") {
+            self.apply(Action::ClearBookmarks);
+        }
+        ui.separator();
+        if item(ui, marked, "Cut Bookmarked Lines", "") {
+            self.copy_bookmarked_lines(ui.ctx());
+            self.apply(Action::RemoveBookmarkedLines);
+        }
+        if item(ui, marked, "Copy Bookmarked Lines", "") {
+            self.copy_bookmarked_lines(ui.ctx());
+        }
+        if item(ui, marked, "Paste to (Replace) Bookmarked Lines", "") {
+            // The clipboard comes as a paste event, which the editor sends to
+            // the bookmarked lines.
+            let now = self.now;
+            self.view_state_mut().paste_to_bookmarks(now);
+            ui.ctx().send_viewport_cmd(ViewportCommand::RequestPaste);
+        }
+        if item(ui, marked, "Remove Bookmarked Lines", "") {
+            self.apply(Action::RemoveBookmarkedLines);
+        }
+        if item(ui, marked, "Remove Unmarked Lines", "") {
+            self.apply(Action::RemoveUnbookmarkedLines);
+        }
+        if item(ui, true, "Inverse Bookmark", "") {
+            self.apply(Action::InverseBookmarks);
+        }
+    }
+
+    /// Copy Bookmarked Lines: their text, each with its line break.
+    fn copy_bookmarked_lines(&mut self, ctx: &egui::Context) {
+        let b = self.buffer();
+        let text = ochrepad_core::bookmarks::marked_text(b.doc(), b.bookmarks());
+        crate::editor_view::copy_text(ctx, text);
     }
 
     /// Opens a comparison of two buffers in a new tab.
@@ -2283,7 +2343,7 @@ impl TabViewer for Tabs<'_> {
         let log_style = log_doc.as_ref().map(|doc| {
             crate::log_rules::LogStyle::new(self.log_rules, doc, ui.visuals().dark_mode)
         });
-        editor_view(
+        let response = editor_view(
             ui,
             self.editor,
             view,
@@ -2298,6 +2358,7 @@ impl TabViewer for Tabs<'_> {
                     .map(|s| s as &dyn crate::editor_view::RowStyle),
             },
         );
+        response.context_menu(|ui| crate::editor_menu::show(ui, self.editor, view, state));
     }
 
     fn context_menu(&mut self, ui: &mut Ui, tab: &mut Tab, _path: NodePath) {

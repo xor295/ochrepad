@@ -216,6 +216,10 @@ impl Default for Keymap {
                 Chord::new(B).cmd().alt(),
                 act(Action::SelectToMatchingBracket),
             ),
+            // Bookmarks (Notepad++'s keys).
+            (Chord::new(F2).cmd(), act(Action::ToggleBookmark)),
+            (Chord::new(F2), act(Action::NextBookmark)),
+            (Chord::new(F2).shift(), act(Action::PrevBookmark)),
             // Folding (Notepad++'s View > Fold/Collapse shortcuts).
             (Chord::new(F).cmd().alt(), act(Action::Fold)),
             (Chord::new(F).cmd().alt().shift(), act(Action::Unfold)),

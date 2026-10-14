@@ -75,6 +75,9 @@ pub struct SessionBuffer {
     /// status bar menu): it comes back as it was.
     #[serde(default)]
     pub indent: Option<ochrepad_core::Indent>,
+    /// The bookmarked lines.
+    #[serde(default)]
+    pub bookmarks: Vec<usize>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -393,6 +396,7 @@ impl OchrepadApp {
                         snapshot,
                         language: b.language.clone(),
                         indent: b.indent_set.then_some(b.indent),
+                        bookmarks: b.bookmarks().lines().to_vec(),
                     });
                     buffer_index.insert(id, session.buffers.len() - 1);
                     session.buffers.len() - 1
@@ -535,6 +539,9 @@ impl OchrepadApp {
             if let Some(b) = buffer {
                 self.attach_highlighting(b);
                 self.record_disk_stamp(b);
+                if let Some(buf) = self.editor.buffer_mut(b) {
+                    buf.set_bookmarks(sb.bookmarks.iter().copied());
+                }
                 if let Some(indent) = sb.indent
                     && let Some(buf) = self.editor.buffer_mut(b)
                 {

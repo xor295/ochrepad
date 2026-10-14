@@ -175,6 +175,24 @@ are not recorded in macros. See [Folding](view.md#folding).
 | `{"Action": {"FoldLevel": 1}}` | Folds every region of a level: 1 is outermost; in Markdown the level is the heading level (Alt+1 … Alt+8). |
 | `{"Action": {"UnfoldLevel": 1}}` | Unfolds every region of a level (Alt+Shift+1 … Alt+Shift+8). |
 
+### Bookmarks
+
+Bookmarks belong to the document, and adding or removing them is not an
+undo step; the commands that delete or replace lines are. Macros record
+them all (a macro can find a line and bookmark it). See
+[Bookmarks](editing.md#bookmarks).
+
+| Command | Does |
+|---|---|
+| `{"Action": "ToggleBookmark"}` | Bookmarks the caret's line (each caret's line), or removes the bookmarks if they all have one (Ctrl+F2). |
+| `{"Action": "NextBookmark"}` | Moves the caret to the start of the next bookmarked line, from the last one to the first (F2). |
+| `{"Action": "PrevBookmark"}` | Moves the caret to the start of the previous bookmarked line (Shift+F2). |
+| `{"Action": "ClearBookmarks"}` | Removes every bookmark. |
+| `{"Action": "InverseBookmarks"}` | Bookmarks every line without a bookmark, and removes the others. |
+| `{"Action": "RemoveBookmarkedLines"}` | Deletes the bookmarked lines, as one undo step. |
+| `{"Action": "RemoveUnbookmarkedLines"}` | Deletes every line without a bookmark, as one undo step. |
+| `{"Action": {"ReplaceBookmarkedLines": "TODO"}}` | Replaces the text of each bookmarked line with the given text, keeping the line breaks. (Search > Bookmark > Paste to (Replace) Bookmarked Lines does this with the clipboard.) |
+
 ### Searching
 
 These run a search without opening the find panel. The `query` always has
@@ -186,6 +204,7 @@ all five options:
 | `{"Action": {"Replace": {"query": {"pattern": "\\s+$", "options": {"regex": true, "match_case": false, "whole_word": false, "wrap": true, "in_selection": false}}, "replacement": ""}}}` | Replaces the selected match and selects the next one. |
 | `{"Action": {"ReplaceAll": {"query": {"pattern": "colour", "options": {"regex": false, "match_case": true, "whole_word": true, "wrap": true, "in_selection": false}}, "replacement": "color"}}}` | Replaces every match, as one undo step. |
 | `{"Action": {"SelectAllMatches": {"pattern": "foo", "options": {"regex": false, "match_case": true, "whole_word": true, "wrap": true, "in_selection": false}}}}` | Puts a selection on every match. |
+| `{"Action": {"BookmarkMatches": {"pattern": "ERROR", "options": {"regex": false, "match_case": true, "whole_word": true, "wrap": true, "in_selection": false}}}}` | Bookmarks every line where a match starts, keeping the bookmarks already there. |
 
 The pattern syntax is described in [Find and replace](find-and-replace.md).
 In JSON, a backslash is written twice (`"\\s+$"`).

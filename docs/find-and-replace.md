@@ -21,6 +21,9 @@ Options:
 **Select All** turns every match into a selection, so typing edits them all.
 **Replace All** is a single undo step.
 
+**Bookmark** bookmarks every line with a match, so F2 and Shift+F2 can go
+from one to the next ([Bookmarks](editing.md#bookmarks)).
+
 ## Find All and the Search Results panel
 
 **Find All in Current Document** and **Find All in All Open Documents** list

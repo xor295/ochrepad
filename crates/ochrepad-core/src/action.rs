@@ -236,6 +236,30 @@ pub enum Action {
     /// Decode each selection (or the whole document). Fails when it is not
     /// valid or the bytes are not UTF-8 text.
     Decode(Codec),
+    /// Bookmark each caret's line, or remove the bookmarks if every one of
+    /// those lines has one (Ctrl+F2). Bookmarks belong to the document;
+    /// changing them is not an undo step.
+    ToggleBookmark,
+    /// Move the caret to the start of the next bookmarked line, wrapping
+    /// around to the first (F2).
+    NextBookmark,
+    /// Move the caret to the start of the previous bookmarked line,
+    /// wrapping around to the last (Shift+F2).
+    PrevBookmark,
+    /// Remove every bookmark.
+    ClearBookmarks,
+    /// Bookmark every line without a bookmark, and remove the others.
+    InverseBookmarks,
+    /// Bookmark every line holding the start of a match (in the selections
+    /// with "in selection"), keeping the bookmarks already there.
+    BookmarkMatches(SearchQuery),
+    /// Delete the bookmarked lines with their line breaks.
+    RemoveBookmarkedLines,
+    /// Delete every line without a bookmark.
+    RemoveUnbookmarkedLines,
+    /// Replace the text of each bookmarked line (not its line break) with
+    /// this text: Paste to (Replace) Bookmarked Lines.
+    ReplaceBookmarkedLines(String),
     Undo,
     Redo,
 }
@@ -254,6 +278,8 @@ pub enum ActionError {
     InvalidJson(Box<InvalidJson>),
     /// The text cannot be decoded; the message says why.
     Decode(String),
+    /// A bookmark command found no bookmarks.
+    NoBookmarks,
 }
 
 impl fmt::Display for ActionError {
@@ -273,6 +299,7 @@ impl fmt::Display for ActionError {
                 e.line, e.column, e.message
             ),
             ActionError::Decode(message) => f.write_str(message),
+            ActionError::NoBookmarks => f.write_str("there are no bookmarks"),
         }
     }
 }

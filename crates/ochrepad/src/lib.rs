@@ -4,6 +4,7 @@ pub mod app;
 pub mod bench;
 pub mod compare;
 pub mod doc_map;
+pub mod editor_menu;
 pub mod editor_view;
 pub mod file_tree;
 pub mod filter_bar;

@@ -87,6 +87,41 @@ Other View:
 
 Closing tabs with unsaved changes asks about each, as closing one does.
 
+## Bookmarks
+
+A bookmark marks a line, as in Notepad++: its line number is drawn on a
+tag in the accent colour. **Ctrl+F2** bookmarks the caret's line (or
+removes its bookmark), **F2** goes to the next bookmarked line and
+**Shift+F2** to the previous one, round from the last to the first. The
+right-click menu adds or removes the bookmark of the line you click, also
+on its line number.
+
+**Search > Bookmark** has the rest:
+
+- **Clear All Bookmarks** and **Inverse Bookmark** (bookmark the lines
+  without one, and only those).
+- **Cut**, **Copy** and **Remove Bookmarked Lines**, and **Remove Unmarked
+  Lines**: copying takes each line with its line break, and removing is one
+  undo step.
+- **Paste to (Replace) Bookmarked Lines** replaces the text of every
+  bookmarked line with what is on the clipboard.
+
+The find panel's **Bookmark** button bookmarks every line with a match
+(the lines with "ERROR" in a log, say); then F2 steps through them.
+
+Bookmarks move with the text: lines added above push them down, and a
+bookmarked line joined to the one before takes its bookmark along. Adding
+and removing bookmarks is not an undo step, and undoing an edit doesn't
+bring back a bookmark it removed. The session keeps each file's bookmarks.
+
+## The right-click menu
+
+Right-clicking the text moves the caret there, unless you click on the
+selection, and opens a menu with Undo and Redo, the clipboard (Cut, Copy,
+Paste, Delete, Select All), UPPERCASE and lowercase, the comment toggles,
+and the bookmark of the line. Right-clicking a line number does the same
+for that line.
+
 ## Full screen and always on top
 
 **View > Full Screen** (**F11**) fills the screen with the window; F11 again

@@ -645,7 +645,9 @@ fn target_lines(doc: &Document, sels: &SelectionSet) -> Vec<usize> {
 /// Deletes whole lines (sorted, distinct) with their line breaks. A run of
 /// lines that ends the document takes the line break before it instead, so
 /// no empty line is left behind.
-fn remove_lines(doc: &Document, sels: &SelectionSet, lines: &[usize]) -> Resolved {
+/// Deletes `lines` (sorted) with their line breaks; the last line takes
+/// the break before it.
+pub(crate) fn remove_lines(doc: &Document, sels: &SelectionSet, lines: &[usize]) -> Resolved {
     let last = doc.line_count() - 1;
     let mut edits = Vec::new();
     let mut i = 0;

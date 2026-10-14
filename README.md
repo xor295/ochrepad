@@ -25,6 +25,10 @@ A fast, native text editor in the spirit of Notepad++, written in Rust with
   Replace All can also work on every open document. Find in Files
   (Ctrl+Shift+F) searches a folder on disk, honouring `.gitignore`. See
   [docs/find-and-replace.md](docs/find-and-replace.md) for the regex dialect.
+- **Bookmarks**: Ctrl+F2 marks a line, F2 and Shift+F2 jump between marks,
+  the find panel bookmarks every line with a match, and the bookmarked
+  lines can be copied, cut or removed at once
+  ([more](docs/editing.md#bookmarks)).
 - **Macros**: record, play back once, N times or to the end of the file, save
   them with a name and a shortcut ([more](docs/macros.md)).
 - **Code folding** by indentation (and by heading in Markdown), with
@@ -145,6 +149,7 @@ Windows and Linux. macOS is not supported.
 | Back to one caret | Esc |
 | Select a line | click its line number (drag for several) |
 | Go to line | Ctrl+G |
+| Bookmark a line, next, previous | Ctrl+F2, F2, Shift+F2 |
 | Indent, unindent | Tab (with lines selected), Shift+Tab |
 | Toggle comment, block comment | Ctrl+/, Ctrl+Shift+/ |
 | Matching bracket: go, select | Ctrl+B, Ctrl+Alt+B |

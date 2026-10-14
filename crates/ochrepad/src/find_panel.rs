@@ -299,6 +299,29 @@ impl FindPanel {
                     requests.push(FindRequest::Reveal);
                 }
             }
+            if let FindTarget::Editor(editor, view) = &mut target
+                && ui
+                    .button("Bookmark")
+                    .on_hover_text(
+                        "Bookmark every line with a match; F2 and Shift+F2 go from one to the next",
+                    )
+                    .clicked()
+            {
+                let marks = |editor: &ochrepad_core::Editor| {
+                    editor
+                        .view(*view)
+                        .and_then(|v| editor.buffer(v.buffer()))
+                        .map_or(0, |b| b.bookmarks().len())
+                };
+                let before = marks(editor);
+                if self
+                    .run(editor, *view, Action::BookmarkMatches(self.query()))
+                    .is_ok()
+                {
+                    let added = marks(editor) - before;
+                    self.message = Some((format!("{added} lines bookmarked"), false));
+                }
+            }
             // A widget of its own, not in a child `Ui`: a child at the point
             // where the row wraps takes the whole height of the panel.
             let valid = matches!(self.searcher(), Some(Ok(_)));

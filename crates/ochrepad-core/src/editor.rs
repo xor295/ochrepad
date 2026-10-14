@@ -272,9 +272,30 @@ impl Editor {
             | Action::UnfoldAll
             | Action::FoldLevel(_)
             | Action::UnfoldLevel(_) => self.fold_action(view, buffer_id, &action),
+            Action::ToggleBookmark
+            | Action::ClearBookmarks
+            | Action::InverseBookmarks
+            | Action::BookmarkMatches(_) => self.bookmark_action(view, buffer_id, &action)?,
             _ => {
+                let marked = self
+                    .buffers
+                    .get(&buffer_id)
+                    .map(|b| b.bookmarks.lines().to_vec())
+                    .unwrap_or_default();
                 let resolved = self.resolve_in(view, buffer_id, &action)??;
                 self.commit(view, buffer_id, resolved)?;
+                if let Some(b) = self.buffers.get_mut(&buffer_id) {
+                    let count = b.doc.line_count();
+                    match &action {
+                        // Their lines are gone (the marks would otherwise
+                        // land on the lines after them).
+                        Action::RemoveBookmarkedLines => b.bookmarks.clear(),
+                        Action::ReplaceBookmarkedLines(text) => b
+                            .bookmarks
+                            .set(crate::bookmarks::after_replace(&marked, text), count),
+                        _ => {}
+                    }
+                }
                 if let Action::ConvertIndentation { to_spaces } = action
                     && let Some(b) = self.buffers.get_mut(&buffer_id)
                 {
@@ -337,6 +358,13 @@ impl Editor {
                     _ => None,
                 };
                 resolved.ok_or(ActionError::NoCommentSyntax)
+            }
+            Action::NextBookmark
+            | Action::PrevBookmark
+            | Action::RemoveBookmarkedLines
+            | Action::RemoveUnbookmarkedLines
+            | Action::ReplaceBookmarkedLines(_) => {
+                crate::bookmarks::resolve(action, &buffer.doc, sels, &buffer.bookmarks)
             }
             Action::FormatJson { .. }
             | Action::MinifyJson
@@ -784,6 +812,48 @@ impl Editor {
         reveal_carets(doc, v);
     }
 
+    /// The bookmark actions that change only the bookmarks.
+    fn bookmark_action(
+        &mut self,
+        view: ViewId,
+        buffer: BufferId,
+        action: &Action,
+    ) -> Result<(), ActionError> {
+        let (Some(v), Some(b)) = (self.views.get(&view), self.buffers.get_mut(&buffer)) else {
+            return Err(ActionError::UnknownView(view));
+        };
+        let count = b.doc.line_count();
+        match action {
+            Action::ToggleBookmark => {
+                let lines = crate::bookmarks::caret_lines(&b.doc, &v.selections);
+                if lines.iter().all(|&l| b.bookmarks.contains(l)) {
+                    for l in lines {
+                        b.bookmarks.remove(l);
+                    }
+                } else {
+                    for l in lines {
+                        b.bookmarks.insert(l);
+                    }
+                }
+            }
+            Action::ClearBookmarks => b.bookmarks.clear(),
+            Action::InverseBookmarks => b.bookmarks.invert(count),
+            Action::BookmarkMatches(query) => {
+                let searcher = crate::search::Searcher::new(query)
+                    .map_err(|e| ActionError::InvalidPattern(e.0))?;
+                let matches = searcher.find_in(&b.doc, &v.selections);
+                if matches.is_empty() {
+                    return Err(ActionError::NotFound);
+                }
+                let found = matches.iter().map(|m| b.doc.line_of(m.start));
+                let all: Vec<usize> = b.bookmarks.lines().iter().copied().chain(found).collect();
+                b.bookmarks.set(all, count);
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
     /// Shifts the selections of every other view of `buffer` through `changes`
     /// so their carets stay put relative to the text.
     fn map_other_views(&mut self, buffer: BufferId, except: ViewId, changes: &ChangeSet) {
@@ -826,16 +896,33 @@ fn apply_changes(buffer: &mut Buffer, changes: &ChangeSet) -> Vec<LineEdit> {
     // `ChangeSet::apply` goes back to front, so each line edit is recorded in
     // the coordinates of the document at the moment it is applied.
     let mut edits = Vec::with_capacity(changes.edits().len());
+    let marked = !buffer.bookmarks.is_empty();
+    let mut mark_edits = Vec::new();
     for e in changes.edits().iter().rev() {
         let start = buffer.doc.line_of(e.start);
+        let new_lines = e.text.bytes().filter(|&b| b == b'\n').count();
         let edit = LineEdit {
             start,
             old_end: buffer.doc.line_of(e.end),
-            new_end: start + e.text.bytes().filter(|&b| b == b'\n').count(),
+            new_end: start + new_lines,
         };
+        if marked {
+            mark_edits.push(crate::bookmarks::EditLines {
+                start,
+                old_end: edit.old_end,
+                new_lines,
+                at_line_start: buffer.doc.line_start(start) == e.start,
+                insertion: e.start == e.end,
+            });
+        }
         buffer.record_line_edit(edit);
         edits.push(edit);
     }
     changes.apply(&mut buffer.doc);
+    if marked {
+        mark_edits.reverse();
+        let count = buffer.doc.line_count();
+        buffer.bookmarks.map(&mark_edits, count);
+    }
     edits
 }

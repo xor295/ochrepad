@@ -112,6 +112,11 @@ pub struct EditorViewState {
     map_cache: crate::doc_map::MapCache,
     /// Dragging the map's viewport marker: where it was grabbed, from its top.
     map_drag: Option<f32>,
+    /// The line the last right-click was on (the context menu acts on it).
+    pub context_line: Option<usize>,
+    /// Paste to (Replace) Bookmarked Lines asked for the clipboard at this
+    /// time: the paste that answers goes to the bookmarked lines.
+    paste_to_bookmarks: Option<f64>,
 }
 
 impl Default for EditorViewState {
@@ -123,6 +128,8 @@ impl Default for EditorViewState {
             last_error: None,
             map_cache: Default::default(),
             map_drag: None,
+            context_line: None,
+            paste_to_bookmarks: None,
             cache: LayoutCache::default(),
             font_size: 14.0,
             symbols: Symbols::default(),
@@ -159,6 +166,13 @@ impl EditorViewState {
 
     pub fn preedit(&self) -> Option<&str> {
         self.preedit.as_deref()
+    }
+
+    /// The next paste (asked for now, at `now`) replaces the text of each
+    /// bookmarked line instead of going to the carets.
+    pub fn paste_to_bookmarks(&mut self, now: f64) {
+        self.paste_to_bookmarks = Some(now);
+        self.request_focus = true;
     }
 }
 
@@ -438,7 +452,16 @@ pub fn editor_view(
                         .ctx()
                         .data(|d| d.get_temp::<String>(rect_clip_id()))
                         .is_some_and(|clip| clip == t);
-                    ops.push(Op::Apply(if block {
+                    // Asked for by Paste to (Replace) Bookmarked Lines just
+                    // now (an empty clipboard sends nothing, so a later
+                    // paste must not count).
+                    let to_marks = state
+                        .paste_to_bookmarks
+                        .take()
+                        .is_some_and(|asked| now - asked < 2.0);
+                    ops.push(Op::Apply(if to_marks {
+                        Action::ReplaceBookmarkedLines(t)
+                    } else if block {
                         Action::PasteBlock(t)
                     } else {
                         Action::Paste(t)
@@ -636,6 +659,39 @@ pub fn editor_view(
         editor.toggle_fold_at(view, line);
         fold_click = true;
         state.last_activity = now;
+    }
+
+    // --- Right click: the context menu acts where it was opened -----------------
+    // As in Scintilla: a click outside the selection moves the caret there
+    // (on a line number, to the line's start); on the selection it stays.
+    let secondary = ui.input(|i| i.pointer.secondary_pressed());
+    if secondary
+        && state.bar_drag.is_none()
+        && let Some(p) = pointer
+        && response.contains_pointer()
+        && (f.content.contains(p) || f.gutter.contains(p))
+    {
+        let hit = hit_test(editor, view, &mut state.cache, &f, top, x_off, ui, p);
+        let doc = doc_of(editor, buffer_id);
+        let line = doc.line_of(hit);
+        let in_gutter = f.gutter.contains(p);
+        let on_selection = editor.view(view).is_some_and(|v| {
+            v.selections.ranges().iter().any(|s| {
+                !s.is_empty()
+                    && if in_gutter {
+                        doc.line_of(s.start()) <= line && line <= doc.line_of(s.end())
+                    } else {
+                        s.start() <= hit && hit <= s.end()
+                    }
+            })
+        });
+        if !on_selection {
+            let at = if in_gutter { doc.line_start(line) } else { hit };
+            let _ = editor.apply(view, Action::SetSelections(SelectionSet::caret(at)));
+        }
+        state.context_line = Some(line);
+        state.last_activity = now;
+        response.request_focus();
     }
 
     // --- Mouse in the text area ------------------------------------------------
@@ -1434,6 +1490,13 @@ fn rect_clip_id() -> Id {
     Id::new("ochrepad-rect-clip")
 }
 
+/// Puts `text` on the clipboard as ordinary text (not a rectangle to paste
+/// as a block).
+pub fn copy_text(ctx: &egui::Context, text: String) {
+    ctx.data_mut(|d| d.remove::<String>(rect_clip_id()));
+    ctx.copy_text(text);
+}
+
 /// Copies the selection to the clipboard; returns whether anything was
 /// copied. Rectangular copies are remembered for block paste.
 pub fn copy_selection(ctx: &egui::Context, editor: &Editor, view: ViewId) -> bool {
@@ -1695,6 +1758,7 @@ fn paint(
             ochrepad_core::LineEnding::Cr => "CR",
         });
     let last_line = doc.line_count().saturating_sub(1);
+    let bookmarks = editor.buffer(buffer).map(|b| b.bookmarks());
 
     for (i, &row) in shown.iter().enumerate() {
         let line = row.line;
@@ -1867,14 +1931,28 @@ fn paint(
             paint_wrap_mark(&text_painter, x_at(row_end), y, f, marks.symbol);
         }
 
-        // The line number and fold chevron go on a line's first row.
+        // The line number and fold chevron go on a line's first row. A
+        // bookmarked line's number sits on a tag in the accent colour.
         if rows.text_sub(row) == Some(0) {
+            let marked = bookmarks.is_some_and(|m| m.contains(line));
+            if marked {
+                let tag = Rect::from_min_max(
+                    Pos2::new(f.gutter.min.x + 2.0, y + 1.0),
+                    Pos2::new(
+                        f.gutter.max.x - f.fold_w + (f.cell_w * 0.4).round(),
+                        y + f.line_h - 1.0,
+                    ),
+                );
+                gutter_painter.rect_filled(tag, 3.0, crate::theme::bookmark_bg(&visuals));
+            }
             gutter_painter.text(
                 Pos2::new(f.gutter.max.x - f.fold_w, y),
                 Align2::RIGHT_TOP,
                 (line + 1).to_string(),
                 f.font.clone(),
-                if has_caret {
+                if marked {
+                    crate::theme::bookmark_fg(&visuals)
+                } else if has_caret {
                     accent
                 } else {
                     visuals.weak_text_color()

@@ -277,7 +277,16 @@ pub(crate) fn resolve(
         | Action::Find { .. }
         | Action::Replace { .. }
         | Action::ReplaceAll { .. }
-        | Action::SelectAllMatches(_) => Resolved::Selections(sels.clone()),
+        | Action::SelectAllMatches(_)
+        | Action::ToggleBookmark
+        | Action::NextBookmark
+        | Action::PrevBookmark
+        | Action::ClearBookmarks
+        | Action::InverseBookmarks
+        | Action::BookmarkMatches(_)
+        | Action::RemoveBookmarkedLines
+        | Action::RemoveUnbookmarkedLines
+        | Action::ReplaceBookmarkedLines(_) => Resolved::Selections(sels.clone()),
     }
 }
 
