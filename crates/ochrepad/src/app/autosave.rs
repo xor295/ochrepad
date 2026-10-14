@@ -49,6 +49,9 @@ pub struct Session {
     pub layout: Option<DockState<usize>>,
     /// Index into `tabs`.
     pub active: Option<usize>,
+    /// The open folder.
+    #[serde(default)]
+    pub workspace: Option<super::workspace::SessionWorkspace>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -72,19 +75,21 @@ pub struct SessionTab {
     pub folds: Vec<usize>,
 }
 
-enum PendingJob {
+pub(super) enum PendingJob {
     Save {
         buffer: BufferId,
         revision: u64,
         path: PathBuf,
     },
+    /// A file operation for the file tree.
+    Tree(super::workspace::TreeJob),
     Other,
 }
 
 #[derive(Default)]
 pub(super) struct Persist {
-    worker: Worker,
-    pending: HashMap<u64, PendingJob>,
+    pub(super) worker: Worker,
+    pub(super) pending: HashMap<u64, PendingJob>,
     pub settings: AutosaveSettings,
     backup_dir: Option<PathBuf>,
     session_file: Option<PathBuf>,
@@ -183,6 +188,7 @@ impl OchrepadApp {
                         }
                     }
                 }
+                Some(PendingJob::Tree(job)) => self.tree_job_done(job, d.result),
                 Some(PendingJob::Other) | None => {
                     if let Err(e) = d.result {
                         self.message = Some(format!("Could not write a backup:\n{e}"));
@@ -382,6 +388,7 @@ impl OchrepadApp {
             Tab::Preview(_) | Tab::Compare(_) => None,
         }));
         session.active = tab_index.get(&self.active).copied();
+        session.workspace = self.session_workspace();
         session
     }
 
@@ -423,6 +430,9 @@ impl OchrepadApp {
                 return;
             }
         };
+        if let Some(w) = &session.workspace {
+            self.restore_workspace(w);
+        }
         let mut problems = Vec::new();
         let mut buffers: Vec<Option<BufferId>> = Vec::new();
         for sb in &session.buffers {

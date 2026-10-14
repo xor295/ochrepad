@@ -88,3 +88,31 @@ fn dropping_the_worker_finishes_queued_writes() {
     }
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "version 19");
 }
+
+#[test]
+fn creating_and_renaming_never_overwrite() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    let mut w = Worker::spawn();
+    let a = dir.join("a.txt");
+    std::fs::write(&a, "keep").unwrap();
+    w.submit(Job::CreateFile(dir.join("new.txt")));
+    w.submit(Job::CreateFile(a.clone()));
+    w.submit(Job::CreateDir(dir.join("sub")));
+    w.submit(Job::Rename {
+        from: dir.join("new.txt"),
+        to: a.clone(),
+    });
+    w.submit(Job::Rename {
+        from: dir.join("new.txt"),
+        to: dir.join("sub").join("moved.txt"),
+    });
+    w.submit(Job::Rename {
+        from: a.clone(),
+        to: dir.join("A.txt"),
+    });
+    let results: Vec<bool> = w.wait_idle().iter().map(|d| d.result.is_ok()).collect();
+    assert_eq!(results, vec![true, false, true, false, true, true]);
+    assert!(dir.join("sub").join("moved.txt").is_file());
+    assert_eq!(std::fs::read_to_string(dir.join("A.txt")).unwrap(), "keep");
+}

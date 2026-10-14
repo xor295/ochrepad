@@ -3,6 +3,9 @@
 //! and size of its file when it was loaded or saved. A change by another
 //! program asks to reload (a clean buffer) or warns (a dirty one); a deleted
 //! file asks whether to keep it open.
+//!
+//! The same watcher covers the file tree's root and expanded folders, so the
+//! tree relists a folder when something in it changes.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
@@ -47,6 +50,10 @@ pub(super) struct External {
     watcher: Option<notify::RecommendedWatcher>,
     rx: Option<Receiver<notify::Result<notify::Event>>>,
     watched: HashSet<PathBuf>,
+    /// The tree's watched folders as (canonical, as the tree knows them),
+    /// recomputed when the tree's folders change.
+    tree_dirs: Vec<(PathBuf, PathBuf)>,
+    tree_dirs_for: Vec<PathBuf>,
     stamps: HashMap<BufferId, Option<Stamp>>,
     due: HashMap<BufferId, f64>,
     pub queue: VecDeque<(BufferId, DiskChange)>,
@@ -87,10 +94,23 @@ impl OchrepadApp {
             .buffers()
             .filter_map(|b| b.meta.path.as_ref().map(|p| (b.id(), watch_key(p))))
             .collect();
-        let dirs: HashSet<PathBuf> = files
+        let mut dirs: HashSet<PathBuf> = files
             .iter()
             .filter_map(|(_, p)| p.parent().map(Path::to_path_buf))
             .collect();
+        let tree_dirs = self
+            .tree
+            .as_ref()
+            .map(|t| t.watched_dirs())
+            .unwrap_or_default();
+        if tree_dirs != self.external.tree_dirs_for {
+            self.external.tree_dirs = tree_dirs
+                .iter()
+                .map(|d| (canonical(d), d.clone()))
+                .collect();
+            self.external.tree_dirs_for = tree_dirs;
+        }
+        dirs.extend(self.external.tree_dirs.iter().map(|(c, _)| c.clone()));
         if let Some(w) = &mut self.external.watcher {
             for d in dirs.difference(&self.external.watched) {
                 let _ = w.watch(d, RecursiveMode::NonRecursive);
@@ -109,6 +129,13 @@ impl OchrepadApp {
                     for (b, path) in &files {
                         if *path == p {
                             self.external.due.insert(*b, now + SETTLE_SECS);
+                        }
+                    }
+                    if let (Some(tree), Some(parent)) = (&mut self.tree, p.parent()) {
+                        for (c, d) in &self.external.tree_dirs {
+                            if c == parent {
+                                tree.changed(d, now);
+                            }
                         }
                     }
                 }

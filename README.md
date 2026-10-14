@@ -33,6 +33,9 @@ A fast, native text editor in the spirit of Notepad++, written in Rust with
   its shape and jump around ([more](docs/view.md#document-map)).
 - **Word wrap** at the pane's edge, with continuation rows indented like
   the line ([more](docs/view.md#word-wrap)).
+- **Folders**: open a folder to browse its files in a sidebar, with
+  `.gitignore`d files hidden, live updates, and new file, new folder and
+  rename ([more](docs/workspace.md)).
 - **Tabs and split screen**: drag tabs into side-by-side or stacked panes, or
   open a second view of the same file; edits show in both.
 - **Compare**: a side-by-side diff of two files (or a file against its saved
@@ -131,6 +134,7 @@ Windows and Linux. macOS is not supported.
 | Title Case, iNVERT cASE | Alt+U, Ctrl+Alt+U |
 | Record/stop macro, play macro | Ctrl+Shift+R, Ctrl+Shift+P |
 | Markdown preview | Ctrl+Shift+M |
+| Show or hide the sidebar | Ctrl+Shift+E |
 | Next/previous difference | F8, Shift+F8 |
 
 Double-click the empty part of a tab bar to open a new tab there. Sorting and

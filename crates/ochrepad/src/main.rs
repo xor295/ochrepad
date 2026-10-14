@@ -82,6 +82,10 @@ fn main() -> eframe::Result {
                 }
             }
             for path in paths {
+                if path.is_dir() {
+                    app.open_folder(&path);
+                    continue;
+                }
                 let t = Instant::now();
                 app.open_path(&path);
                 if bench {

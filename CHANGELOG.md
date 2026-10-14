@@ -24,6 +24,13 @@ people downloading the release.
   Alt+0 and Alt+Shift+0 for everything, Alt+1 to Alt+8 (with Shift to
   unfold) for one level. The same commands are in the View menu. Folds are
   kept with the session. See docs/view.md.
+- Folders: File > Open Folder (or `ochrepad <folder>`, or dropping a folder
+  on the window) shows the folder's files in a sidebar (View > Sidebar,
+  Ctrl+Shift+E). Files ignored by `.gitignore` are hidden. The tree follows
+  changes on disk, and its menus create files and folders, rename (F2),
+  copy paths and reveal files in the file manager. Renaming an open file
+  keeps its tab. The folder comes back with the session; File > Recent
+  Folders lists the last ten.
 - Document map: a zoomed-out view of the document on the right of each
   editor. Drag its marker to scroll, or click to jump there. View >
   Document Map turns it off.

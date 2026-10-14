@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use encoding_rs::{EncoderResult, Encoding, UTF_8, UTF_16BE, UTF_16LE};
 use ochrepad_core::{Buffer, BufferId, Editor, FileMeta, LineEnding};
 
+pub mod tree;
 pub mod worker;
 
 /// How many leading bytes are checked for NUL when deciding a file is binary.

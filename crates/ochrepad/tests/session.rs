@@ -315,3 +315,20 @@ def g():
         .collect();
     assert_eq!(folds, vec![0, 3]);
 }
+
+#[test]
+fn the_open_folder_comes_back_with_the_session() {
+    let d = dirs();
+    let project = d.files.join("project");
+    std::fs::create_dir_all(project.join("src")).unwrap();
+    {
+        let mut h = app(&d);
+        h.state_mut().open_folder(&project);
+        h.run();
+        h.state_mut().request_exit();
+        h.run();
+    }
+    let h = app(&d);
+    let tree = h.state().file_tree().expect("a folder is open");
+    assert_eq!(tree.root(), project.as_path());
+}

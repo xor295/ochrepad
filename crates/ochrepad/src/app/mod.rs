@@ -26,6 +26,7 @@ mod autosave;
 mod external;
 mod prefs;
 mod search;
+mod workspace;
 
 pub use autosave::{AutosaveSettings, Session, SessionBuffer, SessionTab};
 pub use external::DiskChange;
@@ -69,6 +70,8 @@ pub enum Tab {
 const NEXT_DIFF: KeyboardShortcut = KeyboardShortcut::new(Modifiers::NONE, Key::F8);
 const PREV_DIFF: KeyboardShortcut = KeyboardShortcut::new(Modifiers::SHIFT, Key::F8);
 
+const SIDEBAR: KeyboardShortcut =
+    KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::E);
 const PREVIEW: KeyboardShortcut =
     KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::M);
 
@@ -109,6 +112,11 @@ pub struct OchrepadApp {
     /// The Search Results panel.
     pub results: crate::search_results::SearchResults,
     replace_all_plan: Option<search::ReplaceAllPlan>,
+    /// The open folder's file tree.
+    tree: Option<crate::file_tree::FileTree>,
+    new_entry: Option<workspace::NewEntry>,
+    /// The time at the start of this frame.
+    now: f64,
     pub macros: Macros,
     persist: autosave::Persist,
     external: external::External,
@@ -163,6 +171,9 @@ impl OchrepadApp {
             find: FindPanel::default(),
             results: Default::default(),
             replace_all_plan: None,
+            tree: None,
+            new_entry: None,
+            now: 0.0,
             macros: Macros::default(),
             persist: autosave::Persist::default(),
             external: external::External::default(),
@@ -651,6 +662,7 @@ impl OchrepadApp {
 
     /// Draws the whole application into `ui`.
     pub fn show(&mut self, ui: &mut Ui) {
+        self.now = ui.input(|i| i.time);
         self.apply_settings(ui);
         self.poll_disk(ui);
         self.watch_files(ui);
@@ -716,6 +728,8 @@ impl OchrepadApp {
             }
         }
 
+        self.sidebar(ui);
+
         self.dark = ui.visuals().dark_mode;
         if self
             .highlighting
@@ -780,6 +794,7 @@ impl OchrepadApp {
         self.autosave_tick(ui);
         self.dialogs(ui);
         self.replace_all_dialog(ui);
+        self.new_entry_dialog(ui);
         self.external_dialog(ui);
         self.preferences_window(ui);
         if let Some((source, repeat)) = self.macros.dialogs(ui) {
@@ -925,6 +940,9 @@ impl OchrepadApp {
         if pressed(ui, &PREVIEW) {
             self.open_preview();
         }
+        if pressed(ui, &SIDEBAR) {
+            self.settings.show_sidebar = !self.settings.show_sidebar;
+        }
         if pressed(ui, &CLOSE) {
             self.close_view(self.active);
         }
@@ -994,6 +1012,26 @@ impl OchrepadApp {
             self.open_dialog();
         }
         self.recent_files_menu(ui);
+        if ui.button("Open Folder…").clicked() {
+            self.open_folder_dialog();
+        }
+        let recent = self.settings.recent_folders.clone();
+        ui.add_enabled_ui(!recent.is_empty(), |ui| {
+            ui.menu_button("Recent Folders", |ui| {
+                for dir in recent {
+                    if ui.button(dir.display().to_string()).clicked() {
+                        self.open_folder(&dir);
+                    }
+                }
+            });
+        });
+        if ui
+            .add_enabled(self.tree.is_some(), Button::new("Close Folder"))
+            .clicked()
+        {
+            self.close_folder();
+        }
+        ui.separator();
         if item(ui, "Save", "Ctrl+S") {
             self.save();
         }
@@ -1424,6 +1462,26 @@ impl OchrepadApp {
         ui.checkbox(&mut self.settings.fold_margin, "Show Fold Margin");
         ui.checkbox(&mut self.settings.word_wrap, "Word Wrap");
         ui.checkbox(&mut self.settings.document_map, "Document Map");
+        ui.separator();
+        if ui
+            .add(
+                Button::new("Sidebar")
+                    .selected(self.settings.show_sidebar)
+                    .shortcut_text("Ctrl+Shift+E"),
+            )
+            .clicked()
+        {
+            self.settings.show_sidebar = !self.settings.show_sidebar;
+        }
+        if ui
+            .add_enabled(
+                self.tree.is_some(),
+                Button::new("Reveal Active File in Sidebar"),
+            )
+            .clicked()
+        {
+            self.reveal_active_file();
+        }
         ui.separator();
         let theme = &mut self.settings.theme;
         ui.radio_value(theme, ThemeChoice::System, "System theme");

@@ -5,6 +5,7 @@ pub mod bench;
 pub mod compare;
 pub mod doc_map;
 pub mod editor_view;
+pub mod file_tree;
 pub mod find_panel;
 pub mod fonts;
 pub mod highlight;
