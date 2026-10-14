@@ -2748,7 +2748,7 @@ dependencies = [
 
 [[package]]
 name = "ochrepad"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "eframe",
  "egui",
@@ -2771,7 +2771,7 @@ dependencies = [
 
 [[package]]
 name = "ochrepad-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "proptest",
  "regex-cursor",
@@ -2785,7 +2785,7 @@ dependencies = [
 
 [[package]]
 name = "ochrepad-fileio"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chardetng",
  "directories",
@@ -2800,7 +2800,7 @@ dependencies = [
 
 [[package]]
 name = "ochrepad-syntax"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "ochrepad-core",
  "proptest",

@@ -1,5 +1,11 @@
 # Plan: ochrepad v0.2.0
 
+**Status: done** (2026-10-13). N1–N9 as planned; at the N9 review the
+compare view was made editable as step N10a (its sides became editor views
+with `Padding`, replacing `SideMap`); N10 prepared the release. No toolbar,
+activity bar or icon font, as decided at the review. `CLAUDE.md` is the
+current guide.
+
 Written 2026-10-13, after v0.1.0 shipped every milestone of `PLAN_v0.1.0.md`. That document still explains why the core is built the way it is; read its section 3 before working on folding or wrap. This plan covers what changes for 0.2.0. Where it changes a rule in `CLAUDE.md`, the user has approved the change (section 3), and `CLAUDE.md` is updated in the milestone that makes it.
 
 ## 1. Goal and scope

@@ -1,6 +1,6 @@
 # ochrepad
 
-A Notepad++-style text editor in Rust on egui/eframe 0.36. Version 1 is feature-complete: every milestone of the original plan (M0–M13) is done. Work now is maintenance, polish and new features. `docs/design/PLAN_v0.1.0.md` is the original design brief, kept for its rationale; `docs/design/PLAN_v0.2.0.md` is the plan for 0.2.0 (folding, word wrap, document map, cross-file search, folder workspace), worked through in steps N1–N10; this file is the current guide.
+A Notepad++-style text editor in Rust on egui/eframe 0.36. 0.1.0 covered the original plan (`docs/design/PLAN_v0.1.0.md`, M0–M13); 0.2.0 added folding, word wrap, the document map, Find All and Find in Files, the folder workspace and an editable compare view (`docs/design/PLAN_v0.2.0.md`, N1–N10). Both plans are kept for their rationale; this file is the current guide. Work now is maintenance, polish and new features.
 
 ## Commands
 
