@@ -67,6 +67,9 @@ pub struct SessionTab {
     pub head: usize,
     pub first_line: usize,
     pub x_offset: f32,
+    /// Folded header lines.
+    #[serde(default)]
+    pub folds: Vec<usize>,
 }
 
 enum PendingJob {
@@ -371,6 +374,7 @@ impl OchrepadApp {
                 head: sel.head.0,
                 first_line: v.scroll.first_line,
                 x_offset: v.scroll.x_offset,
+                folds: v.folds().headers().collect(),
             });
         }
         session.layout = Some(self.dock.filter_map_tabs(|t| match t {
@@ -480,6 +484,10 @@ impl OchrepadApp {
                 let _ = self
                     .editor
                     .apply(view, Action::SetSelections(SelectionSet::single(sel)));
+                // Only lines that still start a region fold again.
+                for &header in &tab.folds {
+                    self.editor.fold_at(view, header);
+                }
                 if let Some(v) = self.editor.view_mut(view) {
                     v.scroll.first_line = tab.first_line;
                     v.scroll.x_offset = tab.x_offset;

@@ -133,6 +133,20 @@ pub enum Action {
     RemoveDuplicateLines {
         consecutive_only: bool,
     },
+    /// Fold the region holding the caret: the caret's line if it starts a
+    /// region, else the innermost region around it. Fold actions change the
+    /// view only (no undo step) and are not recorded in macros.
+    Fold,
+    /// Unfold the caret's line, or every fold inside the region around it.
+    Unfold,
+    /// Unfold the caret's line if it is folded, else `Fold`.
+    ToggleFold,
+    FoldAll,
+    UnfoldAll,
+    /// Fold every region of this level: the nesting depth for indentation
+    /// (1 is outermost), the heading level in Markdown.
+    FoldLevel(usize),
+    UnfoldLevel(usize),
     Undo,
     Redo,
 }

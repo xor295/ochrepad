@@ -214,6 +214,13 @@ pub(crate) fn resolve(
         // Handled by `resolve_search` / `Editor`.
         Action::Undo
         | Action::Redo
+        | Action::Fold
+        | Action::Unfold
+        | Action::ToggleFold
+        | Action::FoldAll
+        | Action::UnfoldAll
+        | Action::FoldLevel(_)
+        | Action::UnfoldLevel(_)
         | Action::Find { .. }
         | Action::Replace { .. }
         | Action::ReplaceAll { .. }

@@ -18,6 +18,12 @@ people downloading the release.
   Blank characters), Remove Duplicate Lines and Remove Consecutive Duplicate
   Lines. They work on the selected lines, or on the whole document when
   nothing is selected.
+- Code folding. Blocks fold by indentation, and Markdown files fold by
+  heading. Click the chevron beside a line number, or use Notepad++'s
+  shortcuts: Ctrl+Alt+F and Ctrl+Alt+Shift+F for the block at the caret,
+  Alt+0 and Alt+Shift+0 for everything, Alt+1 to Alt+8 (with Shift to
+  unfold) for one level. The same commands are in the View menu. Folds are
+  kept with the session. See docs/view.md.
 
 ### Changed
 

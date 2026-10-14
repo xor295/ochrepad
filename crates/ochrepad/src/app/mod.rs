@@ -710,6 +710,7 @@ impl OchrepadApp {
             let find_highlight = self.find.highlighter();
             let mut tabs = Tabs {
                 font_size: self.settings.font_size,
+                fold_margin: self.settings.fold_margin,
                 compares: &mut self.compares,
                 previews: &mut self.previews,
                 find_highlight,
@@ -840,7 +841,11 @@ impl OchrepadApp {
     }
 
     fn shortcuts(&mut self, ui: &mut Ui) {
-        let pressed = |ui: &mut Ui, s: &KeyboardShortcut| ui.input_mut(|i| i.consume_shortcut(s));
+        // egui matches shortcuts ignoring extra Shift and Alt; an extra Alt
+        // means a different binding (Ctrl+Alt+F folds, Ctrl+F finds).
+        let pressed = |ui: &mut Ui, s: &KeyboardShortcut| {
+            ui.input_mut(|i| (s.modifiers.alt || !i.modifiers.alt) && i.consume_shortcut(s))
+        };
         if pressed(ui, &NEW) {
             self.new_file();
         }
@@ -1360,6 +1365,39 @@ impl OchrepadApp {
             self.cycle_tab(false);
         }
         ui.separator();
+        for (label, shortcut, action) in [
+            ("Fold All", "Alt+0", Action::FoldAll),
+            ("Unfold All", "Alt+Shift+0", Action::UnfoldAll),
+            ("Fold Current", "Ctrl+Alt+F", Action::Fold),
+            ("Unfold Current", "Ctrl+Alt+Shift+F", Action::Unfold),
+        ] {
+            if ui.add(Button::new(label).shortcut_text(shortcut)).clicked() {
+                self.apply(action);
+            }
+        }
+        for (label, unfold) in [("Fold Level", false), ("Unfold Level", true)] {
+            ui.menu_button(label, |ui| {
+                for level in 1..=8 {
+                    let shortcut = if unfold {
+                        format!("Alt+Shift+{level}")
+                    } else {
+                        format!("Alt+{level}")
+                    };
+                    if ui
+                        .add(Button::new(level.to_string()).shortcut_text(shortcut))
+                        .clicked()
+                    {
+                        self.apply(if unfold {
+                            Action::UnfoldLevel(level)
+                        } else {
+                            Action::FoldLevel(level)
+                        });
+                    }
+                }
+            });
+        }
+        ui.checkbox(&mut self.settings.fold_margin, "Show Fold Margin");
+        ui.separator();
         let theme = &mut self.settings.theme;
         ui.radio_value(theme, ThemeChoice::System, "System theme");
         ui.radio_value(theme, ThemeChoice::Dark, "Dark mode");
@@ -1527,6 +1565,7 @@ impl OchrepadApp {
 /// Draws the tabs: one editor per view, Markdown previews and comparisons.
 struct Tabs<'a> {
     font_size: f32,
+    fold_margin: bool,
     compares: &'a mut Compares,
     previews: &'a mut Previews,
     find_highlight: Option<&'a ochrepad_core::Searcher>,
@@ -1618,6 +1657,7 @@ impl TabViewer for Tabs<'_> {
         );
         let state = self.view_states.entry(view).or_default();
         state.font_size = self.font_size;
+        state.fold_margin = self.fold_margin;
         if *self.focus_request == Some(view) {
             state.request_focus();
             *self.focus_request = None;

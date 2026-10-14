@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::buffer::BufferId;
+use crate::fold::FoldSet;
 use crate::selection::SelectionSet;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -27,6 +28,9 @@ pub struct View {
     buffer: BufferId,
     pub selections: SelectionSet,
     pub scroll: ScrollPos,
+    /// Folded regions; changed only through `Editor`, which keeps them in
+    /// step with the text.
+    pub(crate) folds: FoldSet,
 }
 
 impl View {
@@ -36,6 +40,7 @@ impl View {
             buffer,
             selections: SelectionSet::caret(Default::default()),
             scroll: ScrollPos::default(),
+            folds: FoldSet::default(),
         }
     }
 
@@ -45,5 +50,9 @@ impl View {
 
     pub fn buffer(&self) -> BufferId {
         self.buffer
+    }
+
+    pub fn folds(&self) -> &FoldSet {
+        &self.folds
     }
 }

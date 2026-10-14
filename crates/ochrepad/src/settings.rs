@@ -36,6 +36,8 @@ pub struct AppSettings {
     pub write_through: bool,
     /// Files larger than this are not highlighted.
     pub highlight_limit_mb: usize,
+    /// Fold chevrons in the gutter.
+    pub fold_margin: bool,
     pub recent_files: Vec<PathBuf>,
 }
 
@@ -52,6 +54,7 @@ impl Default for AppSettings {
             autosave_secs: 7.0,
             write_through: false,
             highlight_limit_mb: 10,
+            fold_margin: true,
             recent_files: Vec::new(),
         }
     }

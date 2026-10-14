@@ -120,6 +120,21 @@ Motions for `MoveCursor`:
 | `{"Action": {"ConvertCase": "Upper"}}` | Converts the selections (or the caret's line) to `"Upper"`, `"Lower"`, `"Title"` or `"Invert"` case. |
 | `{"Action": {"SortLines": {"descending": false, "case_insensitive": true, "numeric": false, "remove_duplicates": false}}}` | Sorts the selected lines, or the whole document when nothing is selected. All four options must be given. `numeric` compares the number at the start of each line; `remove_duplicates` drops repeated lines. With a column selection, lines are sorted by the text inside the column. |
 
+### Folding
+
+Fold commands change only what the editor shows: they are not undo steps and
+are not recorded in macros. See [Folding](view.md#folding).
+
+| Command | Does |
+|---|---|
+| `{"Action": "Fold"}` | Folds the caret's line if a region starts there, else the innermost region around the caret (Ctrl+Alt+F). |
+| `{"Action": "Unfold"}` | Unfolds the caret's line, or every fold inside the region around the caret (Ctrl+Alt+Shift+F). |
+| `{"Action": "ToggleFold"}` | Unfolds the caret's line if it is folded, else folds as `Fold` does. No default keys. |
+| `{"Action": "FoldAll"}` | Folds every region (Alt+0). |
+| `{"Action": "UnfoldAll"}` | Unfolds everything (Alt+Shift+0). |
+| `{"Action": {"FoldLevel": 1}}` | Folds every region of a level: 1 is outermost; in Markdown the level is the heading level (Alt+1 … Alt+8). |
+| `{"Action": {"UnfoldLevel": 1}}` | Unfolds every region of a level (Alt+Shift+1 … Alt+Shift+8). |
+
 ### Searching
 
 These run a search without opening the find panel. The `query` always has

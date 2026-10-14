@@ -41,7 +41,7 @@ Keep `CHANGELOG.md`'s `[Unreleased]` section up to date as user-visible changes 
 
 | Crate (folder = package) | Contents |
 |---|---|
-| `crates/ochrepad-core` | Text model and all editing. **No egui and no filesystem access.** `text` (ropey wrapper, the only place that touches ropey), `position` (newtypes and conversions, the only place that knows tabs, graphemes and display widths), `selection`, `changeset`, `action` + `resolve` (Action → Transaction), `history` (undo), `buffer`, `view`, `display` (`RowPos`, `DisplayMap`: a view's lines → display rows), `editor` (`Editor::apply`, macro playback, reload), `search` (regex-cursor behind a `Matcher` trait), `transform` (case, sort, line ops), `macros`, `diff` (similar; aligned rows, `SideMap`). |
+| `crates/ochrepad-core` | Text model and all editing. **No egui and no filesystem access.** `text` (ropey wrapper, the only place that touches ropey), `position` (newtypes and conversions, the only place that knows tabs, graphemes and display widths), `selection`, `changeset`, `action` + `resolve` (Action → Transaction), `history` (undo), `buffer`, `view`, `display` (`RowPos`, `DisplayMap`: a view's lines → display rows), `fold` (indentation/Markdown regions, per-view `FoldSet`), `editor` (`Editor::apply`, macro playback, reload), `search` (regex-cursor behind a `Matcher` trait), `transform` (case, sort, line ops), `macros`, `diff` (similar; aligned rows, `SideMap`). |
 | `crates/ochrepad-fileio` | Load (BOM, strict UTF-8, chardetng fallback, UTF-16, binary refusal, line-ending detection and LF normalization) and save (re-encode with the original encoding, BOM and ending, atomic temp file + rename). `worker`: the background thread that does **all** disk writes. Config and data dirs (`directories`), JSON helpers, snapshot files. |
 | `crates/ochrepad-syntax` | syntect (pure-Rust `default-fancy` regex) + two-face syntaxes and themes. Language detection, and a per-buffer incremental highlighter with `(ParseState, HighlightState)` checkpoints every 128 lines that re-highlights until a checkpoint converges. |
 | `crates/ochrepad` | The app. `app/mod.rs`: `OchrepadApp` (dock of `Tab::{Editor, Preview, Compare}`, menus, open/save/close, dialogs, status bar, `Tabs` TabViewer). `app/autosave.rs`: snapshots, session, write-through, async save bookkeeping. `app/external.rs`: notify watcher and reload prompts. `app/prefs.rs`: settings, keymap file, recent files, drag and drop. `editor_view.rs`: the editor widget (input, hit testing, painting, scrolling). `layout.rs`: `LineLayout` and `paint_line_text`. `highlight.rs`, `find_panel.rs`, `macro_ui.rs`, `compare.rs`, `preview.rs`, `safe_images.rs`, `keymap.rs`, `settings.rs`, `theme.rs`, `logo.rs`, `fonts.rs`. `build.rs` embeds the icon on Windows. |
@@ -72,6 +72,7 @@ These are load-bearing. Check with the user before changing any of them.
 ## Settled decisions
 
 - **Fonts**: a CJK fallback font is loaded from the system (else tofu stays on the grid). Menus use the system UI font (Segoe UI on Windows; a list of common sans fonts on Linux). The editor font is a choice among installed monospace fonts, or the built-in Hack.
+- **Folding** (`core::fold`): regions come from indentation (a line whose next non-blank line is indented deeper), or headings for Markdown (`Buffer::fold_strategy`, set from the language in `highlight.rs`). No whole-document scan except Fold All and the level commands. Folds are per view, stored as byte ranges, and changed only through `Editor`: an edit that touches a fold's hidden text drops it, and after every action any fold hiding a caret is unfolded (`sync_folds`). Fold actions are not undo steps and are not recorded in macros. Session tabs keep folded header lines.
 - **Regex**: Rust `regex` syntax through `regex-cursor` (no lookaround or backreferences), documented in `docs/find-and-replace.md`. A `fancy-regex` fallback can be added behind the `Matcher` trait.
 - **Look** (`theme.rs`): warm charcoal and paper palettes with ochre `#CC7722` accents (caret, selection, focus, current line number, active tab line, hovered split divider). Find matches are teal and changed compare rows blue, so they never look like the selection. The tab bar is 32 px tall.
 - **Logo**: `logo.rs` is dependency-free and shared by the window icon and `build.rs` (included by path), which generates the `.ico` for `winresource`. A failed embed is a warning, not an error.
@@ -82,7 +83,7 @@ These are load-bearing. Check with the user before changing any of them.
 
 ## Not in scope (unless the user asks)
 
-Word wrap, code folding, RTL/bidi text, proportional editor fonts and ligatures, virtual space, plugins/LSP/autocomplete, special handling for files over ~200 MB, full screen-reader support (a basic AccessKit node exists).
+Word wrap (planned for 0.2.0), RTL/bidi text, proportional editor fonts and ligatures, virtual space, plugins/LSP/autocomplete, special handling for files over ~200 MB, full screen-reader support (a basic AccessKit node exists).
 
 ## Testing
 
@@ -98,6 +99,7 @@ Word wrap, code folding, RTL/bidi text, proportional editor fonts and ligatures,
 - **egui_dock**: `retain_tabs` can leave a stale focused node and panic; remove tabs with `find_tab` + `remove_tab`. There are no hooks for tab-bar double-clicks or per-tab accents; both are done after `DockArea::show` using tab rects collected in `on_tab_button`.
 - **Windows file URIs** need an empty host (`file:///C:/dir/x.png`); `file://C:/...` reads `C:` as a host.
 - **`Color32` is premultiplied.** Build translucent tints with `from_rgba_unmultiplied` from straight RGB; a weak tint cannot be made strong again.
+- **egui shortcut matching ignores extra Shift and Alt** (`consume_shortcut`), so Ctrl+Alt+F would also fire Ctrl+F. The app's fixed shortcuts skip events with an Alt they don't ask for. With Shift held, a digit key arrives as its symbol (`Alt+Shift+1` as `"!"`); the editor falls back to the event's `physical_key` for keymap lookups.
 - **egui key names** are `"Down"`, not `"ArrowDown"` (`Chord::parse` accepts both). Menu items with shortcut text have accessibility labels like `"Open…Ctrl+O"`, so tests use `get_by_label_contains`.
 - **Config dir**: the keymap file's folder may not exist on a first run; create it before saving there.
 - **Deleted files cannot be canonicalized.** The watcher matches paths by canonical parent + file name (`watch_key`).

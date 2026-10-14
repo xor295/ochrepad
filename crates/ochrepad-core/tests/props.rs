@@ -148,13 +148,45 @@ fn action() -> impl Strategy<Value = Action> {
         }),
         2 => Just(Action::Undo),
         1 => Just(Action::Redo),
+        2 => prop_oneof![
+            Just(Action::Fold),
+            Just(Action::Unfold),
+            Just(Action::ToggleFold),
+            Just(Action::FoldAll),
+            Just(Action::UnfoldAll),
+            (1usize..4).prop_map(Action::FoldLevel),
+            (1usize..4).prop_map(Action::UnfoldLevel),
+        ],
     ]
 }
 
 fn check(t: &util::T) -> Result<(), TestCaseError> {
     let sels = t.sels();
-    sels.validate(t.buffer().doc())
-        .map_err(|e| TestCaseError::fail(format!("{e}\nstate: {}", t.show())))
+    let doc = t.buffer().doc();
+    sels.validate(doc)
+        .map_err(|e| TestCaseError::fail(format!("{e}\nstate: {}", t.show())))?;
+    // Folds: no caret is hidden, and the display rows are the lines that are
+    // not hidden, in order.
+    let view = t.ed.view(t.view).unwrap();
+    let folds = view.folds();
+    for s in sels.ranges() {
+        prop_assert!(
+            !folds.is_hidden(doc.line_of(s.head)),
+            "hidden caret: {}",
+            t.show()
+        );
+    }
+    let rows = ochrepad_core::DisplayMap::new(doc, view, 4);
+    let visible: Vec<usize> = (0..doc.line_count())
+        .filter(|&l| !folds.is_hidden(l))
+        .collect();
+    prop_assert_eq!(rows.visible_line_count(), visible.len());
+    let shown: Vec<usize> = rows
+        .rows_from(rows.first_row(), usize::MAX)
+        .map(|r| r.line)
+        .collect();
+    prop_assert_eq!(shown, visible);
+    Ok(())
 }
 
 proptest! {

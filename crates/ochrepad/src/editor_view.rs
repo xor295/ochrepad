@@ -62,11 +62,14 @@ pub struct EditorViewState {
     request_focus: bool,
     /// The selected text and its searcher, for smart highlighting.
     smart: Option<(String, Option<Searcher>)>,
+    /// Show the fold margin (chevrons) in the gutter.
+    pub fold_margin: bool,
 }
 
 impl Default for EditorViewState {
     fn default() -> Self {
         Self {
+            fold_margin: true,
             cache: LayoutCache::default(),
             font_size: 14.0,
             last_activity: 0.0,
@@ -109,11 +112,29 @@ struct Frame {
     rows_full: usize,
     /// Lines that are not hidden, for the scrollbar.
     visible_lines: usize,
+    /// Width of the gutter's right part, after the line numbers: the fold
+    /// margin, or one cell of padding without it.
+    fold_w: f32,
+    fold_margin: bool,
 }
 
 impl Frame {
     fn text_left(&self) -> f32 {
         self.content.min.x + TEXT_PAD
+    }
+
+    /// Whether `p` is in the fold margin.
+    fn in_fold_margin(&self, p: Pos2) -> bool {
+        self.fold_margin && self.gutter.contains(p) && p.x >= self.gutter.max.x - self.fold_w
+    }
+
+    /// The `⋯` marker after a folded line whose text ends at `x_end`.
+    fn fold_pill(&self, x_end: f32, y: f32) -> Rect {
+        let h = (self.line_h * 0.7).round();
+        Rect::from_min_size(
+            Pos2::new(x_end + self.cell_w, y + (self.line_h - h) / 2.0),
+            Vec2::new(self.cell_w * 3.0, h),
+        )
     }
 }
 
@@ -200,9 +221,11 @@ pub fn editor_view(
     let font = FontId::monospace(state.font_size);
     let (cell_w, line_h) = ui.fonts_mut(|f| (f.glyph_width(&font, 'M'), f.row_height(&font)));
 
+    let fold_margin = state.fold_margin;
+    let fold_w = if fold_margin { 2.0 } else { 1.0 } * cell_w;
     let geometry = |line_count: usize, visible_lines: usize| {
         let digits = line_count.to_string().len().max(3);
-        let gutter_w = (digits + 1) as f32 * cell_w + TEXT_PAD;
+        let gutter_w = digits as f32 * cell_w + fold_w + TEXT_PAD;
         let body = Rect::from_min_max(
             rect.min,
             Pos2::new(rect.max.x - SCROLLBAR_W, rect.max.y - SCROLLBAR_W),
@@ -226,6 +249,8 @@ pub fn editor_view(
             line_h,
             rows_full,
             visible_lines,
+            fold_w,
+            fold_margin,
         }
     };
 
@@ -265,10 +290,15 @@ pub fn editor_view(
             match event {
                 Event::Key {
                     key,
+                    physical_key,
                     pressed: true,
                     modifiers,
                     ..
-                } => match keymap.lookup(key, modifiers) {
+                } => match keymap.lookup(key, modifiers).or_else(|| {
+                    // With Shift, a digit arrives as its symbol (Alt+Shift+1
+                    // as "!"); the physical key still matches Alt+Shift+1.
+                    physical_key.and_then(|k| keymap.lookup(k, modifiers))
+                }) {
                     Some(EditorCommand::Action(a)) => ops.push(Op::Apply(a.clone())),
                     Some(EditorCommand::PageUp { extend }) => {
                         ops.push(Op::Apply(Action::MoveCursor {
@@ -428,8 +458,22 @@ pub fn editor_view(
     top = top.clamped(&rows, f.rows_full);
     x_off = x_off.clamp(0.0, h_max.max(x_off.min(state.max_width)));
 
+    // --- Fold margin and folded-line markers ------------------------------------
+    let mut fold_click = false;
+    if pressed
+        && state.bar_drag.is_none()
+        && let Some(p) = pointer
+        && response.contains_pointer()
+        && let Some(line) = fold_target(editor, view, &mut state.cache, &f, top, x_off, ui, p)
+    {
+        editor.toggle_fold_at(view, line);
+        fold_click = true;
+        state.last_activity = now;
+    }
+
     // --- Mouse in the text area ------------------------------------------------
     if pressed
+        && !fold_click
         && state.bar_drag.is_none()
         && let Some(p) = pointer
         && response.contains_pointer()
@@ -659,13 +703,18 @@ pub fn editor_view(
         v.scroll.x_offset = x_off;
     }
 
-    if response.hovered()
-        && ui
-            .input(|i| i.pointer.hover_pos())
-            .is_some_and(|p| f.content.contains(p))
-    {
-        ui.ctx().set_cursor_icon(CursorIcon::Text);
+    let hover = ui
+        .input(|i| i.pointer.hover_pos())
+        .filter(|_| response.hovered());
+    if let Some(p) = hover {
+        if fold_target(editor, view, &mut state.cache, &f, top, x_off, ui, p).is_some() {
+            ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
+        } else if f.content.contains(p) {
+            ui.ctx().set_cursor_icon(CursorIcon::Text);
+        }
     }
+    // Fold chevrons for every header show while the pointer is on the gutter.
+    let show_chevrons = hover.is_some_and(|p| f.gutter.contains(p));
 
     paint(
         ui,
@@ -682,10 +731,105 @@ pub fn editor_view(
         },
         focused,
         now,
+        show_chevrons,
         decorations.styler,
         decorations.find_highlight,
     );
     response
+}
+
+/// A fold chevron in the fold margin of the row at `y`: pointing right when
+/// folded, down when open.
+fn paint_chevron(
+    painter: &egui::Painter,
+    f: &Frame,
+    visuals: &egui::Visuals,
+    y: f32,
+    folded: bool,
+) {
+    let c = Pos2::new(f.gutter.max.x - f.fold_w / 2.0, y + f.line_h / 2.0);
+    let s = (f.cell_w * 0.3).round().max(3.0);
+    let points = if folded {
+        [
+            c + Vec2::new(-s / 2.0, -s),
+            c + Vec2::new(s / 2.0, 0.0),
+            c + Vec2::new(-s / 2.0, s),
+        ]
+    } else {
+        [
+            c + Vec2::new(-s, -s / 2.0),
+            c + Vec2::new(0.0, s / 2.0),
+            c + Vec2::new(s, -s / 2.0),
+        ]
+    };
+    let color = if folded {
+        visuals.text_color()
+    } else {
+        visuals.weak_text_color()
+    };
+    painter.line(points.to_vec(), Stroke::new(1.5, color));
+}
+
+/// The `⋯` marker after a folded line whose text ends at `x_end`.
+fn paint_fold_pill(
+    painter: &egui::Painter,
+    f: &Frame,
+    visuals: &egui::Visuals,
+    x_end: f32,
+    y: f32,
+) {
+    let r = f.fold_pill(x_end, y);
+    painter.rect_filled(r, r.height() / 2.0, visuals.widgets.inactive.bg_fill);
+    let dot = (f.cell_w * 0.12).max(1.2);
+    for i in [-1.0, 0.0, 1.0] {
+        let p = r.center() + Vec2::new(i * f.cell_w * 0.75, 0.0);
+        painter.circle_filled(p, dot, visuals.weak_text_color());
+    }
+}
+
+/// The header line a click at `p` folds or unfolds: a fold header (or a
+/// folded line) in the fold margin, or a folded line's `⋯` marker.
+#[allow(clippy::too_many_arguments)]
+fn fold_target(
+    editor: &Editor,
+    view: ViewId,
+    cache: &mut LayoutCache,
+    f: &Frame,
+    top: Top,
+    x_off: f32,
+    ui: &Ui,
+    p: Pos2,
+) -> Option<usize> {
+    let in_margin = f.in_fold_margin(p);
+    if !in_margin && !f.content.contains(p) {
+        return None;
+    }
+    let rows = display_map(editor, view);
+    let down = ((p.y - f.content.min.y) / f.line_h + top.frac).floor();
+    let (row, moved) = rows.step(top.row, down as isize);
+    if moved != down as isize {
+        return None; // below the last row
+    }
+    let v = editor.view(view)?;
+    let b = editor.buffer(v.buffer())?;
+    let folded = v.folds().is_folded(row.line);
+    if in_margin {
+        let header = folded
+            || ochrepad_core::fold::is_header(
+                b.doc(),
+                row.line,
+                b.fold_strategy,
+                editor.settings.tab_width,
+            );
+        return (row.sub == 0 && header).then_some(row.line);
+    }
+    if !folded || rows.row_range(row).end != b.doc().line_end(row.line) {
+        return None;
+    }
+    let layout = line_layout(editor, v.buffer(), cache, row.line, f, ui, Styling::Any);
+    let y = f.content.min.y + (down - top.frac) * f.line_h;
+    let x_end = f.text_left() - x_off - row_x0(&rows, &layout, row) + layout.width;
+    f.fold_pill(x_end, y).contains(p).then_some(row.line)
 }
 
 /// Draws a line's text from its layout with its first cell at `x0`, row top
@@ -970,6 +1114,7 @@ fn paint(
     }: Scroll,
     focused: bool,
     now: f64,
+    show_chevrons: bool,
     styler: Option<&mut dyn LineStyler>,
     find_highlight: Option<&ochrepad_core::Searcher>,
 ) {
@@ -989,35 +1134,56 @@ fn paint(
     // The rows on screen, plus one partly shown below.
     let shown: Vec<RowPos> = rows.rows_from(top.row, f.rows_full + 2).collect();
     let y0 = f.content.min.y - top.frac * f.line_h;
-    // The document lines the shown rows come from.
+    // The document lines the shown rows come from, as runs of consecutive
+    // lines: a fold between two runs may hide any amount of text, which is
+    // neither highlighted nor searched.
     let first = shown.first().map_or(0, |r| r.line);
     let last = shown.last().map_or(0, |r| r.line + 1);
+    let mut runs: Vec<std::ops::Range<usize>> = Vec::new();
+    for r in &shown {
+        match runs.last_mut() {
+            Some(run) if r.line <= run.end => run.end = r.line + 1,
+            _ => runs.push(r.line..r.line + 1),
+        }
+    }
     let x0 = f.text_left() - x_off;
     let text_color = visuals.text_color();
     let current_line_bg = visuals.faint_bg_color;
     let sel_bg = visuals.selection.bg_fill;
-    let spans = styler.map(|s| s.line_spans(doc, first..last));
-    // Every match of the find panel's pattern on the visible lines.
-    let matches = match find_highlight {
-        Some(s) if first < last => s.find_all(doc, doc.line_start(first)..doc.line_end(last - 1)),
-        _ => Vec::new(),
+    let spans: Vec<(usize, Vec<Option<ochrepad_syntax::LineSpans>>)> = match styler {
+        Some(s) => runs
+            .iter()
+            .map(|r| (r.start, s.line_spans(doc, r.clone())))
+            .collect(),
+        None => Vec::new(),
     };
+    let find_in_runs = |s: &Searcher| -> Vec<std::ops::Range<ByteOffset>> {
+        runs.iter()
+            .flat_map(|r| s.find_all(doc, doc.line_start(r.start)..doc.line_end(r.end - 1)))
+            .collect()
+    };
+    // Every match of the find panel's pattern on the visible lines.
+    let matches = find_highlight.map(find_in_runs).unwrap_or_default();
     let match_bg = crate::theme::match_bg(&visuals);
     // Smart highlighting: other occurrences of the selected text.
-    let smart = match smart_searcher(&mut state.smart, doc, &v.selections) {
-        Some(s) if first < last => s.find_all(doc, doc.line_start(first)..doc.line_end(last - 1)),
-        _ => Vec::new(),
-    };
+    let smart = smart_searcher(&mut state.smart, doc, &v.selections)
+        .map(find_in_runs)
+        .unwrap_or_default();
     let smart_bg = crate::theme::smart_highlight_bg(&visuals);
     let accent = crate::theme::accent(&visuals);
+    let tab_width = editor.settings.tab_width;
+    let strategy = editor
+        .buffer(buffer)
+        .map(|b| b.fold_strategy)
+        .unwrap_or_default();
 
     for (i, &row) in shown.iter().enumerate() {
         let line = row.line;
         let y = y0 + i as f32 * f.line_h;
+        let run = spans.partition_point(|(start, _)| *start <= line);
         let styling = Styling::Exact(
-            spans
-                .as_ref()
-                .and_then(|s| s.get(line - first))
+            run.checked_sub(1)
+                .and_then(|r| spans[r].1.get(line - spans[r].0))
                 .and_then(Option::as_ref),
         );
         let layout = line_layout(editor, buffer, &mut state.cache, line, f, ui, styling);
@@ -1090,10 +1256,15 @@ fn paint(
 
         paint_line_text(&text_painter, &layout, rx0, y, &f.font, f.line_h);
 
-        // The line number goes on a line's first row.
+        let folded = v.folds().is_folded(line);
+        if folded && row_end == line_end {
+            paint_fold_pill(&text_painter, f, &visuals, rx0 + layout.width, y);
+        }
+
+        // The line number and fold chevron go on a line's first row.
         if row.sub == 0 {
             gutter_painter.text(
-                Pos2::new(f.gutter.max.x - f.cell_w, y),
+                Pos2::new(f.gutter.max.x - f.fold_w, y),
                 Align2::RIGHT_TOP,
                 (line + 1).to_string(),
                 f.font.clone(),
@@ -1103,6 +1274,13 @@ fn paint(
                     visuals.weak_text_color()
                 },
             );
+            if f.fold_margin
+                && (folded
+                    || show_chevrons
+                        && ochrepad_core::fold::is_header(doc, line, strategy, tab_width))
+            {
+                paint_chevron(&gutter_painter, f, &visuals, y, folded);
+            }
         }
     }
 

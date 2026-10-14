@@ -24,6 +24,9 @@ A fast, native text editor in the spirit of Notepad++, written in Rust with
   [docs/find-and-replace.md](docs/find-and-replace.md) for the regex dialect.
 - **Macros**: record, play back once, N times or to the end of the file, save
   them with a name and a shortcut ([more](docs/macros.md)).
+- **Code folding** by indentation (and by heading in Markdown), with
+  Notepad++'s fold shortcuts; folds are kept with the session
+  ([more](docs/view.md)).
 - **Tabs and split screen**: drag tabs into side-by-side or stacked panes, or
   open a second view of the same file; edits show in both.
 - **Compare**: a side-by-side diff of two files (or a file against its saved
@@ -36,7 +39,8 @@ A fast, native text editor in the spirit of Notepad++, written in Rust with
   automatic saving of named files ([more](docs/backups-and-session.md)).
 - **Text tools**: UPPER/lower/Title/iNVERT case, sort lines (ascending,
   descending, case-insensitive, numeric, by a column selection), duplicate,
-  move, join lines and trim trailing whitespace.
+  move, join lines, trim trailing whitespace, and remove empty or duplicate
+  lines.
 - **Faithful file handling**: UTF-8, UTF-16 and legacy encodings are detected,
   and files are saved back with the same encoding, BOM and line endings
   (CRLF, LF or CR). Saves are atomic, so a crash never leaves a half-written
@@ -47,7 +51,7 @@ A fast, native text editor in the spirit of Notepad++, written in Rust with
 - Preferences for font, size, tabs or spaces, tab width, theme, and backups;
   an editable keymap; recent files; drag and drop to open.
 
-Not included (by design, for now): word wrap, code folding, right-to-left
+Not included (by design, for now): word wrap, right-to-left
 text, proportional fonts, plugins and language servers.
 
 ## Download
@@ -115,6 +119,8 @@ Windows and Linux. macOS is not supported.
 | Back to one caret | Esc |
 | Select a line | click its line number (drag for several) |
 | Duplicate, move, join lines | Ctrl+D, Ctrl+Shift+Up/Down, Ctrl+J |
+| Fold, unfold the block at the caret | Ctrl+Alt+F, Ctrl+Alt+Shift+F |
+| Fold all, unfold all, fold a level | Alt+0, Alt+Shift+0, Alt+1 … Alt+8 |
 | UPPERCASE, lowercase | Ctrl+Shift+U, Ctrl+U |
 | Title Case, iNVERT cASE | Alt+U, Ctrl+Alt+U |
 | Record/stop macro, play macro | Ctrl+Shift+R, Ctrl+Shift+P |

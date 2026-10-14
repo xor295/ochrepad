@@ -2,7 +2,8 @@
 //! (PLAN_v0.2.0 3.2). A row is addressed relative to its line, as a
 //! [`RowPos`], so nothing needs a global row index: with word wrap that
 //! would mean wrapping the whole file. Folded lines will have no rows and
-//! wrapped lines several; for now every line is exactly one row.
+//! wrapped lines several. Lines hidden by a fold have no rows; for now
+//! every other line is exactly one row.
 //!
 //! The editor widget scrolls, paints and hit-tests through a [`DisplayMap`],
 //! and vertical motions resolve through one, so a macro's `Up` moves one
@@ -12,6 +13,7 @@ use std::ops::Range;
 
 use serde::{Deserialize, Serialize};
 
+use crate::fold::FoldSet;
 use crate::position::{ByteOffset, VisualCol, byte_to_visual_col, visual_col_to_byte};
 use crate::text::Document;
 use crate::view::View;
@@ -36,12 +38,17 @@ impl RowPos {
 #[derive(Clone, Copy)]
 pub struct DisplayMap<'a> {
     doc: &'a Document,
+    folds: &'a FoldSet,
     tab_width: usize,
 }
 
 impl<'a> DisplayMap<'a> {
-    pub fn new(doc: &'a Document, _view: &View, tab_width: usize) -> Self {
-        Self { doc, tab_width }
+    pub fn new(doc: &'a Document, view: &'a View, tab_width: usize) -> Self {
+        Self {
+            doc,
+            folds: &view.folds,
+            tab_width,
+        }
     }
 
     pub fn doc(&self) -> &'a Document {
@@ -49,13 +56,26 @@ impl<'a> DisplayMap<'a> {
     }
 
     /// Rows that `line` takes on screen: 0 for a hidden line.
-    pub fn rows_in_line(&self, _line: usize) -> usize {
-        1
+    pub fn rows_in_line(&self, line: usize) -> usize {
+        if self.folds.is_hidden(line) { 0 } else { 1 }
     }
 
     /// Lines that are not hidden. Sizes the scrollbar.
     pub fn visible_line_count(&self) -> usize {
-        self.doc.line_count()
+        self.doc.line_count() - self.folds.hidden_count()
+    }
+
+    /// `line`, or the fold header above it if it is hidden.
+    fn shown_line(&self, line: usize) -> usize {
+        match self.folds.hidden_range(line) {
+            Some((start, _)) => start - 1,
+            None => line,
+        }
+    }
+
+    /// How many visible lines come before `line` (which must be visible).
+    fn visible_index(&self, line: usize) -> usize {
+        line - self.folds.hidden_before(line)
     }
 
     pub fn first_row(&self) -> RowPos {
@@ -63,16 +83,18 @@ impl<'a> DisplayMap<'a> {
     }
 
     pub fn last_row(&self) -> RowPos {
-        let line = self.doc.line_count() - 1;
+        let line = self.shown_line(self.doc.line_count() - 1);
         RowPos::new(line, self.rows_in_line(line) - 1)
     }
 
     /// The row `n` rows after `row` (before it for negative `n`), stopping at
     /// the first and last rows, and how many rows it actually moved.
     pub fn step(&self, row: RowPos, n: isize) -> (RowPos, isize) {
-        let last = self.doc.line_count() as isize - 1;
-        let line = (row.line as isize + n).clamp(0, last);
-        (RowPos::new(line as usize, 0), line - row.line as isize)
+        let from = self.visible_index(self.shown_line(row.line)) as isize;
+        let last = self.visible_line_count() as isize - 1;
+        let to = (from + n).clamp(0, last);
+        let line = self.folds.visible_line(to as usize, self.doc.line_count());
+        (RowPos::new(line, 0), to - from)
     }
 
     /// The row `n` rows after `row`, clamped to the document.
@@ -85,9 +107,10 @@ impl<'a> DisplayMap<'a> {
         self.doc.line_start(row.line)..self.doc.line_end(row.line)
     }
 
-    /// The row showing `pos`.
+    /// The row showing `pos`; for a position hidden by a fold, the fold's
+    /// header row.
     pub fn row_of(&self, pos: ByteOffset) -> RowPos {
-        RowPos::new(self.doc.line_of(pos), 0)
+        RowPos::new(self.shown_line(self.doc.line_of(pos)), 0)
     }
 
     /// The visual column of `pos` counted from the start of its row.
@@ -106,7 +129,7 @@ impl<'a> DisplayMap<'a> {
     /// line scrolled past.
     pub fn offset_of(&self, row: RowPos, frac: f32) -> f64 {
         let rows = self.rows_in_line(row.line).max(1) as f64;
-        row.line as f64 + (row.sub as f64 + frac as f64) / rows
+        self.visible_index(self.shown_line(row.line)) as f64 + (row.sub as f64 + frac as f64) / rows
     }
 
     /// The inverse of [`offset_of`](Self::offset_of): the top row and fraction
@@ -114,9 +137,12 @@ impl<'a> DisplayMap<'a> {
     pub fn pos_at_offset(&self, offset: f64) -> (RowPos, f32) {
         let max = self.visible_line_count().saturating_sub(1) as f64;
         let offset = offset.clamp(0.0, max + 0.999_999);
-        let line = (offset.floor() as usize).min(self.doc.line_count() - 1);
+        let index = offset.floor();
+        let line = self
+            .folds
+            .visible_line(index as usize, self.doc.line_count());
         let rows = self.rows_in_line(line).max(1) as f64;
-        let within = (offset - line as f64) * rows;
+        let within = (offset - index) * rows;
         let sub = (within.floor() as usize).min(self.rows_in_line(line).max(1) - 1);
         (RowPos::new(line, sub), (within - sub as f64) as f32)
     }
