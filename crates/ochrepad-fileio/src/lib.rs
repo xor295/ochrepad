@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use encoding_rs::{EncoderResult, Encoding, UTF_8, UTF_16BE, UTF_16LE};
 use ochrepad_core::{Buffer, BufferId, Editor, FileMeta, LineEnding};
 
+pub mod bigfile;
 pub mod tree;
 pub mod worker;
 
@@ -52,7 +53,7 @@ impl fmt::Display for LoadError {
             }
             LoadError::TooLarge(size) => write!(
                 f,
-                "the file is {} MB; files over {} MB are not opened",
+                "the file is {} MB, too large to edit (the limit is {} MB); open it to read it in the viewer for large files",
                 size / (1024 * 1024),
                 MAX_LOAD_SIZE / (1024 * 1024)
             ),
@@ -122,6 +123,25 @@ pub fn read_file(path: &Path) -> Result<Vec<u8>, LoadError> {
 
 /// [`read_file`] with another size limit.
 pub fn read_file_up_to(path: &Path, limit: u64) -> Result<Vec<u8>, LoadError> {
+    let (file, meta) = open_regular_file(path)?;
+    if meta.len() > limit {
+        return Err(LoadError::TooLarge(meta.len()));
+    }
+    let mut bytes = Vec::with_capacity(meta.len() as usize);
+    // At most one byte past the limit, in case the file grew since.
+    file.take(limit + 1).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > limit {
+        return Err(LoadError::TooLarge(bytes.len() as u64));
+    }
+    Ok(bytes)
+}
+
+/// Opens `path` for reading if it is a regular file (following links). The
+/// check is made on the open file, so it cannot be swapped in between; on
+/// Linux the open does not wait, so a pipe cannot block it.
+pub(crate) fn open_regular_file(
+    path: &Path,
+) -> Result<(std::fs::File, std::fs::Metadata), LoadError> {
     let mut options = std::fs::OpenOptions::new();
     options.read(true);
     #[cfg(target_os = "linux")]
@@ -136,16 +156,7 @@ pub fn read_file_up_to(path: &Path, limit: u64) -> Result<Vec<u8>, LoadError> {
     if !meta.is_file() {
         return Err(LoadError::NotAFile);
     }
-    if meta.len() > limit {
-        return Err(LoadError::TooLarge(meta.len()));
-    }
-    let mut bytes = Vec::with_capacity(meta.len() as usize);
-    // At most one byte past the limit, in case the file grew since.
-    file.take(limit + 1).read_to_end(&mut bytes)?;
-    if bytes.len() as u64 > limit {
-        return Err(LoadError::TooLarge(bytes.len() as u64));
-    }
-    Ok(bytes)
+    Ok((file, meta))
 }
 
 /// Reads and decodes a file.

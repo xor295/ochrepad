@@ -922,13 +922,13 @@ pub fn editor_view(
 }
 
 /// Where Ctrl+wheel zoom steps wait for the app (see [`take_zoom_steps`]).
-fn zoom_id() -> Id {
+pub(crate) fn zoom_id() -> Id {
     Id::new("ochrepad-zoom-steps")
 }
 
 /// Zoom steps in this frame's Ctrl+wheel events: one per notch of a mouse
 /// wheel, or per 50 points of a trackpad; positive zooms in.
-fn wheel_zoom_steps(events: &[Event]) -> f32 {
+pub(crate) fn wheel_zoom_steps(events: &[Event]) -> f32 {
     events
         .iter()
         .map(|e| match e {

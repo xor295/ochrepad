@@ -72,6 +72,14 @@ people downloading the release.
   in File Manager and Reload from Disk. The same copies are in Edit > Copy
   to Clipboard.
 - View > Full Screen (F11) and Always on Top.
+- A read-only viewer for large files: files over 256 MB (a setting) open
+  without being read into memory, so a log of several gigabytes shows its
+  first screen at once. The line index builds in the background while you
+  scroll, select, copy (up to 64 MB), go to a line and search (Find
+  Next/Previous, Count and Find All run in the background). Long lines are
+  cut after 10,000 bytes with a marker; UTF-8 and legacy encodings are
+  shown, UTF-16 is refused. View > Open as Editable opens such a file in an
+  editor (up to 1 GB). The session reopens viewers where they were.
 
 ### Fixed
 

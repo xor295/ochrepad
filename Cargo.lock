@@ -2850,6 +2850,8 @@ dependencies = [
  "directories",
  "encoding_rs",
  "ignore",
+ "memchr",
+ "memmap2",
  "ochrepad-core",
  "proptest",
  "serde",

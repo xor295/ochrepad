@@ -308,17 +308,20 @@ impl OchrepadApp {
                 };
                 let at = path.tab.0;
                 let left = command == TabFileCommand::CloseLeft;
-                let views: Vec<ViewId> = leaf
+                let tabs: Vec<Tab> = leaf
                     .tabs
                     .iter()
                     .enumerate()
                     .filter(|(i, _)| if left { *i < at } else { *i > at })
-                    .filter_map(|(_, t)| match t {
-                        Tab::Editor(v) => Some(*v),
-                        Tab::Preview(_) | Tab::Compare(_) => None,
-                    })
+                    .map(|(_, t)| *t)
                     .collect();
-                self.close_queue.extend(views);
+                for tab in tabs {
+                    match tab {
+                        Tab::Editor(v) => self.close_queue.push_back(v),
+                        Tab::Viewer(id) => self.close_viewer(id),
+                        Tab::Preview(_) | Tab::Compare(_) => {}
+                    }
+                }
             }
             TabFileCommand::CloseUnchanged => {
                 let clean: Vec<ViewId> = self

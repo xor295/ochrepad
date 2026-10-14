@@ -52,6 +52,17 @@ pub struct Session {
     /// The open folder.
     #[serde(default)]
     pub workspace: Option<super::workspace::SessionWorkspace>,
+    /// Large files open read-only, in tab order. In `layout` they come after
+    /// the editor tabs: index `tabs.len() + i` is `viewers[i]`.
+    #[serde(default)]
+    pub viewers: Vec<SessionViewer>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SessionViewer {
+    pub path: PathBuf,
+    /// The first line on screen.
+    pub top_line: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -393,8 +404,22 @@ impl OchrepadApp {
                 folds: v.folds().headers().collect(),
             });
         }
+        let mut viewer_index = HashMap::new();
+        for (_, tab) in self.dock.iter_all_tabs() {
+            if let Tab::Viewer(id) = tab
+                && let Some(v) = self.viewers.get(*id)
+            {
+                viewer_index.insert(*id, session.viewers.len());
+                session.viewers.push(SessionViewer {
+                    path: v.file.path().to_path_buf(),
+                    top_line: v.state.top_line(),
+                });
+            }
+        }
+        let editors = session.tabs.len();
         session.layout = Some(self.dock.filter_map_tabs(|t| match t {
             Tab::Editor(v) => tab_index.get(v).copied(),
+            Tab::Viewer(id) => viewer_index.get(id).map(|i| editors + i),
             Tab::Preview(_) | Tab::Compare(_) => None,
         }));
         session.active = tab_index.get(&self.active).copied();
@@ -539,7 +564,32 @@ impl OchrepadApp {
             })
             .collect();
         let restored: Vec<ViewId> = views.iter().flatten().copied().collect();
+        let viewer_tabs: Vec<Option<crate::viewer::ViewerId>> = session
+            .viewers
+            .iter()
+            .map(
+                |sv| match ochrepad_fileio::bigfile::BigFile::open(&sv.path) {
+                    Ok(file) => {
+                        let id = self.viewers.add(file);
+                        if let Some(v) = self.viewers.get_mut(id) {
+                            v.state.scroll_to_line(sv.top_line);
+                        }
+                        Some(id)
+                    }
+                    Err(e) => {
+                        problems.push(format!("{}: {e}", sv.path.display()));
+                        None
+                    }
+                },
+            )
+            .collect();
+        let restored_viewers: Vec<crate::viewer::ViewerId> =
+            viewer_tabs.iter().flatten().copied().collect();
         if restored.is_empty() {
+            // Only viewers: beside the startup tab.
+            for id in &restored_viewers {
+                self.dock.push_to_focused_leaf(Tab::Viewer(*id));
+            }
             if !problems.is_empty() {
                 self.message = Some(format!(
                     "Some files from the last session could not be opened:\n{}",
@@ -548,11 +598,26 @@ impl OchrepadApp {
             }
             return;
         }
+        let editors = views.len();
         let dock = session
             .layout
-            .map(|l| l.filter_map_tabs(|i| views.get(*i).copied().flatten().map(Tab::Editor)))
-            .filter(|d| d.iter_all_tabs().count() == restored.len())
-            .unwrap_or_else(|| DockState::new(restored.iter().copied().map(Tab::Editor).collect()));
+            .map(|l| {
+                l.filter_map_tabs(|i| match i.checked_sub(editors) {
+                    None => views.get(*i).copied().flatten().map(Tab::Editor),
+                    Some(v) => viewer_tabs.get(v).copied().flatten().map(Tab::Viewer),
+                })
+            })
+            .filter(|d| d.iter_all_tabs().count() == restored.len() + restored_viewers.len())
+            .unwrap_or_else(|| {
+                DockState::new(
+                    restored
+                        .iter()
+                        .copied()
+                        .map(Tab::Editor)
+                        .chain(restored_viewers.iter().copied().map(Tab::Viewer))
+                        .collect(),
+                )
+            });
 
         // Replace the empty startup tab(s).
         let startup: Vec<ViewId> = self.tabs();

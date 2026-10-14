@@ -28,13 +28,14 @@ mod history_store;
 mod prefs;
 mod search;
 mod tools;
+mod viewers;
 mod workspace;
 
-pub use autosave::{AutosaveSettings, Session, SessionBuffer, SessionTab};
+pub use autosave::{AutosaveSettings, Session, SessionBuffer, SessionTab, SessionViewer};
 pub use external::DiskChange;
 
 use crate::compare::{Compare, CompareId, CompareSide, Compares};
-use crate::find_panel::{FindPanel, FindRequest};
+use crate::find_panel::{FindPanel, FindRequest, FindTarget};
 use crate::highlight::Highlighting;
 use crate::keymap::Keymap;
 use crate::macro_ui::{MacroSource, Macros};
@@ -67,6 +68,8 @@ pub enum Tab {
     Preview(BufferId),
     /// A side-by-side comparison.
     Compare(CompareId),
+    /// A file too large to edit, read-only (`crate::viewer`).
+    Viewer(crate::viewer::ViewerId),
 }
 
 const NEXT_DIFF: KeyboardShortcut = KeyboardShortcut::new(Modifiers::NONE, Key::F8);
@@ -99,6 +102,8 @@ enum TabCommand {
     Link(crate::preview::LinkClick),
     /// A file command from a tab's context menu.
     File(edit_tools::TabFileCommand, ViewId),
+    CloseViewer(crate::viewer::ViewerId),
+    OpenAsEditable(crate::viewer::ViewerId),
 }
 
 pub struct OchrepadApp {
@@ -106,6 +111,10 @@ pub struct OchrepadApp {
     pub dock: DockState<Tab>,
     pub previews: Previews,
     pub compares: Compares,
+    /// Files too large to edit, open read-only.
+    pub viewers: crate::viewer::Viewers,
+    /// The viewer whose Open as Editable question is showing.
+    confirm_editable: Option<crate::viewer::ViewerId>,
     view_states: HashMap<ViewId, EditorViewState>,
     /// Names of buffers that have never been saved ("new 1", "new 2", …).
     untitled: HashMap<BufferId, String>,
@@ -184,6 +193,8 @@ impl OchrepadApp {
             dock: DockState::new(vec![Tab::Editor(view)]),
             previews: Previews::default(),
             compares: Compares::default(),
+            viewers: Default::default(),
+            confirm_editable: None,
             view_states: HashMap::new(),
             untitled: HashMap::from([(buffer, "new 1".to_owned())]),
             next_untitled: 2,
@@ -279,7 +290,7 @@ impl OchrepadApp {
             .iter_all_tabs()
             .filter_map(|(_, t)| match t {
                 Tab::Editor(v) => Some(*v),
-                Tab::Preview(_) | Tab::Compare(_) => None,
+                Tab::Preview(_) | Tab::Compare(_) | Tab::Viewer(_) => None,
             })
             .collect()
     }
@@ -363,6 +374,16 @@ impl OchrepadApp {
             self.activate(view);
             return;
         }
+        if self.opens_in_viewer(path) {
+            self.open_viewer(path);
+            return;
+        }
+        self.open_in_editor(path);
+    }
+
+    /// Opens `path` in a new editor tab, however large it is (up to what
+    /// `fileio` loads): `open_path` without the viewer.
+    fn open_in_editor(&mut self, path: &Path) {
         let decoded = match fileio::load(path) {
             Ok(d) => d,
             Err(e) => {
@@ -643,7 +664,7 @@ impl OchrepadApp {
                 .find_active_focused()
                 .and_then(|(_, t)| match t {
                     Tab::Editor(v) => Some(*v),
-                    Tab::Preview(_) | Tab::Compare(_) => None,
+                    Tab::Preview(_) | Tab::Compare(_) | Tab::Viewer(_) => None,
                 })
                 .or_else(|| self.tabs().first().copied());
             if let Some(next) = next {
@@ -653,7 +674,10 @@ impl OchrepadApp {
     }
 
     fn cycle_tab(&mut self, forward: bool) {
-        let Some(path) = self.dock.find_tab(&Tab::Editor(self.active)) else {
+        let current = self
+            .focused_viewer()
+            .map_or(Tab::Editor(self.active), Tab::Viewer);
+        let Some(path) = self.dock.find_tab(&current) else {
             return;
         };
         let node = NodePath {
@@ -678,8 +702,10 @@ impl OchrepadApp {
             tab: TabIndex(next),
             ..path
         });
-        if let Tab::Editor(view) = tab {
-            self.activate(view);
+        match tab {
+            Tab::Editor(view) => self.activate(view),
+            Tab::Viewer(id) => self.activate_viewer(id),
+            Tab::Preview(_) | Tab::Compare(_) => {}
         }
     }
 
@@ -747,12 +773,20 @@ impl OchrepadApp {
             .frame(bar(ui, 2))
             .show(ui, |ui| self.status_bar(ui));
         if self.find.open {
+            let viewer = self.focused_viewer();
+            let target = match viewer {
+                Some(_) => FindTarget::Viewer,
+                None => FindTarget::Editor(&mut self.editor, self.active),
+            };
             let requests = Panel::bottom("find")
-                .show(ui, |ui| self.find.ui(ui, &mut self.editor, self.active))
+                .show(ui, |ui| self.find.ui(ui, target))
                 .inner;
-            // Escape closes the panel unless the editor has the keyboard
-            // (there it collapses selections).
-            let editor_focused = ui.memory(|m| m.has_focus(editor_id(self.active)));
+            // Escape closes the panel unless the editor (or viewer) has the
+            // keyboard (there it collapses selections).
+            let editor_focused = ui.memory(|m| {
+                m.has_focus(editor_id(self.active))
+                    || viewer.is_some_and(|id| m.has_focus(crate::viewer::viewer_widget_id(id)))
+            });
             let mut requests = requests;
             if !editor_focused && ui.input(|i| i.key_pressed(Key::Escape)) {
                 requests.push(FindRequest::Close);
@@ -761,10 +795,30 @@ impl OchrepadApp {
                 match r {
                     FindRequest::Close => {
                         self.find.open = false;
-                        self.view_state_mut().request_focus();
+                        match viewer.and_then(|id| self.viewers.get_mut(id)) {
+                            Some(v) => v.state.request_focus(),
+                            None => self.view_state_mut().request_focus(),
+                        }
                     }
                     FindRequest::Reveal => self.view_state_mut().reveal_caret(),
+                    FindRequest::FindAll {
+                        all_documents: false,
+                    } if viewer.is_some() => {
+                        if let Some(id) = viewer {
+                            self.viewer_find_all(id);
+                        }
+                    }
                     FindRequest::FindAll { all_documents } => self.find_all(all_documents),
+                    FindRequest::Next { backward } => {
+                        if let Some(id) = viewer {
+                            self.viewer_find(id, backward);
+                        }
+                    }
+                    FindRequest::Count => {
+                        if let Some(id) = viewer {
+                            self.viewer_count(id);
+                        }
+                    }
                     FindRequest::ReplaceAllInAll => self.plan_replace_all_in_all(),
                     FindRequest::FindInFiles => self.find_in_files(),
                 }
@@ -823,6 +877,8 @@ impl OchrepadApp {
             let mut tabs = Tabs {
                 look: self.settings.look(),
                 log_rules: &self.log_rules,
+                tab_width: self.settings.tab_width,
+                viewers: &mut self.viewers,
                 fold_margin: self.settings.fold_margin,
                 word_wrap: self.settings.word_wrap,
                 document_map: self.settings.document_map,
@@ -886,14 +942,18 @@ impl OchrepadApp {
                 }
                 TabCommand::Link(crate::preview::LinkClick::Refused(why)) => self.note_text(why),
                 TabCommand::File(command, v) => self.tab_file_command(command, v),
+                TabCommand::CloseViewer(id) => self.close_viewer(id),
+                TabCommand::OpenAsEditable(id) => self.ask_open_as_editable(id),
             }
         }
+        self.viewer_events();
 
         self.autosave_tick(ui);
         self.dialogs(ui);
         self.replace_all_dialog(ui);
         self.new_entry_dialog(ui);
         self.go_to_line_dialog(ui);
+        self.open_as_editable_dialog(ui);
         self.hash_dialog(ui);
         self.edit_tools_frame(ui);
         self.external_dialog(ui);
@@ -906,24 +966,34 @@ impl OchrepadApp {
         // field while the find panel is open, otherwise to the editor.
         let idle = self.message.is_none()
             && self.confirming.is_none()
+            && self.confirm_editable.is_none()
             && !self.macros.dialog_open()
             && !self.edit_tools.dialog_open()
             && ui.memory(|m| m.focused().is_none());
         if idle && self.find.open {
             self.find.focus_field();
         } else if idle {
-            self.focus_request = Some(self.active);
+            match self
+                .focused_viewer()
+                .and_then(|id| self.viewers.get_mut(id))
+            {
+                Some(v) => v.state.request_focus(),
+                None => self.focus_request = Some(self.active),
+            }
         }
         if self.close_confirmed && !self.close_sent {
             self.close_sent = true;
             ui.ctx().send_viewport_cmd(ViewportCommand::Close);
         }
 
-        let title = format!(
-            "{}{} - ochrepad",
-            if self.buffer().is_dirty() { "*" } else { "" },
-            self.file_name()
-        );
+        let title = match self.focused_viewer() {
+            Some(id) => format!("{} (read-only) - ochrepad", self.viewer_name(id)),
+            None => format!(
+                "{}{} - ochrepad",
+                if self.buffer().is_dirty() { "*" } else { "" },
+                self.file_name()
+            ),
+        };
         if title != self.title {
             ui.ctx()
                 .send_viewport_cmd(ViewportCommand::Title(title.clone()));
@@ -994,11 +1064,20 @@ impl OchrepadApp {
         if pressed(ui, &OPEN) {
             self.open_dialog();
         }
+        let viewer = self.focused_viewer();
         if pressed(ui, &SAVE_AS) {
-            self.save_as();
+            if viewer.is_some() {
+                self.note_text("This file is open read-only (View > Open as Editable)");
+            } else {
+                self.save_as();
+            }
         }
         if pressed(ui, &SAVE) {
-            self.save();
+            if viewer.is_some() {
+                self.note_text("This file is open read-only (View > Open as Editable)");
+            } else {
+                self.save();
+            }
         }
         if pressed(ui, &GO_TO_LINE) {
             self.go_to_line = Some(String::new());
@@ -1023,19 +1102,24 @@ impl OchrepadApp {
         if pressed(ui, &FIND_IN_FILES) {
             self.open_find_in_files(None);
         }
-        if pressed(ui, &FIND) {
-            self.find.open(&self.editor, self.active, false);
+        for (shortcut, replace) in [(&FIND, false), (&REPLACE, true)] {
+            if pressed(ui, shortcut) {
+                match viewer {
+                    Some(id) => self.open_find_on_viewer(id),
+                    None => self.find.open(&self.editor, self.active, replace),
+                }
+            }
         }
-        if pressed(ui, &REPLACE) {
-            self.find.open(&self.editor, self.active, true);
-        }
-        if pressed(ui, &FIND_PREV) && !self.find.pattern.is_empty() {
-            self.find.find(&mut self.editor, self.active, true);
-            self.view_state_mut().reveal_caret();
-        }
-        if pressed(ui, &FIND_NEXT) && !self.find.pattern.is_empty() {
-            self.find.find(&mut self.editor, self.active, false);
-            self.view_state_mut().reveal_caret();
+        for (shortcut, backward) in [(&FIND_PREV, true), (&FIND_NEXT, false)] {
+            if pressed(ui, shortcut) && !self.find.pattern.is_empty() {
+                match viewer {
+                    Some(id) => self.viewer_find(id, backward),
+                    None => {
+                        self.find.find(&mut self.editor, self.active, backward);
+                        self.view_state_mut().reveal_caret();
+                    }
+                }
+            }
         }
         if pressed(ui, &RECORD_MACRO) {
             self.macros.toggle_recording(&mut self.editor);
@@ -1069,7 +1153,10 @@ impl OchrepadApp {
             self.settings.show_sidebar = !self.settings.show_sidebar;
         }
         if pressed(ui, &CLOSE) {
-            self.close_view(self.active);
+            match viewer {
+                Some(id) => self.close_viewer(id),
+                None => self.close_view(self.active),
+            }
         }
         if pressed(ui, &PREV_TAB) {
             self.cycle_tab(false);
@@ -1413,10 +1500,14 @@ impl OchrepadApp {
         let item = |ui: &mut Ui, label: &str, shortcut: &str| {
             ui.add(Button::new(label).shortcut_text(shortcut)).clicked()
         };
+        let viewer = self.focused_viewer();
         if item(ui, "Find…", "Ctrl+F") {
-            self.find.open(&self.editor, self.active, false);
+            match viewer {
+                Some(id) => self.open_find_on_viewer(id),
+                None => self.find.open(&self.editor, self.active, false),
+            }
         }
-        if item(ui, "Replace…", "Ctrl+H") {
+        if viewer.is_none() && item(ui, "Replace…", "Ctrl+H") {
             self.find.open(&self.editor, self.active, true);
         }
         ui.separator();
@@ -1436,13 +1527,19 @@ impl OchrepadApp {
         if item(ui, "Find in Files…", "Ctrl+Shift+F") {
             self.open_find_in_files(None);
         }
-        if item(ui, "Find Next", "F3") && !self.find.pattern.is_empty() {
-            self.find.find(&mut self.editor, self.active, false);
-            self.view_state_mut().reveal_caret();
-        }
-        if item(ui, "Find Previous", "Shift+F3") && !self.find.pattern.is_empty() {
-            self.find.find(&mut self.editor, self.active, true);
-            self.view_state_mut().reveal_caret();
+        for (label, shortcut, backward) in [
+            ("Find Next", "F3", false),
+            ("Find Previous", "Shift+F3", true),
+        ] {
+            if item(ui, label, shortcut) && !self.find.pattern.is_empty() {
+                match viewer {
+                    Some(id) => self.viewer_find(id, backward),
+                    None => {
+                        self.find.find(&mut self.editor, self.active, backward);
+                        self.view_state_mut().reveal_caret();
+                    }
+                }
+            }
         }
     }
 
@@ -1655,6 +1752,15 @@ impl OchrepadApp {
         if ui.button("Clone to Other View").clicked() {
             self.clone_to_other_view();
         }
+        let viewer = self.focused_viewer();
+        if ui
+            .add_enabled(viewer.is_some(), Button::new("Open as Editable…"))
+            .on_hover_text("Opens the large file shown read-only in an editor")
+            .clicked()
+            && let Some(id) = viewer
+        {
+            self.ask_open_as_editable(id);
+        }
         if ui
             .add(Button::new("Next Tab").shortcut_text("Ctrl+Tab"))
             .clicked()
@@ -1788,6 +1894,10 @@ impl OchrepadApp {
     }
 
     fn status_bar(&mut self, ui: &mut Ui) {
+        if let Some(id) = self.focused_viewer() {
+            self.viewer_status_bar(ui, id);
+            return;
+        }
         let (carets, column) = self.editor.view(self.active).map_or((1, false), |v| {
             (v.selections.len(), v.selections.rect().is_some())
         });
@@ -1935,6 +2045,8 @@ impl OchrepadApp {
 struct Tabs<'a> {
     look: crate::editor_view::Look,
     log_rules: &'a crate::log_rules::LogRules,
+    tab_width: usize,
+    viewers: &'a mut crate::viewer::Viewers,
     fold_margin: bool,
     word_wrap: bool,
     document_map: bool,
@@ -1961,6 +2073,7 @@ impl TabViewer for Tabs<'_> {
             Tab::Editor(v) => Id::new(("ochrepad-tab", v.0)),
             Tab::Preview(b) => Id::new(("ochrepad-preview-tab", b.0)),
             Tab::Compare(c) => Id::new(("ochrepad-compare-tab", c.0)),
+            Tab::Viewer(v) => Id::new(("ochrepad-viewer-tab", v.0)),
         }
     }
 
@@ -1981,6 +2094,9 @@ impl TabViewer for Tabs<'_> {
                     None => "Compare".to_owned(),
                 }
                 .into();
+            }
+            Tab::Viewer(id) => {
+                return format!("{} (read-only)", viewer_name(self.viewers, *id)).into();
             }
         };
         let Some(buffer) = self.editor.view(view).map(|v| v.buffer()) else {
@@ -2018,6 +2134,21 @@ impl TabViewer for Tabs<'_> {
                         self.keymap,
                         labels,
                         &self.look,
+                        self.find_highlight,
+                    );
+                }
+                return;
+            }
+            Tab::Viewer(id) => {
+                let label = format!("Viewer: {}", viewer_name(self.viewers, id));
+                if let Some(v) = self.viewers.get_mut(id) {
+                    crate::viewer::viewer_ui(
+                        ui,
+                        id,
+                        v,
+                        &self.look,
+                        self.tab_width,
+                        &label,
                         self.find_highlight,
                     );
                 }
@@ -2082,6 +2213,15 @@ impl TabViewer for Tabs<'_> {
     }
 
     fn context_menu(&mut self, ui: &mut Ui, tab: &mut Tab, _path: NodePath) {
+        if let Tab::Viewer(id) = tab {
+            if ui.button("Close").clicked() {
+                self.commands.push(TabCommand::CloseViewer(*id));
+            }
+            if ui.button("Open as Editable…").clicked() {
+                self.commands.push(TabCommand::OpenAsEditable(*id));
+            }
+            return;
+        }
         let Tab::Editor(tab) = tab else {
             return;
         };
@@ -2114,6 +2254,10 @@ impl TabViewer for Tabs<'_> {
                 OnCloseResponse::Ignore
             }
             Tab::Preview(_) => OnCloseResponse::Close,
+            Tab::Viewer(id) => {
+                self.commands.push(TabCommand::CloseViewer(*id));
+                OnCloseResponse::Ignore
+            }
             Tab::Compare(id) => {
                 self.compares.remove(*id, self.editor);
                 OnCloseResponse::Close
@@ -2128,6 +2272,14 @@ impl TabViewer for Tabs<'_> {
     fn scroll_bars(&self, _tab: &Tab) -> [bool; 2] {
         [false, false]
     }
+}
+
+/// A viewer's file name.
+fn viewer_name(viewers: &crate::viewer::Viewers, id: crate::viewer::ViewerId) -> String {
+    viewers
+        .get(id)
+        .and_then(|v| v.file.path().file_name())
+        .map_or_else(|| "?".to_owned(), |n| n.to_string_lossy().into_owned())
 }
 
 fn buffer_name(editor: &Editor, untitled: &HashMap<BufferId, String>, buffer: BufferId) -> String {
@@ -2203,12 +2355,19 @@ impl OchrepadApp {
 
     /// Ctrl+G: a line, or `line:column`, counted from 1.
     fn go_to_line_dialog(&mut self, ui: &mut Ui) {
-        let lines = self.buffer().doc().line_count();
+        if self.go_to_line.is_none() {
+            return;
+        }
+        let viewer = self.focused_viewer();
+        let lines = match viewer {
+            Some(id) => self.viewer_line_hint(id),
+            None => format!("1–{}", self.buffer().doc().line_count()),
+        };
         let Some(text) = &mut self.go_to_line else {
             return;
         };
         let resp = Modal::new(Id::new("ochrepad-go-to-line")).show(ui.ctx(), |ui| {
-            ui.label(format!("Go to line (1–{lines}), or line:column"));
+            ui.label(format!("Go to line ({lines}), or line:column"));
             let field = ui.add(
                 egui::TextEdit::singleline(text)
                     .id(Id::new("ochrepad-go-to-line-field"))
@@ -2245,12 +2404,18 @@ impl OchrepadApp {
                     .unwrap_or(1);
                 if let Some(line) = line {
                     self.go_to_line = None;
-                    self.apply(Action::GoToLine { line, column });
+                    match viewer {
+                        Some(id) => self.viewer_go_to_line(id, line as u64, column),
+                        None => self.apply(Action::GoToLine { line, column }),
+                    }
                 }
             }
             Some(false) => {
                 self.go_to_line = None;
-                self.view_state_mut().request_focus();
+                match viewer.and_then(|id| self.viewers.get_mut(id)) {
+                    Some(v) => v.state.request_focus(),
+                    None => self.view_state_mut().request_focus(),
+                }
             }
             None => {}
         }

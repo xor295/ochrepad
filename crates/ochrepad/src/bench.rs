@@ -1,8 +1,10 @@
 //! `--bench`: drives the app through scrolling and typing phases and prints
 //! frame-time statistics, then closes. Used for the performance checks in
-//! PLAN M3/M4/M7 against generated fixtures.
+//! PLAN M3/M4/M7 against generated fixtures. A file that opens in the viewer
+//! for large files (PLAN_v0.3.0 P7) is measured there instead: the time to
+//! the first frame, to the end of indexing, and scrolling.
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use ochrepad_core::{Action, ByteOffset, SelectionSet};
 
@@ -18,6 +20,11 @@ const PHASES: [&str; 5] = [
 const FRAMES: usize = 600;
 
 pub struct Bench {
+    /// When the program started, for the time to the first frame.
+    pub launched: Option<Instant>,
+    first_frame: Option<Duration>,
+    /// The file is in a viewer: no highlighting or typing phases.
+    viewer: bool,
     started: Option<Instant>,
     /// How long the initial highlighting pass took.
     pub highlight_done: Option<std::time::Duration>,
@@ -32,6 +39,9 @@ pub struct Bench {
 impl Default for Bench {
     fn default() -> Self {
         Self {
+            launched: None,
+            first_frame: None,
+            viewer: false,
             started: None,
             highlight_done: None,
             phase: 0,
@@ -47,6 +57,31 @@ impl Bench {
     /// Sets up this frame's scroll position or edit.
     pub fn drive(&mut self, app: &mut OchrepadApp) {
         let started = *self.started.get_or_insert_with(Instant::now);
+        if let Some(id) = app.focused_viewer()
+            && let Some(v) = app.viewers.get_mut(id)
+        {
+            self.viewer = true;
+            let progress = v.file.progress();
+            if self.phase == 0 && progress.done && self.frame > 0 {
+                self.highlight_done.get_or_insert(started.elapsed());
+                self.frame = usize::MAX - 1;
+            }
+            let lines = progress.lines.max(1);
+            match self.phase {
+                1 => {
+                    let top = v.state.top_line();
+                    v.state.scroll_to_line((top + 60) % lines);
+                }
+                2 => {
+                    self.rng ^= self.rng << 13;
+                    self.rng ^= self.rng >> 7;
+                    self.rng ^= self.rng << 17;
+                    v.state.scroll_to_line(self.rng % lines);
+                }
+                _ => {}
+            }
+            return;
+        }
         if self.phase == 0 && !app.highlighting.is_busy() && self.frame > 0 {
             self.highlight_done.get_or_insert(started.elapsed());
             // End the warm-up phase on the next `record`.
@@ -89,6 +124,9 @@ impl Bench {
     /// Records the frame; returns true when the benchmark is finished.
     pub fn record(&mut self, ui_ms: f64, cpu_ms: f64) -> bool {
         let now = Instant::now();
+        if self.first_frame.is_none() {
+            self.first_frame = self.launched.map(|l| l.elapsed());
+        }
         if let Some(prev) = self.last.replace(now)
             && self.phase > 0
             && self.frame > 0
@@ -103,13 +141,23 @@ impl Bench {
             self.frame = 0;
             self.phase += 1;
         }
-        self.phase >= PHASES.len()
+        // A viewer has no typing phases.
+        self.phase >= if self.viewer { 3 } else { PHASES.len() }
     }
 
     pub fn report(&self) -> String {
-        let mut out = match self.highlight_done {
-            Some(d) => format!("initial highlighting finished after {d:?}\n"),
-            None => "initial highlighting did not finish during warm-up\n".to_owned(),
+        let mut out = String::new();
+        if let Some(d) = self.first_frame {
+            out += &format!("first frame {d:?} after launch\n");
+        }
+        let what = if self.viewer {
+            "indexing"
+        } else {
+            "initial highlighting"
+        };
+        out += &match self.highlight_done {
+            Some(d) => format!("{what} finished after {d:?}\n"),
+            None => format!("{what} did not finish during warm-up\n"),
         };
         out += &format!(
             "{:<22} {:>30} {:>30} {:>30}\n{:<22} {:>30} {:>30} {:>30}\n",
@@ -122,7 +170,10 @@ impl Bench {
             "avg/p50/p95/p99/max",
             "avg/p50/p95/p99/max"
         );
-        for (name, s) in PHASES.iter().zip(&self.samples).skip(1) {
+        for (i, (name, s)) in PHASES.iter().zip(&self.samples).enumerate().skip(1) {
+            if self.viewer && i > 2 {
+                break;
+            }
             if s.is_empty() {
                 continue;
             }
