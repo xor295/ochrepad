@@ -34,10 +34,50 @@ them, ochrepad uses the most common one and says
 `Mixed line endings (saved as shown)` in the status bar: saving converts every
 line to the ending shown.
 
+**Indentation.** The first 10,000 lines decide whether the file is indented
+with tabs or spaces, and for spaces how wide one level is (2, 4 or 8: the
+most common step from one indent level to the next). Tab, Indent and the
+other indenting commands then use the same, and tabs are shown that wide.
+A file with no indented lines uses the preferences. If some lines are
+indented with tabs and others with spaces, the status bar says `Mixed`.
+
+## The status bar menus
+
+The encoding, line ending and indentation in the status bar are menus that
+change them for the current document only.
+
+**Indentation** (`Spaces: 4`, `Tabs: 4`, or `Mixed, ...`):
+
+- *Indent Using Spaces* / *Indent Using Tabs*, and *Width 2, 4 or 8*: how
+  this document is indented from now on, and how wide its tabs are shown.
+  Nothing in the text changes. A choice made here, or detected on opening,
+  is kept when you change the preferences; documents that have neither
+  follow the preferences.
+- *Convert Indentation to Spaces* / *to Tabs*: rewrites the leading
+  whitespace of every line, keeping its width, and indents that way from now
+  on. Only leading whitespace changes, and it is one undo step. Converting
+  to tabs keeps spaces for a remainder narrower than a tab.
+
+**Line ending** (`Windows (CR LF)`, `Unix (LF)`, `Macintosh (CR)`): choosing
+another converts the document when it is next saved, and marks it unsaved,
+like Notepad++'s EOL conversion. It also clears the mixed line endings note.
+
+**Encoding**:
+
+- *Reopen with Encoding*: reads the file again, decoded as the encoding you
+  pick, for when the guess on opening was wrong. A file that isn't valid in
+  that encoding is refused with a message. It is not offered while the
+  document has unsaved changes (save or undo them first), because reopening
+  replaces the text with what is on disk.
+- *Save with Encoding*: the document is saved as UTF-8, UTF-8 with BOM,
+  UTF-16 LE or BE (with a BOM), or one of the common legacy encodings, from
+  now on, and is marked unsaved. If the text has characters the encoding
+  can't store, nothing changes and a message lists them with their lines.
+
 ## New files
 
 A new tab is UTF-8 without a BOM, with Windows line endings on Windows and
-Unix line endings elsewhere.
+Unix line endings elsewhere, indented as the preferences say.
 
 ## Saving
 
@@ -46,8 +86,8 @@ was opened with. **Save As** keeps them too, under the new name.
 
 If the text now contains a character the file's encoding can't store (say,
 an emoji in a Windows-1252 file), saving stops with a message naming the
-character and its line, and the file on disk is left untouched. ochrepad
-doesn't yet have a command to change a file's encoding or line endings.
+character and its line, and the file on disk is left untouched. To change
+a file's encoding or line endings, use the status bar menus (above).
 
 **Saving is atomic.** ochrepad writes the new contents to a temporary file in
 the same folder, flushes it to disk, then swaps it in place of the old file

@@ -116,6 +116,11 @@ pub struct Buffer {
     pub comments: Option<CommentSyntax>,
     /// Indentation and tab width (from the preferences, or detected).
     pub indent: Indent,
+    /// `indent` was detected from the file or chosen for it, so changing
+    /// the preferences leaves it alone.
+    pub indent_set: bool,
+    /// Some lines are indented with tabs and others with spaces.
+    pub indent_mixed: bool,
     pub meta: FileMeta,
     /// Line edits since the last `take_line_edits`, for the highlighter.
     line_edits: Vec<LineEdit>,
@@ -135,6 +140,8 @@ impl Buffer {
             read_only: false,
             comments: None,
             indent: Indent::default(),
+            indent_set: false,
+            indent_mixed: false,
             meta,
             line_edits: Vec::new(),
         }

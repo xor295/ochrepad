@@ -174,6 +174,11 @@ pub enum Action {
     /// Wrap each selection (or the caret's line) in a block comment, or
     /// unwrap it.
     ToggleBlockComment,
+    /// Rewrite every line's leading whitespace as spaces or as tabs, keeping
+    /// its width, and indent with that from now on.
+    ConvertIndentation {
+        to_spaces: bool,
+    },
     /// Move the caret to the bracket matching the one beside it.
     GoToMatchingBracket,
     /// Select from the bracket beside the caret to its match, both included.

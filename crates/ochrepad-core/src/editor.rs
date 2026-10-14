@@ -271,6 +271,13 @@ impl Editor {
             _ => {
                 let resolved = self.resolve_in(view, buffer_id, &action)??;
                 self.commit(view, buffer_id, resolved)?;
+                if let Action::ConvertIndentation { to_spaces } = action
+                    && let Some(b) = self.buffers.get_mut(&buffer_id)
+                {
+                    b.indent.use_spaces = to_spaces;
+                    b.indent_set = true;
+                    b.indent_mixed = false;
+                }
             }
         }
         self.sync_folds(buffer_id);

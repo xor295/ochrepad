@@ -47,6 +47,9 @@ pub(crate) fn resolve(
             transform::indent(doc, sels, &indent_unit(indent))
         }
         Action::Unindent => transform::unindent(doc, sels, tab_width),
+        Action::ConvertIndentation { to_spaces } => {
+            crate::indent::convert(doc, sels, *to_spaces, tab_width)
+        }
         Action::GoToLine { line, column } => {
             let line = line.saturating_sub(1).min(doc.line_count() - 1);
             let col = VisualCol(column.saturating_sub(1));

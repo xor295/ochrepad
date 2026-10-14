@@ -21,6 +21,14 @@ people downloading the release.
 - Matching brackets: the bracket beside the caret and its match are
   outlined (in red when there is no match). Ctrl+B jumps to the match and
   Ctrl+Alt+B selects up to it.
+- Each document has its own indentation. Opening a file detects tabs or
+  spaces and the indent width from its text, and the status bar flags files
+  that mix the two.
+- The status bar's indentation, line ending and encoding are menus: indent
+  with spaces or tabs and set the width for this document, convert the
+  indentation, change the line endings, reopen a file with another encoding,
+  or save it in another encoding (characters that encoding cannot store are
+  listed, and nothing changes).
 
 ## [0.2.0] - 2026-10-13
 

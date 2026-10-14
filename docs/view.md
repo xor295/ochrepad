@@ -65,7 +65,8 @@ fn main() {
 
 folding `fn main() {` hides the three lines inside, and the closing `}`
 stays visible. Blank lines at the end of a block also stay visible. Tabs
-count to the next tab stop, using the tab width from the preferences.
+count to the next tab stop, using the document's tab width (see
+[indentation](file-handling.md#the-status-bar-menus)).
 
 Because it only looks at indentation, folding works the same way in every
 language, including Python, YAML and plain text. It is fooled by code that is

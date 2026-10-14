@@ -118,3 +118,17 @@ fn matching_brackets_jump_and_select() {
     t.apply(Action::SelectToMatchingBracket);
     assert_eq!(t.show(), "f(a, ^[b]|)");
 }
+
+#[test]
+fn converting_indentation_keeps_widths_and_sets_the_buffer() {
+    // Width 4: a tab plus two spaces is 6 cells.
+    let mut t = setup("a\n\t  b\n    c|\n");
+    t.apply(Action::ConvertIndentation { to_spaces: true });
+    assert_eq!(t.text(), "a\n      b\n    c\n");
+    assert!(t.buffer().indent.use_spaces && t.buffer().indent_set);
+    t.apply(Action::ConvertIndentation { to_spaces: false });
+    assert_eq!(t.text(), "a\n\t  b\n\tc\n");
+    assert!(!t.buffer().indent.use_spaces);
+    t.apply(Action::Undo);
+    assert_eq!(t.text(), "a\n      b\n    c\n", "one undo step");
+}

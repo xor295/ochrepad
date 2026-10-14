@@ -284,3 +284,20 @@ fn json_settings_round_trip_atomically() {
     std::fs::write(&path, "not json").unwrap();
     assert!(ochrepad_fileio::load_json::<Vec<String>>(&path).is_err());
 }
+
+#[test]
+fn reopening_with_an_encoding_decodes_strictly() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("a.txt");
+    // "café" in Windows-1252; as UTF-8 it would be invalid.
+    std::fs::write(&path, b"caf\xe9\r\n").unwrap();
+    let d = ochrepad_fileio::load_as(&path, "windows-1252").unwrap();
+    assert_eq!(d.text, "café\n");
+    assert_eq!(d.meta.encoding, "windows-1252");
+    assert!(ochrepad_fileio::load_as(&path, "UTF-8").is_err());
+    // Every listed name is exactly an encoding_rs encoding's name.
+    for (name, _) in ochrepad_fileio::ENCODINGS {
+        let e = encoding_rs::Encoding::for_label(name.as_bytes());
+        assert_eq!(e.map(|e| e.name()), Some(*name));
+    }
+}

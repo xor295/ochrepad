@@ -12,9 +12,7 @@ use egui::{
 };
 use egui_dock::{AllowedSplits, DockArea, DockState, Node, NodePath, Split, TabIndex, TabViewer};
 use ochrepad_core::position::byte_to_visual_col;
-use ochrepad_core::{
-    Action, Buffer, BufferId, CaseMode, Editor, FileMeta, LineEnding, SortOptions, ViewId,
-};
+use ochrepad_core::{Action, Buffer, BufferId, CaseMode, Editor, FileMeta, SortOptions, ViewId};
 use ochrepad_fileio as fileio;
 
 use egui_dock::tab_viewer::OnCloseResponse;
@@ -23,6 +21,7 @@ use crate::editor_view::{
     Decorations, EditorViewState, LineStyler, copy_selection, editor_id, editor_view,
 };
 mod autosave;
+mod document;
 mod external;
 mod prefs;
 mod search;
@@ -352,6 +351,7 @@ impl OchrepadApp {
         .then_some(self.active);
         let buffer = self.editor.add_buffer(&decoded.text, decoded.meta);
         self.attach_highlighting(buffer);
+        self.detect_indent(buffer);
         self.record_disk_stamp(buffer);
         self.settings.add_recent(canonical(path));
         self.add_tab(buffer);
@@ -1605,60 +1605,57 @@ impl OchrepadApp {
             (v.selections.len(), v.selections.rect().is_some())
         });
         let meta = self.buffer().meta.clone();
-        ui.horizontal(|ui| {
-            ui.label(self.caret_status());
-            if let Some((note, until)) = &self.status_note {
-                if self.now < *until {
-                    ui.separator();
-                    ui.colored_label(ui.visuals().warn_fg_color, note);
-                    ui.ctx()
-                        .request_repaint_after(std::time::Duration::from_secs_f64(
-                            (until - self.now).max(0.0),
-                        ));
-                } else {
-                    self.status_note = None;
-                }
-            }
-            if let Some(recorded) = self.editor.recorded() {
+        // The menus on the right are laid out first; the notes on the left
+        // get what is left and are cut short with "…" in a narrow window.
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            self.encoding_menu(ui);
+            ui.separator();
+            self.line_ending_menu(ui);
+            if meta.mixed_line_endings {
                 ui.separator();
-                ui.colored_label(
-                    ui.visuals().error_fg_color,
-                    format!("Recording macro ({} actions)", recorded.len()),
-                );
-            }
-            if column {
-                ui.separator();
-                ui.label(format!("Column selection, {carets} lines"));
-            } else if carets > 1 {
-                ui.separator();
-                ui.label(format!("{carets} selections"));
-            }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let enc = if meta.bom {
-                    format!("{} BOM", meta.encoding)
-                } else {
-                    meta.encoding.clone()
-                };
-                ui.label(enc);
-                ui.separator();
-                ui.label(match meta.line_ending {
-                    LineEnding::CrLf => "Windows (CR LF)",
-                    LineEnding::Lf => "Unix (LF)",
-                    LineEnding::Cr => "Macintosh (CR)",
-                });
-                if meta.mixed_line_endings {
-                    ui.separator();
-                    ui.label("Mixed line endings (saved as shown)")
-                        .on_hover_text(
-                            "The file had more than one kind of line ending. \
+                ui.add(egui::Label::new("Mixed line endings (saved as shown)").truncate())
+                    .on_hover_text(
+                        "The file had more than one kind of line ending. \
                          Saving converts all of them to the one shown.",
-                        );
-                }
+                    );
+            }
+            ui.separator();
+            self.indent_menu(ui);
+            ui.separator();
+            self.language_picker(ui);
+            if let Some(problem) = self.highlighting.problem(self.buffer_id()) {
                 ui.separator();
-                self.language_picker(ui);
-                if let Some(problem) = self.highlighting.problem(self.buffer_id()) {
+                ui.add(egui::Label::new(problem).truncate());
+            }
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                ui.label(self.caret_status());
+                if let Some((note, until)) = &self.status_note {
+                    if self.now < *until {
+                        ui.separator();
+                        let color = ui.visuals().warn_fg_color;
+                        ui.add(egui::Label::new(egui::RichText::new(note).color(color)).truncate());
+                        ui.ctx()
+                            .request_repaint_after(std::time::Duration::from_secs_f64(
+                                (until - self.now).max(0.0),
+                            ));
+                    } else {
+                        self.status_note = None;
+                    }
+                }
+                if let Some(recorded) = self.editor.recorded() {
                     ui.separator();
-                    ui.label(problem);
+                    let text = format!("Recording macro ({} actions)", recorded.len());
+                    let color = ui.visuals().error_fg_color;
+                    ui.add(egui::Label::new(egui::RichText::new(text).color(color)).truncate());
+                }
+                if column {
+                    ui.separator();
+                    ui.add(
+                        egui::Label::new(format!("Column selection, {carets} lines")).truncate(),
+                    );
+                } else if carets > 1 {
+                    ui.separator();
+                    ui.add(egui::Label::new(format!("{carets} selections")).truncate());
                 }
             });
         });

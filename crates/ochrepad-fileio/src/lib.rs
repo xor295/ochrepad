@@ -102,6 +102,57 @@ pub fn load(path: &Path) -> Result<Decoded, LoadError> {
     Ok(decoded)
 }
 
+/// The encodings offered for Reopen with Encoding and Save with Encoding:
+/// (encoding_rs name, name shown).
+pub const ENCODINGS: &[(&str, &str)] = &[
+    ("UTF-8", "UTF-8"),
+    ("UTF-16LE", "UTF-16 LE"),
+    ("UTF-16BE", "UTF-16 BE"),
+    ("windows-1252", "Western (Windows-1252)"),
+    ("ISO-8859-15", "Western (ISO-8859-15)"),
+    ("windows-1250", "Central European (Windows-1250)"),
+    ("ISO-8859-2", "Central European (ISO-8859-2)"),
+    ("windows-1251", "Cyrillic (Windows-1251)"),
+    ("KOI8-R", "Cyrillic (KOI8-R)"),
+    ("windows-1253", "Greek (Windows-1253)"),
+    ("windows-1254", "Turkish (Windows-1254)"),
+    ("Shift_JIS", "Japanese (Shift_JIS)"),
+    ("EUC-JP", "Japanese (EUC-JP)"),
+    ("GBK", "Chinese Simplified (GBK)"),
+    ("Big5", "Chinese Traditional (Big5)"),
+    ("EUC-KR", "Korean (EUC-KR)"),
+];
+
+/// Reads `path` decoding it as `encoding` (an encoding_rs name) instead of
+/// detecting: Reopen with Encoding. A BOM for that encoding is skipped and
+/// remembered; bytes that are not valid in it are refused.
+pub fn load_as(path: &Path, encoding: &str) -> Result<Decoded, LoadError> {
+    let bytes = std::fs::read(path)?;
+    let encoding = Encoding::for_label(encoding.as_bytes()).ok_or(LoadError::Undecodable {
+        encoding: "unknown",
+    })?;
+    let bom_len = match Encoding::for_bom(&bytes) {
+        Some((e, len)) if e == encoding => len,
+        _ => 0,
+    };
+    let body = &bytes[bom_len..];
+    let is_utf16 = encoding == UTF_16LE || encoding == UTF_16BE;
+    if !is_utf16 && body[..body.len().min(BINARY_SNIFF_LEN)].contains(&0) {
+        return Err(LoadError::Binary);
+    }
+    let (text, line_ending, mixed) = normalize(decode_strict(encoding, body)?);
+    Ok(Decoded {
+        text,
+        meta: FileMeta {
+            path: Some(path.to_path_buf()),
+            encoding: encoding.name().to_owned(),
+            bom: bom_len > 0,
+            line_ending,
+            mixed_line_endings: mixed,
+        },
+    })
+}
+
 /// Decodes file bytes (PLAN 3.6 steps 1-3). `meta.path` is left empty.
 pub fn decode(bytes: &[u8]) -> Result<Decoded, LoadError> {
     let (encoding, bom_len) = match Encoding::for_bom(bytes) {
@@ -265,6 +316,45 @@ pub fn encode(text: &str, meta: &FileMeta) -> Result<Vec<u8>, SaveError> {
             }
         }
     }
+}
+
+/// The different characters of LF-normalized `text` that `encoding` cannot
+/// store, each with the first line (1-based) it is on, at most `limit` of
+/// them. Empty for UTF-8, UTF-16 and an unknown encoding.
+pub fn unencodable(text: &str, encoding: &str, limit: usize) -> Vec<(char, usize)> {
+    let Some(encoding) = Encoding::for_label(encoding.as_bytes()) else {
+        return Vec::new();
+    };
+    if encoding == UTF_8 || encoding == UTF_16LE || encoding == UTF_16BE {
+        return Vec::new();
+    }
+    let mut known: std::collections::HashMap<char, bool> = Default::default();
+    let mut found = Vec::new();
+    let mut buf = [0u8; 4];
+    let mut out = Vec::with_capacity(16);
+    for (i, line) in text.split('\n').enumerate() {
+        for ch in line.chars().filter(|c| !c.is_ascii()) {
+            let fits = *known.entry(ch).or_insert_with(|| {
+                out.clear();
+                let (result, _) = encoding
+                    .new_encoder()
+                    .encode_from_utf8_to_vec_without_replacement(
+                        ch.encode_utf8(&mut buf),
+                        &mut out,
+                        true,
+                    );
+                matches!(result, EncoderResult::InputEmpty)
+            });
+            if !fits {
+                known.insert(ch, true);
+                found.push((ch, i + 1));
+                if found.len() >= limit {
+                    return found;
+                }
+            }
+        }
+    }
+    found
 }
 
 /// Encodes and atomically writes `text` to `path`. Nothing is written if

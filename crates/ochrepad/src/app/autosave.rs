@@ -448,6 +448,7 @@ impl OchrepadApp {
             };
             let buffer = if let Some((id, (text, info))) = from_snapshot {
                 let b = self.editor.add_buffer(&text, info.meta);
+                self.detect_indent(b);
                 if let Some(buf) = self.editor.buffer_mut(b) {
                     buf.mark_modified();
                     let revision = buf.revision();
@@ -460,7 +461,11 @@ impl OchrepadApp {
                 Some(b)
             } else if let Some(path) = &sb.path {
                 match fileio::load(path) {
-                    Ok(d) => Some(self.editor.add_buffer(&d.text, d.meta)),
+                    Ok(d) => {
+                        let b = self.editor.add_buffer(&d.text, d.meta);
+                        self.detect_indent(b);
+                        Some(b)
+                    }
                     Err(e) => {
                         problems.push(format!("{}: {e}", path.display()));
                         None

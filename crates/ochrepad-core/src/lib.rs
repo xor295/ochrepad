@@ -10,6 +10,7 @@ pub mod display;
 pub mod editor;
 pub mod fold;
 pub mod history;
+pub mod indent;
 pub mod macros;
 pub mod position;
 mod resolve;

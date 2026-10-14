@@ -103,6 +103,7 @@ fn name(action: &Action) -> &'static str {
         Action::GoToLine { .. } => "GoToLine",
         Action::Indent => "Indent",
         Action::Unindent => "Unindent",
+        Action::ConvertIndentation { .. } => "ConvertIndentation",
         Action::ToggleLineComment => "ToggleLineComment",
         Action::ToggleBlockComment => "ToggleBlockComment",
         Action::GoToMatchingBracket => "GoToMatchingBracket",
@@ -112,7 +113,7 @@ fn name(action: &Action) -> &'static str {
     }
 }
 
-const ALL: [&str; 48] = [
+const ALL: [&str; 49] = [
     "InsertText",
     "Paste",
     "InsertTab",
@@ -155,6 +156,7 @@ const ALL: [&str; 48] = [
     "GoToLine",
     "Indent",
     "Unindent",
+    "ConvertIndentation",
     "ToggleLineComment",
     "ToggleBlockComment",
     "GoToMatchingBracket",

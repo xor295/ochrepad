@@ -129,6 +129,7 @@ Motions for `MoveCursor`:
 |---|---|
 | `{"Action": "Indent"}` | Indents the selected lines, or the caret's line, by one level (a tab, or spaces when the editor indents with spaces). Tab does this when a selection spans lines. |
 | `{"Action": "Unindent"}` | Removes one level of indentation from the selected lines, or the caret's line (Shift+Tab). |
+| `{"Action": {"ConvertIndentation": {"to_spaces": true}}}` | Rewrites every line's leading whitespace as spaces (or with `false`, tabs), keeping its width, and indents the document that way from now on. One undo step. Also in the status bar's indentation menu. |
 | `{"Action": "ToggleLineComment"}` | Comments the selected lines, or the caret's line, at their common indent, or uncomments them if they all are (Ctrl+/). For a language with only block comments, wraps the lines in one. |
 | `{"Action": "ToggleBlockComment"}` | Wraps each selection, or the caret's line, in a block comment, or unwraps it (Ctrl+Shift+/). |
 | `{"Action": "GoToMatchingBracket"}` | Moves the caret to the bracket matching the one beside it (Ctrl+B). |
