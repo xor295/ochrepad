@@ -963,8 +963,12 @@ fn paint(
         }
         let from = smart.partition_point(|m| m.end <= line_start && m.start < line_start);
         for m in smart[from..].iter().take_while(|m| m.start <= line_end) {
-            // The selection itself is already marked.
-            if on_line.clone().any(|s| s.range() == *m) {
+            // The selection itself is already marked, and find matches keep
+            // their own colour (an ochre tint over teal turns muddy).
+            let under_find = matches[matches.partition_point(|f| f.end <= m.start)..]
+                .first()
+                .is_some_and(|f| f.start < m.end);
+            if under_find || on_line.clone().any(|s| s.range() == *m) {
                 continue;
             }
             let a = m.start.max(line_start).0 - line_start.0;
