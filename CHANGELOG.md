@@ -12,93 +12,6 @@ people downloading the release.
 
 ### Added
 
-- Bookmarks, as in Notepad++: Ctrl+F2 bookmarks a line (its number gets a
-  tag in the accent colour), F2 and Shift+F2 go from one to the next, and
-  Search > Bookmark clears and inverts them and cuts, copies, removes or
-  replaces the bookmarked lines (or removes the others). The find panel's
-  Bookmark button marks every line with a match. Bookmarks follow edits,
-  are recorded in macros and are kept in the session.
-- The vertical scrollbar marks the bookmarks, the changed lines and the
-  caret's place in the document; F8 and Shift+F8 go from change to change.
-- The right-click menu opens a file named at the caret (`src/main.rs:12:5`
-  goes to that line and column) or a web link in the browser, and Search
-  Results can copy its results.
-- Edit > Comment/Uncomment > Comment Lines (Ctrl+K) and Uncomment Lines
-  (Ctrl+Shift+K), as Notepad++'s Single Line Comment and Uncomment: they
-  add or take off one level whatever the lines already have, where Ctrl+Q
-  toggles.
-- Edit > Begin/End Select (and in Column Mode), as in Notepad++: mark
-  where a selection begins, move anywhere, and select up to there.
-- View > Move Tab Forward and Move Tab Backward (Ctrl+Shift+PageDown and
-  Ctrl+Shift+PageUp) move the active tab along its tab bar, as in
-  Notepad++.
-- Find in Files' filters can leave files and folders out with `!`, as in
-  Notepad++: `*.js; !*.min.js; !node_modules`.
-- The tab menu can save, Save As, rename and set Read-Only for its tab, as
-  in Notepad++.
-- Edit > Convert Case has Notepad++'s Title Case (blend) (Alt+Shift+U),
-  Sentence case (Ctrl+Alt+U), Sentence case (blend) (Ctrl+Alt+Shift+U)
-  and ranDOm cASE.
-- Edit > Text Tools > Hex Encode and Hex Decode, as Notepad++'s Converter
-  (ASCII to hex and back).
-- Edit > Line Operations > Split Lines (Ctrl+I), as in Notepad++: long
-  lines are split between words to fit the vertical edge, or the window,
-  keeping their indentation.
-- Search > Copy Styled Text copies every occurrence of a style's tokens,
-  one per line, as in Notepad++.
-- Overtype: Insert switches to typing over the text, as in Notepad++. The
-  status bar shows OVR and the caret becomes a bar under the character it
-  replaces; typing never runs past the end of a line.
-- A right-click menu in the editor: undo and redo, the clipboard, case,
-  comments and the line's bookmark.
-- View > Function List: a panel listing the document's functions, types,
-  modules and Markdown headings (from the syntax highlighting, so for most
-  languages), with a filter; click one to go to it.
-- View > Document List, as in Notepad++: a panel listing the open
-  documents in tab order, each with its folder. Click one to switch to it,
-  middle-click to close it.
-- Change history: the gutter marks the lines changed (blue), added (green)
-  and deleted (red) since the file was saved. View > Change History turns
-  it off.
-- Edit > Multi-select Next and Multi-select All put selections on the
-  other occurrences of the selected text (or the word at the caret), with
-  Notepad++'s case and whole-word choices.
-- Smart indentation (a preference, off by default): Enter after an opening
-  bracket, or a colon in Python, indents one level more, Enter between a
-  pair puts the closer on its own line, and a closing bracket typed on a
-  blank line lines up with its partner.
-- Replace in Files: the find panel replaces every match in a folder's files,
-  after counting them and asking. Open documents get an undo step; the
-  other files are saved in the background in their own encoding and line
-  endings, with a Stop button. Files that would change beyond the matches
-  (mixed line endings), read-only files and files changed since the count
-  are left alone and listed.
-- Search > Style All Occurrences of Token highlights a word everywhere in
-  one of five colours (also on the right-click menu), with Clear Style and
-  Jump Up/Down to go from one occurrence to the next.
-- Ctrl+F3 and Ctrl+Shift+F3 (Search > Select and Find Next/Previous) find
-  the selected text or the word at the caret without the find panel.
-- File > Restore Recent Closed File (Ctrl+Shift+T) reopens the files closed
-  this session, the latest first. A middle click on a tab closes it.
-- Edit > Paste from History offers the last ten texts copied in ochrepad.
-- Edit > Read-Only refuses edits to a document until turned off.
-- File > Save All, Save a Copy As…, Reload from Disk and Rename….
-- File > Save Session… and Load Session…, as in Notepad++: save the open
-  files, with their carets, scroll positions and the open folder, to a
-  session file, and open them all again later beside the files already
-  open. Files that can't be opened are listed; on Windows, network paths
-  in a session file are not opened.
-- File > Export > HTML… saves the document as a web page that looks as it
-  does in the editor, in the syntax theme's colours (as Notepad++'s
-  NppExport does). Unsaved changes are included; a document over the
-  highlighting limit is exported without colours.
-- Ctrl+PageUp and Ctrl+PageDown switch tabs, and Ctrl+Q and Ctrl+Shift+Q
-  toggle comments, as in Notepad++. Clicking the caret's position in the
-  status bar opens Go to Line.
-- View > Summary: the document's path, file times, size, and characters,
-  words and lines (and the selection's).
-- Edit > Line Operations: Sort Lines by Length, and Randomize Line Order.
-- The status bar shows how many characters and lines are selected.
 - A read-only viewer for large files: files over 256 MB (a setting) open
   without being read into memory, so a log of several gigabytes shows its
   first screen at once. The line index builds in the background while you
@@ -123,11 +36,103 @@ people downloading the release.
     whole file in the background and fills the view in as it goes (and
     goes on as the file grows), highlight rules colour the lines on screen,
     and Follow keeps the end in view until you scroll away from it.
+- Bookmarks, as in Notepad++: Ctrl+F2 bookmarks a line (its number gets a
+  tag in the accent colour), F2 and Shift+F2 go from one to the next, and
+  Search > Bookmark clears and inverts them and cuts, copies, removes or
+  replaces the bookmarked lines (or removes the others). The find panel's
+  Bookmark button marks every line with a match. Bookmarks follow edits,
+  are recorded in macros and are kept in the session.
+- Replace in Files: the find panel replaces every match in a folder's files,
+  after counting them and asking. Open documents get an undo step; the
+  other files are saved in the background in their own encoding and line
+  endings, with a Stop button. Files that would change beyond the matches
+  (mixed line endings), read-only files and files changed since the count
+  are left alone and listed.
+- Change history: the gutter marks the lines changed (blue), added (green)
+  and deleted (red) since the file was saved. View > Change History turns
+  it off.
+- The vertical scrollbar marks the bookmarks, the changed lines and the
+  caret's place in the document; F8 and Shift+F8 go from change to change.
+- A right-click menu in the editor: undo and redo, the clipboard, case,
+  comments and the line's bookmark.
+- The right-click menu opens a file named at the caret (`src/main.rs:12:5`
+  goes to that line and column) or a web link in the browser, and Search
+  Results can copy its results.
+- View > Function List: a panel listing the document's functions, types,
+  modules and Markdown headings (from the syntax highlighting, so for most
+  languages), with a filter; click one to go to it.
+- View > Document List, as in Notepad++: a panel listing the open
+  documents in tab order, each with its folder. Click one to switch to it,
+  middle-click to close it.
 - Undo survives closing a file and restarting ochrepad: each file's undo
   history (up to about 2 MB of the newest changes) is kept and comes back
   when the file is opened again unchanged, and with unsaved work restored
   from a backup. Edit > Clear Undo History forgets it; a preference turns it
   off.
+- File > Save Session… and Load Session…, as in Notepad++: save the open
+  files, with their carets, scroll positions and the open folder, to a
+  session file, and open them all again later beside the files already
+  open. Files that can't be opened are listed; on Windows, network paths
+  in a session file are not opened.
+- Matching tags, as in Notepad++: in HTML, XML and the languages built on
+  HTML (PHP, JSP, Vue and others), the names in the start and end tag of
+  the element at the caret are outlined, so you can see where it starts
+  and ends.
+- File > Export > HTML… saves the document as a web page that looks as it
+  does in the editor, in the syntax theme's colours (as Notepad++'s
+  NppExport does). Unsaved changes are included; a document over the
+  highlighting limit is exported without colours.
+- Search > Style All Occurrences of Token highlights a word everywhere in
+  one of five colours (also on the right-click menu), with Clear Style and
+  Jump Up/Down to go from one occurrence to the next.
+- Search > Copy Styled Text copies every occurrence of a style's tokens,
+  one per line, as in Notepad++.
+- Edit > Multi-select Next and Multi-select All put selections on the
+  other occurrences of the selected text (or the word at the caret), with
+  Notepad++'s case and whole-word choices.
+- Ctrl+F3 and Ctrl+Shift+F3 (Search > Select and Find Next/Previous) find
+  the selected text or the word at the caret without the find panel.
+- Smart indentation (a preference, off by default): Enter after an opening
+  bracket, or a colon in Python, indents one level more, Enter between a
+  pair puts the closer on its own line, and a closing bracket typed on a
+  blank line lines up with its partner.
+- Optional closing of brackets and quotes as you type (Preferences, off by
+  default as in Notepad++): typing `(`, `[`, `{`, `"` or `'` inserts the
+  partner, typing it again steps over it, and Backspace deletes an empty
+  pair.
+- Overtype: Insert switches to typing over the text, as in Notepad++. The
+  status bar shows OVR and the caret becomes a bar under the character it
+  replaces; typing never runs past the end of a line.
+- Edit > Begin/End Select (and in Column Mode), as in Notepad++: mark
+  where a selection begins, move anywhere, and select up to there.
+- Edit > Comment/Uncomment > Comment Lines (Ctrl+K) and Uncomment Lines
+  (Ctrl+Shift+K), as Notepad++'s Single Line Comment and Uncomment: they
+  add or take off one level whatever the lines already have, where Ctrl+Q
+  toggles.
+- Edit > Line Operations > Split Lines (Ctrl+I), as in Notepad++: long
+  lines are split between words to fit the vertical edge, or the window,
+  keeping their indentation.
+- Edit > Convert Case has Notepad++'s Title Case (blend) (Alt+Shift+U),
+  Sentence case (Ctrl+Alt+U), Sentence case (blend) (Ctrl+Alt+Shift+U)
+  and ranDOm cASE.
+- Edit > Text Tools: Format, Minify and Validate JSON (object key order,
+  numbers and strings are kept exactly; invalid JSON is reported with its
+  line and column, and the caret moves there), Base64 and URL
+  encode/decode, and a dialog with the MD5, SHA-1 and SHA-256 hashes of the
+  selection or the document. They work on each selection, or on the whole
+  document when nothing is selected, and can be bound to keys and recorded
+  in macros.
+- Edit > Text Tools > Hex Encode and Hex Decode, as Notepad++'s Converter
+  (ASCII to hex and back).
+- Notepad++'s line commands: Delete Line (Ctrl+Shift+L), Transpose Line
+  (Ctrl+T), Insert Blank Line Above and Below Current (Ctrl+Alt+Enter,
+  Ctrl+Alt+Shift+Enter, indented like the line) and Reverse Line Order.
+- Edit > Blank Operations: trim leading, trailing or both, EOL to Space, TAB
+  to Space, and Space to TAB (all, or only the indentation).
+- Edit > Column Editor (Alt+C): text, or a number sequence (initial value,
+  step, repeat, zeros or spaces for padding, decimal, hex, octal or binary),
+  inserted at one column down many lines or a column selection.
+- Edit > Line Operations: Sort Lines by Length, and Randomize Line Order.
 - Each document has its own indentation. Opening a file detects tabs or
   spaces and the indent width from its text, and the status bar flags files
   that mix the two. A document's indentation comes back with the
@@ -137,14 +142,6 @@ people downloading the release.
   indentation, change the line endings, reopen a file with another encoding,
   or save it in another encoding (characters that encoding cannot store are
   listed, and nothing changes).
-- Zoom: Ctrl+plus, Ctrl+minus and Ctrl+0, or Ctrl+mouse wheel, make the
-  editors' text larger or smaller (10% to 400%) without changing the menus.
-  The status bar shows the zoom while it is not 100%.
-- View > Show Symbol, as in Notepad++: spaces and tabs, line endings,
-  non-printing characters (zero-width and bidi characters, the BOM, unusual
-  spaces), Show All Characters (Ctrl+Shift+8), indent guides and the wrap
-  symbol. Hovering a special character's box names it.
-- A vertical edge line after a chosen column (Preferences).
 - Go to Line (Ctrl+G): a line, or `line:column`.
 - Tab indents the selected lines when a selection spans lines; Shift+Tab
   unindents the selected lines or the caret's line. Edit > Indent and
@@ -154,34 +151,37 @@ people downloading the release.
 - Matching brackets: the bracket beside the caret and its match are
   outlined (in red when there is no match). Ctrl+B jumps to the match and
   Ctrl+Alt+B selects up to it.
-- Matching tags, as in Notepad++: in HTML, XML and the languages built on
-  HTML (PHP, JSP, Vue and others), the names in the start and end tag of
-  the element at the caret are outlined, so you can see where it starts
-  and ends.
-- Optional closing of brackets and quotes as you type (Preferences, off by
-  default as in Notepad++): typing `(`, `[`, `{`, `"` or `'` inserts the
-  partner, typing it again steps over it, and Backspace deletes an empty
-  pair.
-- Edit > Text Tools: Format, Minify and Validate JSON (object key order,
-  numbers and strings are kept exactly; invalid JSON is reported with its
-  line and column, and the caret moves there), Base64 and URL
-  encode/decode, and a dialog with the MD5, SHA-1 and SHA-256 hashes of the
-  selection or the document. They work on each selection, or on the whole
-  document when nothing is selected, and can be bound to keys and recorded
-  in macros.
-- Notepad++'s line commands: Delete Line (Ctrl+Shift+L), Transpose Line
-  (Ctrl+T), Insert Blank Line Above and Below Current (Ctrl+Alt+Enter,
-  Ctrl+Alt+Shift+Enter, indented like the line) and Reverse Line Order.
-- Edit > Blank Operations: trim leading, trailing or both, EOL to Space, TAB
-  to Space, and Space to TAB (all, or only the indentation).
-- Edit > Column Editor (Alt+C): text, or a number sequence (initial value,
-  step, repeat, zeros or spaces for padding, decimal, hex, octal or binary),
-  inserted at one column down many lines or a column selection.
+- Zoom: Ctrl+plus, Ctrl+minus and Ctrl+0, or Ctrl+mouse wheel, make the
+  editors' text larger or smaller (10% to 400%) without changing the menus.
+  The status bar shows the zoom while it is not 100%.
+- View > Show Symbol, as in Notepad++: spaces and tabs, line endings,
+  non-printing characters (zero-width and bidi characters, the BOM, unusual
+  spaces), Show All Characters (Ctrl+Shift+8), indent guides and the wrap
+  symbol. Hovering a special character's box names it.
+- A vertical edge line after a chosen column (Preferences).
+- View > Full Screen (F11) and Always on Top.
+- File > Save All, Save a Copy As…, Reload from Disk and Rename….
+- File > Restore Recent Closed File (Ctrl+Shift+T) reopens the files closed
+  this session, the latest first. A middle click on a tab closes it.
+- Edit > Paste from History offers the last ten texts copied in ochrepad.
+- Edit > Read-Only refuses edits to a document until turned off.
 - The tab menu: Close All to the Left and to the Right, Close All
   Unchanged, Copy Full File Path, Copy File Name, Copy Folder Path, Reveal
   in File Manager and Reload from Disk. The same copies are in Edit > Copy
   to Clipboard.
-- View > Full Screen (F11) and Always on Top.
+- The tab menu can save, Save As, rename and set Read-Only for its tab, as
+  in Notepad++.
+- View > Move Tab Forward and Move Tab Backward (Ctrl+Shift+PageDown and
+  Ctrl+Shift+PageUp) move the active tab along its tab bar, as in
+  Notepad++.
+- Ctrl+PageUp and Ctrl+PageDown switch tabs, and Ctrl+Q and Ctrl+Shift+Q
+  toggle comments, as in Notepad++. Clicking the caret's position in the
+  status bar opens Go to Line.
+- View > Summary: the document's path, file times, size, and characters,
+  words and lines (and the selection's).
+- The status bar shows how many characters and lines are selected.
+- Find in Files' filters can leave files and folders out with `!`, as in
+  Notepad++: `*.js; !*.min.js; !node_modules`.
 
 ### Changed
 
