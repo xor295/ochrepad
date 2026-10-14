@@ -66,6 +66,56 @@ pub fn list_dir(dir: &Path, show_ignored: bool) -> Result<Vec<Entry>, String> {
     Ok(out)
 }
 
+/// Which files Find in Files looks at.
+#[derive(Clone, Debug, Default)]
+pub struct WalkOptions {
+    /// Look in subfolders too.
+    pub subfolders: bool,
+    /// Also files that ignore files exclude (never `.git`).
+    pub include_ignored: bool,
+    /// Globs a file's name or path must match, such as `*.rs`; none means
+    /// every file.
+    pub filters: Vec<String>,
+}
+
+/// Splits a filter field like `*.rs; *.toml` into globs.
+pub fn parse_filters(text: &str) -> Vec<String> {
+    text.split([';', ',', ' '])
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+/// The files under `dir` that `o` selects, sorted by name within each
+/// folder. Symbolic links are not followed.
+pub fn walk_files(dir: &Path, o: &WalkOptions) -> Result<impl Iterator<Item = PathBuf>, String> {
+    let mut overrides = ignore::overrides::OverrideBuilder::new(dir);
+    for f in &o.filters {
+        overrides.add(f).map_err(|e| format!("filter {f}: {e}"))?;
+    }
+    let overrides = overrides.build().map_err(|e| e.to_string())?;
+    let honour = !o.include_ignored;
+    let walk = WalkBuilder::new(dir)
+        .max_depth((!o.subfolders).then_some(1))
+        .hidden(false)
+        .parents(honour)
+        .ignore(honour)
+        .git_ignore(honour)
+        .git_global(honour)
+        .git_exclude(honour)
+        .require_git(false)
+        .follow_links(false)
+        .overrides(overrides)
+        .sort_by_file_name(|a, b| a.cmp(b))
+        .filter_entry(|e| e.file_name() != ".git")
+        .build();
+    Ok(walk
+        .filter_map(Result::ok)
+        .filter(|e| e.file_type().is_some_and(|t| t.is_file()))
+        .map(|e| e.into_path()))
+}
+
 /// Compares names the way people sort them: runs of digits by value, the
 /// rest ignoring case; ties fall back to the exact text.
 pub fn natural_cmp(a: &str, b: &str) -> Ordering {
@@ -226,6 +276,78 @@ mod tests {
             vec!["main.rs"]
         );
         assert!(list_dir(&root.join("missing"), false).is_err());
+    }
+
+    #[test]
+    fn walking_honours_subfolders_ignores_and_filters() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        for d in ["src/deep", "target", ".git"] {
+            std::fs::create_dir_all(root.join(d)).unwrap();
+        }
+        for f in [
+            "a.rs",
+            "b.toml",
+            "c.txt",
+            "src/x.rs",
+            "src/deep/y.rs",
+            "target/out.rs",
+            ".git/HEAD",
+        ] {
+            std::fs::write(root.join(f), "").unwrap();
+        }
+        std::fs::write(root.join(".gitignore"), "target/\n").unwrap();
+        let rel = |o: &WalkOptions| -> Vec<String> {
+            walk_files(root, o)
+                .unwrap()
+                .map(|p| {
+                    p.strip_prefix(root)
+                        .unwrap()
+                        .to_string_lossy()
+                        .replace('\\', "/")
+                })
+                .collect()
+        };
+        let mut o = WalkOptions {
+            subfolders: true,
+            ..WalkOptions::default()
+        };
+        assert_eq!(
+            rel(&o),
+            vec![
+                ".gitignore",
+                "a.rs",
+                "b.toml",
+                "c.txt",
+                "src/deep/y.rs",
+                "src/x.rs"
+            ]
+        );
+        o.filters = parse_filters("*.rs; *.toml");
+        assert_eq!(rel(&o), vec!["a.rs", "b.toml", "src/deep/y.rs", "src/x.rs"]);
+        o.include_ignored = true;
+        assert_eq!(
+            rel(&o),
+            vec![
+                "a.rs",
+                "b.toml",
+                "src/deep/y.rs",
+                "src/x.rs",
+                "target/out.rs"
+            ]
+        );
+        o.subfolders = false;
+        assert_eq!(rel(&o), vec!["a.rs", "b.toml"]);
+        assert!(
+            walk_files(
+                root,
+                &WalkOptions {
+                    filters: vec!["[".into()],
+                    ..o
+                }
+            )
+            .is_err()
+        );
     }
 
     #[test]

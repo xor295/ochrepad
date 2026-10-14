@@ -18,11 +18,19 @@ pub enum FindRequest {
     FindAll { all_documents: bool },
     /// Replace every match in every open document (after confirming).
     ReplaceAllInAll,
+    /// Find in Files with the folder and filters in the panel.
+    FindInFiles,
 }
 
 pub struct FindPanel {
     pub open: bool,
     pub show_replace: bool,
+    /// The Find in Files row: folder, filters and options.
+    pub show_files: bool,
+    pub folder: String,
+    pub filters: String,
+    pub subfolders: bool,
+    pub include_ignored: bool,
     pub pattern: String,
     pub replacement: String,
     pub options: SearchOptions,
@@ -37,6 +45,11 @@ impl Default for FindPanel {
         Self {
             open: false,
             show_replace: false,
+            show_files: false,
+            folder: String::new(),
+            filters: String::new(),
+            subfolders: true,
+            include_ignored: false,
             pattern: String::new(),
             replacement: String::new(),
             // Notepad++ wraps by default.
@@ -115,6 +128,22 @@ impl FindPanel {
                     self.pattern = text;
                 }
             }
+        }
+    }
+
+    /// Shows the Find in Files row, searching `folder` if one is given (or
+    /// `fallback` if the folder field is empty).
+    pub fn open_files(
+        &mut self,
+        folder: Option<&std::path::Path>,
+        fallback: Option<&std::path::Path>,
+    ) {
+        self.open = true;
+        self.show_files = true;
+        self.focus_field = true;
+        self.message = None;
+        if let Some(f) = folder.or(fallback.filter(|_| self.folder.trim().is_empty())) {
+            self.folder = f.display().to_string();
         }
     }
 
@@ -255,6 +284,18 @@ impl FindPanel {
                     all_documents: true,
                 });
             }
+            let files_label = if self.show_files {
+                "Hide Files"
+            } else {
+                "In Files…"
+            };
+            if ui
+                .button(files_label)
+                .on_hover_text("Find in Files (Ctrl+Shift+F)")
+                .clicked()
+            {
+                self.show_files = !self.show_files;
+            }
             let label = if self.show_replace {
                 "Hide Replace"
             } else {
@@ -267,6 +308,40 @@ impl FindPanel {
                 requests.push(FindRequest::Close);
             }
         });
+        if self.show_files {
+            ui.horizontal_wrapped(|ui| {
+                ui.label("Folder:");
+                ui.add(
+                    TextEdit::singleline(&mut self.folder)
+                        .id(Id::new("ochrepad-files-folder"))
+                        .desired_width(field_width)
+                        .hint_text("folder to search"),
+                );
+                if ui.button("Browse…").clicked()
+                    && let Some(dir) = rfd::FileDialog::new().pick_folder()
+                {
+                    self.folder = dir.display().to_string();
+                }
+                ui.label("Filters:");
+                ui.add(
+                    TextEdit::singleline(&mut self.filters)
+                        .id(Id::new("ochrepad-files-filters"))
+                        .desired_width(120.0)
+                        .hint_text("*.rs; *.toml"),
+                );
+                ui.checkbox(&mut self.subfolders, "Subfolders");
+                ui.checkbox(&mut self.include_ignored, "Ignored files")
+                    .on_hover_text("Also search files .gitignore leaves out");
+                let valid =
+                    matches!(self.searcher(), Some(Ok(_))) && !self.folder.trim().is_empty();
+                if ui
+                    .add_enabled(valid, egui::Button::new("Find in Files"))
+                    .clicked()
+                {
+                    requests.push(FindRequest::FindInFiles);
+                }
+            });
+        }
         if self.show_replace {
             ui.horizontal_wrapped(|ui| {
                 ui.label("Replace:");

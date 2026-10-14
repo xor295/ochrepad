@@ -59,6 +59,8 @@ sidebar (or right-click the empty space below the files):
   the folder you opened, on the clipboard.
 - **Reveal in File Manager** shows the file in Explorer on Windows, or opens
   its folder in your file manager on Linux.
+- **Find in Folder…** opens Find in Files on that folder (see
+  [Find and replace](find-and-replace.md#find-in-files)).
 - **Refresh** reads every listed folder again; **Collapse All** closes them.
 
 Deleting files from the tree is not supported; use your file manager.

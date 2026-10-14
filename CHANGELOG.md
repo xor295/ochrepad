@@ -24,6 +24,12 @@ people downloading the release.
   Alt+0 and Alt+Shift+0 for everything, Alt+1 to Alt+8 (with Shift to
   unfold) for one level. The same commands are in the View menu. Folds are
   kept with the session. See docs/view.md.
+- Find in Files (Search > Find in Files…, Ctrl+Shift+F): searches the files
+  in a folder, with filters such as `*.rs; *.toml`, subfolders, and
+  `.gitignore`d files left out unless asked for. Files in any encoding are
+  found; binary files and files over 50 MB are skipped. Open files are
+  searched with their unsaved changes. Results stream into the Search
+  Results panel, and Stop ends a long search.
 - Folders: File > Open Folder (or `ochrepad <folder>`, or dropping a folder
   on the window) shows the folder's files in a sidebar (View > Sidebar,
   Ctrl+Shift+E). Files ignored by `.gitignore` are hidden. The tree follows

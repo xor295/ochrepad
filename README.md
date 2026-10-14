@@ -22,7 +22,8 @@ A fast, native text editor in the spirit of Notepad++, written in Rust with
   around and in-selection, `$1`/`${name}` in replacements, Count, Select All
   (one caret per match) and Replace All as a single undo step. Find All
   lists the matches in one or every open document in a results panel, and
-  Replace All can also work on every open document. See
+  Replace All can also work on every open document. Find in Files
+  (Ctrl+Shift+F) searches a folder on disk, honouring `.gitignore`. See
   [docs/find-and-replace.md](docs/find-and-replace.md) for the regex dialect.
 - **Macros**: record, play back once, N times or to the end of the file, save
   them with a name and a shortcut ([more](docs/macros.md)).
@@ -123,6 +124,7 @@ Windows and Linux. macOS is not supported.
 | Undo, Redo | Ctrl+Z, Ctrl+Y (or Ctrl+Shift+Z) |
 | Find, Replace | Ctrl+F, Ctrl+H |
 | Find next/previous | F3, Shift+F3 (Enter, Shift+Enter in the panel) |
+| Find in Files | Ctrl+Shift+F |
 | Column selection | Alt+drag, Alt+Shift+arrows |
 | Add a caret | Ctrl+click, Ctrl+Alt+Up/Down |
 | Back to one caret | Esc |

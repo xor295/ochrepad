@@ -35,6 +35,8 @@ pub enum TreeAction {
     /// Put this text on the clipboard.
     Copy(String),
     RevealInFileManager(PathBuf),
+    /// Find in Files in this folder.
+    FindInFolder(PathBuf),
     CloseFolder,
     /// Give the keyboard back to the editor.
     FocusEditor,
@@ -546,6 +548,9 @@ impl FileTree {
         if ui.button("Reveal in File Manager").clicked() {
             actions.push(TreeAction::RevealInFileManager(self.root.clone()));
         }
+        if ui.button("Find in Folder…").clicked() {
+            actions.push(TreeAction::FindInFolder(self.root.clone()));
+        }
         ui.separator();
         if ui.button("Close Folder").clicked() {
             actions.push(TreeAction::CloseFolder);
@@ -575,7 +580,10 @@ fn entry_menu(
         actions.push(TreeAction::NewFile(dir.clone()));
     }
     if ui.button("New Folder…").clicked() {
-        actions.push(TreeAction::NewFolder(dir));
+        actions.push(TreeAction::NewFolder(dir.clone()));
+    }
+    if ui.button("Find in Folder…").clicked() {
+        actions.push(TreeAction::FindInFolder(dir));
     }
     ui.separator();
     if ui.button("Rename").clicked() {

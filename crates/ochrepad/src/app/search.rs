@@ -6,7 +6,7 @@ use egui::{Id, Modal, Ui};
 use ochrepad_core::{Action, BufferId, ByteOffset, SearchQuery, Searcher, Selection, SelectionSet};
 
 use super::OchrepadApp;
-use crate::search_results::{GoTo, Job, Source};
+use crate::search_results::{GoTo, Job, OpenDoc, Source};
 
 /// A Replace All in All Open Documents waiting for the user to confirm.
 pub struct ReplaceAllPlan {
@@ -68,15 +68,31 @@ impl OchrepadApp {
 
     /// Selects a search result. If its document changed since the search,
     /// the match nearest the old column on the same line is selected
-    /// instead (or the line's start).
+    /// instead (or the line's start). A file that was not open is opened
+    /// and looked up the same way.
     pub fn go_to_result(&mut self, go: GoTo) {
-        let Source::Buffer(buffer) = go.source;
+        let (buffer, exact) = match &go.source {
+            Source::Buffer(b) => (*b, true),
+            Source::Path(path) => {
+                self.open_path(path);
+                let opened = self
+                    .buffer()
+                    .meta
+                    .path
+                    .as_deref()
+                    .is_some_and(|p| super::canonical(p) == super::canonical(path));
+                if !opened {
+                    return;
+                }
+                (self.buffer_id(), false)
+            }
+        };
         let Some(buf) = self.editor.buffer(buffer) else {
             self.message = Some("That document has been closed.".to_owned());
             return;
         };
         let doc = buf.doc();
-        let range = if buf.revision() == go.revision {
+        let range = if exact && buf.revision() == go.revision {
             go.hit.start..go.hit.end
         } else if go.hit.line < doc.line_count() {
             let start = doc.line_start(go.hit.line);
@@ -111,6 +127,58 @@ impl OchrepadApp {
         let state = self.view_state_mut();
         state.reveal_caret();
         state.request_focus();
+    }
+
+    /// Opens the find panel's Find in Files row, on `folder` or else (when
+    /// the folder field is empty) the workspace folder or the active file's
+    /// folder.
+    pub fn open_find_in_files(&mut self, folder: Option<&std::path::Path>) {
+        let fallback = self
+            .tree
+            .as_ref()
+            .map(|t| t.root().to_path_buf())
+            .or_else(|| {
+                self.buffer()
+                    .meta
+                    .path
+                    .as_deref()
+                    .and_then(|p| p.parent())
+                    .map(|p| p.to_path_buf())
+            });
+        self.find
+            .open(&self.editor, self.active, self.find.show_replace);
+        self.find.open_files(folder, fallback.as_deref());
+    }
+
+    /// Find in Files with the find panel's pattern, folder and filters.
+    /// Open documents are searched as they are in the editor.
+    pub fn find_in_files(&mut self) {
+        let folder = std::path::PathBuf::from(self.find.folder.trim());
+        if !folder.is_dir() {
+            self.find
+                .set_message(format!("{} is not a folder", folder.display()), true);
+            return;
+        }
+        let mut query = self.find.query();
+        query.options.in_selection = false;
+        let options = ochrepad_fileio::tree::WalkOptions {
+            subfolders: self.find.subfolders,
+            include_ignored: self.find.include_ignored,
+            filters: ochrepad_fileio::tree::parse_filters(&self.find.filters),
+        };
+        let open = self
+            .editor
+            .buffers()
+            .filter_map(|b| {
+                Some(OpenDoc {
+                    path: b.meta.path.clone()?,
+                    source: Source::Buffer(b.id()),
+                    doc: b.doc().clone(),
+                    revision: b.revision(),
+                })
+            })
+            .collect();
+        self.results.start_in_files(query, folder, options, open);
     }
 
     /// Counts the matches in every open document and asks before replacing.

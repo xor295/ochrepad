@@ -133,6 +133,7 @@ impl OchrepadApp {
                     self.message = Some(format!("Could not open the file manager:\n{e}"));
                 }
             }
+            TreeAction::FindInFolder(dir) => self.open_find_in_files(Some(&dir)),
             TreeAction::CloseFolder => self.close_folder(),
             TreeAction::FocusEditor => self.view_state_mut().request_focus(),
         }

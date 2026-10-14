@@ -6,9 +6,15 @@
 //! so a big file never holds up a frame. Results keep the revision they were
 //! found at; a result in a document edited since is looked up again on its
 //! line when clicked.
+//!
+//! Find in Files (N8) walks a folder on the same kind of thread, reading
+//! each file with `fileio::load` (encodings handled; binary and
+//! undecodable files skipped) or taking an open document's text instead.
 
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
+use std::ffi::OsString;
 use std::ops::Range;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
@@ -26,11 +32,25 @@ pub const MAX_MATCHES: usize = 10_000;
 const MAX_SEARCHES: usize = 10;
 /// Longer lines are shown as a window around their first match.
 const MAX_LINE_BYTES: usize = 300;
+/// Find in Files skips files larger than this (and counts them).
+pub const MAX_FILE_BYTES: u64 = 50 * 1024 * 1024;
+/// Find in Files reports its progress every this many files.
+const PROGRESS_EVERY: usize = 64;
 
 /// Where a result is.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Source {
     Buffer(BufferId),
+    /// A file that was not open when it was searched.
+    Path(PathBuf),
+}
+
+/// An open document Find in Files should search instead of its file.
+pub struct OpenDoc {
+    pub path: PathBuf,
+    pub source: Source,
+    pub doc: Document,
+    pub revision: u64,
 }
 
 /// One document to search.
@@ -76,14 +96,28 @@ pub struct Search {
     /// More matches were found than are kept.
     pub truncated: bool,
     pub done: bool,
+    /// Stopped before it finished.
+    pub stopped: bool,
     pub expanded: bool,
+    /// Find in Files: files looked at, and files skipped for their size.
+    pub files_searched: Option<usize>,
+    pub skipped_large: usize,
+    /// The search could not run (a bad filter, an unreadable folder).
+    pub error: Option<String>,
     receiver: Option<Receiver<Msg>>,
     cancel: Arc<AtomicBool>,
 }
 
 enum Msg {
     File(FileHits),
-    Done { truncated: bool },
+    Progress {
+        files: usize,
+    },
+    Done {
+        truncated: bool,
+        skipped_large: usize,
+    },
+    Failed(String),
 }
 
 /// What a click in the panel asks the app to do.
@@ -105,6 +139,30 @@ impl SearchResults {
     /// Starts searching `jobs` for `query` in the background, as the newest
     /// search; older ones are collapsed.
     pub fn start(&mut self, query: SearchQuery, scope: String, jobs: Vec<Job>) {
+        self.spawn(query, scope, false, move |q, c, tx| search(q, jobs, c, tx));
+    }
+
+    /// Starts Find in Files over `folder`.
+    pub fn start_in_files(
+        &mut self,
+        query: SearchQuery,
+        folder: PathBuf,
+        options: ochrepad_fileio::tree::WalkOptions,
+        open: Vec<OpenDoc>,
+    ) {
+        let scope = format!("in {}", folder.display());
+        self.spawn(query, scope, true, move |q, c, tx| {
+            search_files(q, &folder, &options, open, c, tx)
+        });
+    }
+
+    fn spawn(
+        &mut self,
+        query: SearchQuery,
+        scope: String,
+        in_files: bool,
+        work: impl FnOnce(SearchQuery, Arc<AtomicBool>, Sender<Msg>) + Send + 'static,
+    ) {
         for s in &mut self.searches {
             s.expanded = false;
         }
@@ -113,7 +171,7 @@ impl SearchResults {
         let (q, c) = (query.clone(), cancel.clone());
         std::thread::Builder::new()
             .name("ochrepad-search".into())
-            .spawn(move || search(q, jobs, c, tx))
+            .spawn(move || work(q, c, tx))
             .ok();
         self.searches.push_front(Search {
             query,
@@ -122,7 +180,11 @@ impl SearchResults {
             matches: 0,
             truncated: false,
             done: false,
+            stopped: false,
             expanded: true,
+            files_searched: in_files.then_some(0),
+            skipped_large: 0,
+            error: None,
             receiver: Some(rx),
             cancel,
         });
@@ -145,8 +207,17 @@ impl SearchResults {
                         s.matches += f.matches;
                         s.files.push(f);
                     }
-                    Msg::Done { truncated } => {
+                    Msg::Progress { files } => s.files_searched = Some(files),
+                    Msg::Done {
+                        truncated,
+                        skipped_large,
+                    } => {
                         s.truncated = truncated;
+                        s.skipped_large = skipped_large;
+                        s.done = true;
+                    }
+                    Msg::Failed(e) => {
+                        s.error = Some(e);
                         s.done = true;
                     }
                 }
@@ -158,6 +229,16 @@ impl SearchResults {
             }
         }
         running
+    }
+
+    /// Stops the searches still running; their results so far stay.
+    pub fn stop(&mut self) {
+        for s in self.searches.iter_mut().filter(|s| !s.done) {
+            s.cancel.store(true, Ordering::Relaxed);
+            s.done = true;
+            s.stopped = true;
+            s.receiver = None;
+        }
     }
 
     pub fn clear(&mut self) {
@@ -177,6 +258,9 @@ impl SearchResults {
                 }
                 if ui.button("Clear").clicked() {
                     self.clear();
+                }
+                if self.searches.iter().any(|s| !s.done) && ui.button("Stop").clicked() {
+                    self.stop();
                 }
             });
         });
@@ -199,12 +283,33 @@ impl SearchResults {
                     match *row {
                         Row::Search(i) => {
                             let s = &mut self.searches[i];
-                            let status = if !s.done {
-                                " (searching…)".to_owned()
-                            } else if s.truncated {
-                                format!(" (the first {MAX_MATCHES} are listed)")
-                            } else {
+                            let mut notes = Vec::new();
+                            if let Some(n) = s.files_searched {
+                                notes.push(format!("{} searched", files(n)));
+                            }
+                            if !s.done {
+                                notes.push("searching…".to_owned());
+                            }
+                            if s.stopped {
+                                notes.push("stopped".to_owned());
+                            }
+                            if s.truncated {
+                                notes.push(format!("the first {MAX_MATCHES} are listed"));
+                            }
+                            if s.skipped_large > 0 {
+                                notes.push(format!(
+                                    "{} over {} MB skipped",
+                                    files(s.skipped_large),
+                                    MAX_FILE_BYTES / (1024 * 1024)
+                                ));
+                            }
+                            if let Some(e) = &s.error {
+                                notes.push(e.clone());
+                            }
+                            let status = if notes.is_empty() {
                                 String::new()
+                            } else {
+                                format!(" ({})", notes.join(", "))
                             };
                             let text = format!(
                                 "\"{}\" {}: {} matches in {} documents{status}",
@@ -273,6 +378,15 @@ enum Row {
     Search(usize),
     File(usize, usize),
     Hit(usize, usize, usize),
+}
+
+/// "1 file", "3 files".
+fn files(n: usize) -> String {
+    if n == 1 {
+        "1 file".to_owned()
+    } else {
+        format!("{n} files")
+    }
 }
 
 /// One clickable row of the panel: `indent`, an open/closed triangle for
@@ -345,48 +459,179 @@ fn hit_job(ui: &Ui, hit: &Hit, font: &FontId, match_bg: Color32) -> LayoutJob {
 /// matches, then `Done`.
 fn search(query: SearchQuery, jobs: Vec<Job>, cancel: Arc<AtomicBool>, tx: Sender<Msg>) {
     let Ok(searcher) = Searcher::new(&query) else {
-        let _ = tx.send(Msg::Done { truncated: false });
+        let _ = tx.send(Msg::Failed("invalid pattern".into()));
         return;
     };
-    let mut left = MAX_MATCHES;
-    let mut truncated = false;
+    let mut budget = Budget::default();
     for job in jobs {
         if cancel.load(Ordering::Relaxed) {
             return;
         }
-        if left == 0 {
-            truncated = true;
-            break;
-        }
-        let doc = &job.doc;
-        let found: Vec<Range<ByteOffset>> = match &job.selections {
-            Some(sels) => searcher.find_in(doc, sels),
-            None => searcher
-                .matches(doc, ByteOffset(0)..doc.len())
-                .take(left + 1)
-                .collect(),
-        };
-        if found.len() > left {
-            truncated = true;
-        }
-        let found = &found[..found.len().min(left)];
-        left -= found.len();
-        if found.is_empty() {
+        let Some(file) = budget.search(&searcher, &job.doc, job.selections.as_ref(), |found| {
+            FileHits {
+                hits: hits(&job.doc, found),
+                matches: found.len(),
+                source: job.source.clone(),
+                name: job.name.clone(),
+                revision: job.revision,
+                expanded: true,
+            }
+        }) else {
+            if budget.left == 0 {
+                break;
+            }
             continue;
-        }
-        let file = FileHits {
-            hits: hits(doc, found),
-            matches: found.len(),
-            source: job.source,
-            name: job.name,
-            revision: job.revision,
-            expanded: true,
         };
         if tx.send(Msg::File(file)).is_err() {
             return;
         }
     }
-    let _ = tx.send(Msg::Done { truncated });
+    let _ = tx.send(Msg::Done {
+        truncated: budget.truncated,
+        skipped_large: 0,
+    });
+}
+
+/// The matches still to be kept in one search.
+struct Budget {
+    left: usize,
+    truncated: bool,
+}
+
+impl Default for Budget {
+    fn default() -> Self {
+        Self {
+            left: MAX_MATCHES,
+            truncated: false,
+        }
+    }
+}
+
+impl Budget {
+    /// Searches `doc` (only `selections` when given); with matches, makes
+    /// the results with `make`.
+    fn search(
+        &mut self,
+        searcher: &Searcher,
+        doc: &Document,
+        selections: Option<&SelectionSet>,
+        make: impl FnOnce(&[Range<ByteOffset>]) -> FileHits,
+    ) -> Option<FileHits> {
+        if self.left == 0 {
+            self.truncated = true;
+            return None;
+        }
+        let found: Vec<Range<ByteOffset>> = match selections {
+            Some(sels) => searcher.find_in(doc, sels),
+            None => searcher
+                .matches(doc, ByteOffset(0)..doc.len())
+                .take(self.left + 1)
+                .collect(),
+        };
+        if found.len() > self.left {
+            self.truncated = true;
+        }
+        let found = &found[..found.len().min(self.left)];
+        self.left -= found.len();
+        (!found.is_empty()).then(|| make(found))
+    }
+}
+
+/// Find in Files: every file `options` selects under `folder`, in order.
+fn search_files(
+    query: SearchQuery,
+    folder: &Path,
+    options: &ochrepad_fileio::tree::WalkOptions,
+    open: Vec<OpenDoc>,
+    cancel: Arc<AtomicBool>,
+    tx: Sender<Msg>,
+) {
+    let Ok(searcher) = Searcher::new(&query) else {
+        let _ = tx.send(Msg::Failed("invalid pattern".into()));
+        return;
+    };
+    let walk = match ochrepad_fileio::tree::walk_files(folder, options) {
+        Ok(w) => w,
+        Err(e) => {
+            let _ = tx.send(Msg::Failed(e));
+            return;
+        }
+    };
+    // Open documents by canonical path; only files with an open document's
+    // name are canonicalized while walking.
+    let open_names: HashSet<OsString> = open
+        .iter()
+        .filter_map(|o| o.path.file_name().map(OsString::from))
+        .collect();
+    let open: Vec<(PathBuf, OpenDoc)> = open
+        .into_iter()
+        .map(|o| {
+            (
+                std::fs::canonicalize(&o.path).unwrap_or_else(|_| o.path.clone()),
+                o,
+            )
+        })
+        .collect();
+    let mut budget = Budget::default();
+    let (mut files, mut skipped_large) = (0, 0);
+    for path in walk {
+        if cancel.load(Ordering::Relaxed) {
+            return;
+        }
+        if budget.left == 0 {
+            budget.truncated = true;
+            break;
+        }
+        files += 1;
+        if files % PROGRESS_EVERY == 0 && tx.send(Msg::Progress { files }).is_err() {
+            return;
+        }
+        let name = path
+            .strip_prefix(folder)
+            .unwrap_or(&path)
+            .display()
+            .to_string();
+        let opened = path
+            .file_name()
+            .filter(|n| open_names.contains(*n))
+            .and_then(|_| std::fs::canonicalize(&path).ok())
+            .and_then(|c| open.iter().find(|(p, _)| *p == c))
+            .map(|(_, o)| o);
+        let loaded;
+        let (doc, source, revision) = match opened {
+            Some(o) => (&o.doc, o.source.clone(), o.revision),
+            None => {
+                if std::fs::metadata(&path).is_ok_and(|m| m.len() > MAX_FILE_BYTES) {
+                    skipped_large += 1;
+                    continue;
+                }
+                // Binary, undecodable and unreadable files are skipped.
+                let Ok(decoded) = ochrepad_fileio::load(&path) else {
+                    continue;
+                };
+                loaded = Document::new(&decoded.text);
+                (&loaded, Source::Path(path.clone()), 0)
+            }
+        };
+        let file = budget.search(&searcher, doc, None, |found| FileHits {
+            hits: hits(doc, found),
+            matches: found.len(),
+            source,
+            name,
+            revision,
+            expanded: true,
+        });
+        if let Some(file) = file
+            && tx.send(Msg::File(file)).is_err()
+        {
+            return;
+        }
+    }
+    let _ = tx.send(Msg::Progress { files });
+    let _ = tx.send(Msg::Done {
+        truncated: budget.truncated,
+        skipped_large,
+    });
 }
 
 /// Groups matches by line.

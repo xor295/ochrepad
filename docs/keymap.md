@@ -48,8 +48,9 @@ For example `Ctrl+Shift+Up`, `alt+f5`, `Ctrl+OpenBracket`.
 
 - **Application shortcuts** are fixed and are handled before the keymap,
   so binding them here has no effect: Ctrl+N, Ctrl+O, Ctrl+S, Ctrl+Shift+S,
-  Ctrl+W, Ctrl+Tab, Ctrl+Shift+Tab, Ctrl+F, Ctrl+H, F3, Shift+F3,
-  Ctrl+Shift+R, Ctrl+Shift+P, Ctrl+Shift+M, F8 and Shift+F8.
+  Ctrl+W, Ctrl+Tab, Ctrl+Shift+Tab, Ctrl+F, Ctrl+Shift+F, Ctrl+H, F3,
+  Shift+F3, Ctrl+Shift+R, Ctrl+Shift+P, Ctrl+Shift+M, Ctrl+Shift+E, F8 and
+  Shift+F8.
 - **Copy, cut and paste** (Ctrl+C, Ctrl+X, Ctrl+V) come from the system
   clipboard, not from key bindings.
 - **A saved macro's shortcut** takes precedence over a keymap binding for the

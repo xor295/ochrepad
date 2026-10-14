@@ -70,6 +70,8 @@ pub enum Tab {
 const NEXT_DIFF: KeyboardShortcut = KeyboardShortcut::new(Modifiers::NONE, Key::F8);
 const PREV_DIFF: KeyboardShortcut = KeyboardShortcut::new(Modifiers::SHIFT, Key::F8);
 
+const FIND_IN_FILES: KeyboardShortcut =
+    KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::F);
 const SIDEBAR: KeyboardShortcut =
     KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::E);
 const PREVIEW: KeyboardShortcut =
@@ -710,6 +712,7 @@ impl OchrepadApp {
                     FindRequest::Reveal => self.view_state_mut().reveal_caret(),
                     FindRequest::FindAll { all_documents } => self.find_all(all_documents),
                     FindRequest::ReplaceAllInAll => self.plan_replace_all_in_all(),
+                    FindRequest::FindInFiles => self.find_in_files(),
                 }
             }
         }
@@ -897,6 +900,10 @@ impl OchrepadApp {
         }
         if pressed(ui, &SAVE) {
             self.save();
+        }
+        // Before Ctrl+F, which would also match Ctrl+Shift+F.
+        if pressed(ui, &FIND_IN_FILES) {
+            self.open_find_in_files(None);
         }
         if pressed(ui, &FIND) {
             self.find.open(&self.editor, self.active, false);
@@ -1265,6 +1272,9 @@ impl OchrepadApp {
         }
         if item(ui, "Replace…", "Ctrl+H") {
             self.find.open(&self.editor, self.active, true);
+        }
+        if item(ui, "Find in Files…", "Ctrl+Shift+F") {
+            self.open_find_in_files(None);
         }
         if item(ui, "Find Next", "F3") && !self.find.pattern.is_empty() {
             self.find.find(&mut self.editor, self.active, false);

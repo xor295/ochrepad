@@ -41,6 +41,35 @@ and press Enter) to go to the match; its tab comes to the front.
   there is none.
 - Unsaved documents are searched as they are in the editor.
 
+## Find in Files
+
+**Search > Find in Files…** (Ctrl+Shift+F), or **In Files…** in the find
+panel, adds a row for searching the files in a folder on disk:
+
+- **Folder**: where to search. It starts as the open folder (see
+  [Working in a folder](workspace.md)), or the active file's folder; right-click
+  a folder in the sidebar and choose **Find in Folder…** to search just that
+  one. **Browse…** picks one.
+- **Filters**: which files, as globs separated by `;` (or spaces or
+  commas), such as `*.rs; *.toml`. Empty means every file.
+- **Subfolders**: search the folders inside too (on by default).
+- **Ignored files**: also search files that `.gitignore` and `.ignore` leave
+  out. The `.git` folder is never searched.
+
+Press **Find in Files**. Matches appear in the Search Results panel as files
+are searched, with the number of files searched so far; **Stop** ends the
+search and keeps what it found. Clicking a result in a file that is not open
+opens it.
+
+- Files are read with the same encoding detection as File > Open, so
+  UTF-16 and legacy encodings are found too. Binary files and files that
+  cannot be decoded are skipped without a message. Files over 50 MB are
+  skipped and counted in the results heading.
+- A file that is open in a tab is searched as it is in the editor, unsaved
+  changes included, not as it is on disk.
+- **In selection** does not apply. Find in Files only finds; there is no
+  replace for files that are not open.
+
 **Replace All in All Open Documents** (in replace mode) first counts the
 matches and asks before replacing. Each document gets its own undo step,
 the documents become unsaved, and nothing is written to disk until you save.
