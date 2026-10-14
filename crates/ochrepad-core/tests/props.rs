@@ -159,6 +159,15 @@ fn action() -> impl Strategy<Value = Action> {
             (1usize..4).prop_map(Action::FoldLevel),
             (1usize..4).prop_map(Action::UnfoldLevel),
         ],
+        2 => prop_oneof![
+            (0usize..14, 0usize..12).prop_map(|(line, column)| Action::GoToLine { line, column }),
+            Just(Action::Indent),
+            Just(Action::Unindent),
+            Just(Action::ToggleLineComment),
+            Just(Action::ToggleBlockComment),
+            Just(Action::GoToMatchingBracket),
+            Just(Action::SelectToMatchingBracket),
+        ],
     ]
 }
 
@@ -225,6 +234,11 @@ fn layout() -> impl Strategy<Value = Layout> {
 /// A document whose view has the random `layout`.
 fn setup_wrapped(initial: &str, (wrap, padding): Layout) -> util::T {
     let mut t = util::setup(initial);
+    let b = t.ed.view(t.view).unwrap().buffer();
+    t.ed.buffer_mut(b).unwrap().comments = Some(ochrepad_core::CommentSyntax {
+        line: Some("//".into()),
+        block: Some(("/*".into(), "*/".into())),
+    });
     let v = t.ed.view_mut(t.view).unwrap();
     v.wrap_cols = wrap;
     v.padding = padding.map(|(before, after_last)| {

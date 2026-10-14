@@ -100,12 +100,19 @@ fn name(action: &Action) -> &'static str {
         Action::UnfoldAll => "UnfoldAll",
         Action::FoldLevel(_) => "FoldLevel",
         Action::UnfoldLevel(_) => "UnfoldLevel",
+        Action::GoToLine { .. } => "GoToLine",
+        Action::Indent => "Indent",
+        Action::Unindent => "Unindent",
+        Action::ToggleLineComment => "ToggleLineComment",
+        Action::ToggleBlockComment => "ToggleBlockComment",
+        Action::GoToMatchingBracket => "GoToMatchingBracket",
+        Action::SelectToMatchingBracket => "SelectToMatchingBracket",
         Action::Undo => "Undo",
         Action::Redo => "Redo",
     }
 }
 
-const ALL: [&str; 41] = [
+const ALL: [&str; 48] = [
     "InsertText",
     "Paste",
     "InsertTab",
@@ -145,6 +152,13 @@ const ALL: [&str; 41] = [
     "UnfoldAll",
     "FoldLevel",
     "UnfoldLevel",
+    "GoToLine",
+    "Indent",
+    "Unindent",
+    "ToggleLineComment",
+    "ToggleBlockComment",
+    "GoToMatchingBracket",
+    "SelectToMatchingBracket",
     "Undo",
     "Redo",
 ];

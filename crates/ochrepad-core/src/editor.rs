@@ -301,6 +301,19 @@ impl Editor {
             | Action::Replace { .. }
             | Action::ReplaceAll { .. }
             | Action::SelectAllMatches(_) => resolve_search(action, &buffer.doc, sels),
+            Action::ToggleLineComment | Action::ToggleBlockComment => {
+                let syntax = buffer.comments.as_ref();
+                let resolved = match (action, syntax) {
+                    (Action::ToggleLineComment, Some(c)) => {
+                        crate::transform::toggle_comment_lines(&buffer.doc, sels, c)
+                    }
+                    (_, Some(c)) => c.block.as_ref().map(|(open, close)| {
+                        crate::transform::toggle_block_comment(&buffer.doc, sels, open, close)
+                    }),
+                    _ => None,
+                };
+                resolved.ok_or(ActionError::NoCommentSyntax)
+            }
             _ => {
                 let rows = DisplayMap::new(buffer, v, self.settings.tab_width);
                 Ok(resolve(action, &buffer.doc, sels, &self.settings, &rows))

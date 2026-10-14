@@ -427,6 +427,203 @@ pub(crate) fn join(doc: &Document, sels: &SelectionSet) -> Resolved {
     edit_result(changes, after, sels)
 }
 
+/// The lines the selections touch (a selection ending at a line start does
+/// not take that line), or the carets' lines.
+fn touched_lines(doc: &Document, sels: &SelectionSet) -> BTreeSet<usize> {
+    sels.ranges()
+        .iter()
+        .flat_map(|s| {
+            let (a, b) = lines_of(doc, s);
+            a..=b
+        })
+        .collect()
+}
+
+/// Whether Tab should indent lines rather than insert: some selection spans
+/// more than one line.
+pub(crate) fn spans_lines(doc: &Document, sels: &SelectionSet) -> bool {
+    sels.ranges().iter().any(|s| {
+        let (a, b) = lines_of(doc, s);
+        !s.is_empty() && a != b
+    })
+}
+
+/// Maps selections through an edit that inserts or removes at line starts,
+/// keeping a selection that starts at a line start covering what was
+/// inserted there.
+fn map_selections_around(sels: &SelectionSet, changes: &ChangeSet) -> SelectionSet {
+    sels.map(|s| {
+        let (start_bias, end_bias) = (Bias::Before, Bias::After);
+        let map = |p: ByteOffset, bias| changes.map_position(p, bias);
+        if s.is_empty() {
+            Selection::caret(map(s.head, Bias::After))
+        } else if s.anchor <= s.head {
+            Selection::new(map(s.anchor, start_bias), map(s.head, end_bias))
+        } else {
+            Selection::new(map(s.anchor, end_bias), map(s.head, start_bias))
+        }
+    })
+}
+
+/// Indents each touched line (except empty ones) by `unit`.
+pub(crate) fn indent(doc: &Document, sels: &SelectionSet, unit: &str) -> Resolved {
+    let edits = touched_lines(doc, sels)
+        .into_iter()
+        .filter(|&l| doc.line_start(l) < doc.line_end(l))
+        .map(|l| Edit::new(doc.line_start(l), doc.line_start(l), unit))
+        .collect();
+    let changes = ChangeSet::new(doc.len(), edits);
+    let after = map_selections_around(sels, &changes);
+    edit_result(changes, after, sels)
+}
+
+/// Removes one level of indentation from each touched line: a leading tab,
+/// or up to `width` leading spaces.
+pub(crate) fn unindent(doc: &Document, sels: &SelectionSet, width: usize) -> Resolved {
+    let edits = touched_lines(doc, sels)
+        .into_iter()
+        .filter_map(|l| {
+            let text = doc.line_text(l);
+            let n = if text.starts_with('\t') {
+                1
+            } else {
+                text.bytes()
+                    .take(width.max(1))
+                    .take_while(|&b| b == b' ')
+                    .count()
+            };
+            let start = doc.line_start(l);
+            (n > 0).then(|| Edit::new(start, ByteOffset(start.0 + n), ""))
+        })
+        .collect();
+    let changes = ChangeSet::new(doc.len(), edits);
+    let after = sels.map(|s| Selection {
+        anchor: changes.map_position(s.anchor, Bias::Before),
+        head: changes.map_position(s.head, Bias::Before),
+        goal: None,
+    });
+    edit_result(changes, after, sels)
+}
+
+/// Bytes of leading spaces and tabs.
+fn indent_len(text: &str) -> usize {
+    text.len() - text.trim_start_matches([' ', '\t']).len()
+}
+
+/// Comments the touched lines with `marker` at their common indent, or
+/// uncomments them if every non-blank one is commented.
+pub(crate) fn toggle_line_comment(doc: &Document, sels: &SelectionSet, marker: &str) -> Resolved {
+    let lines: Vec<(usize, String)> = touched_lines(doc, sels)
+        .into_iter()
+        .map(|l| (l, doc.line_text(l)))
+        .filter(|(_, t)| !t.trim().is_empty())
+        .collect();
+    if lines.is_empty() {
+        return Resolved::Selections(sels.clone());
+    }
+    let commented = lines
+        .iter()
+        .all(|(_, t)| t[indent_len(t)..].starts_with(marker));
+    let edits = if commented {
+        lines
+            .iter()
+            .map(|(l, t)| {
+                let at = doc.line_start(*l).0 + indent_len(t);
+                let rest = &t[indent_len(t) + marker.len()..];
+                let len = marker.len() + usize::from(rest.starts_with(' '));
+                Edit::new(ByteOffset(at), ByteOffset(at + len), "")
+            })
+            .collect()
+    } else {
+        let col = lines.iter().map(|(_, t)| indent_len(t)).min().unwrap_or(0);
+        lines
+            .iter()
+            .map(|(l, _)| {
+                let at = ByteOffset(doc.line_start(*l).0 + col);
+                Edit::new(at, at, format!("{marker} "))
+            })
+            .collect()
+    };
+    let changes = ChangeSet::new(doc.len(), edits);
+    let after = map_selections_around(sels, &changes);
+    edit_result(changes, after, sels)
+}
+
+/// Wraps each selection (a caret: its line's text) in `open` … `close`, or
+/// unwraps it if it already is wrapped.
+pub(crate) fn toggle_block_comment(
+    doc: &Document,
+    sels: &SelectionSet,
+    open: &str,
+    close: &str,
+) -> Resolved {
+    let mut edits = Vec::new();
+    for s in sels.ranges() {
+        let range = if s.is_empty() {
+            let line = doc.line_of(s.head);
+            let text = doc.line_text(line);
+            let start = doc.line_start(line).0;
+            ByteOffset(start + indent_len(&text))..ByteOffset(start + text.trim_end().len())
+        } else {
+            s.range()
+        };
+        if range.start >= range.end {
+            continue;
+        }
+        let text = doc.slice(range.clone());
+        let lead = text.len() - text.trim_start().len();
+        let inner = text.trim();
+        if inner.len() >= open.len() + close.len()
+            && inner.starts_with(open)
+            && inner.ends_with(close)
+        {
+            // Unwrap, with one space inside each marker if there is one.
+            let start = range.start.0 + lead;
+            let end = start + inner.len();
+            let body = &inner[open.len()..inner.len() - close.len()];
+            let a = open.len() + usize::from(body.starts_with(' '));
+            let b = close.len() + usize::from(body.len() > 1 && body.ends_with(' '));
+            edits.push(Edit::new(ByteOffset(start), ByteOffset(start + a), ""));
+            edits.push(Edit::new(ByteOffset(end - b), ByteOffset(end), ""));
+        } else {
+            edits.push(Edit::new(range.start, range.start, format!("{open} ")));
+            edits.push(Edit::new(range.end, range.end, format!(" {close}")));
+        }
+    }
+    let changes = ChangeSet::new(doc.len(), edits);
+    let after = map_selections_around(sels, &changes);
+    edit_result(changes, after, sels)
+}
+
+/// Line comments with the line marker, or a block comment around the lines'
+/// text for a language with only block comments.
+pub(crate) fn toggle_comment_lines(
+    doc: &Document,
+    sels: &SelectionSet,
+    syntax: &crate::buffer::CommentSyntax,
+) -> Option<Resolved> {
+    if let Some(marker) = &syntax.line {
+        return Some(toggle_line_comment(doc, sels, marker));
+    }
+    let (open, close) = syntax.block.as_ref()?;
+    // The text of the touched lines, as one selection per run of lines.
+    let lines = touched_lines(doc, sels);
+    let (first, last) = (*lines.first()?, *lines.last()?);
+    let text_start = |l: usize| ByteOffset(doc.line_start(l).0 + indent_len(&doc.line_text(l)));
+    let whole = SelectionSet::single(Selection::new(text_start(first), doc.line_end(last)));
+    match toggle_block_comment(doc, &whole, open, close) {
+        Resolved::Edit { changes, kind, .. } => {
+            let after = map_selections_around(sels, &changes);
+            Some(Resolved::Edit {
+                changes,
+                after,
+                kind,
+            })
+        }
+        other => Some(other),
+    }
+}
+
 /// The lines a removing line operation looks at: the rectangle's lines, the
 /// lines touched by non-empty selections, or every line. A trailing
 /// newline's empty last line is not a line here (as in `sort`).

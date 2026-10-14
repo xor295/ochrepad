@@ -7,6 +7,10 @@
 //! good checkpoint and stops as soon as a recomputed checkpoint equals the
 //! old one past every edit. The caller runs that pass in small time slices.
 
+pub mod comments;
+
+pub use comments::comment_syntax;
+
 use std::collections::HashMap;
 use std::ops::Range;
 use std::path::Path;

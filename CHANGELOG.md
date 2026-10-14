@@ -10,6 +10,18 @@ people downloading the release.
 
 ## [Unreleased]
 
+### Added
+
+- Go to Line (Ctrl+G): a line, or `line:column`.
+- Tab indents the selected lines when a selection spans lines; Shift+Tab
+  unindents the selected lines or the caret's line. Edit > Indent and
+  Unindent do the same.
+- Toggle Comment (Ctrl+/) and Toggle Block Comment (Ctrl+Shift+/), with the
+  comment markers of about 100 languages.
+- Matching brackets: the bracket beside the caret and its match are
+  outlined (in red when there is no match). Ctrl+B jumps to the match and
+  Ctrl+Alt+B selects up to it.
+
 ## [0.2.0] - 2026-10-13
 
 ### Added

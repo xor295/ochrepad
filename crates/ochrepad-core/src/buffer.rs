@@ -11,6 +11,15 @@ use crate::text::Document;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct BufferId(pub u64);
 
+/// A language's comment markers.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommentSyntax {
+    /// Starts a comment that runs to the end of the line (`//`, `#`).
+    pub line: Option<String>,
+    /// Opens and closes a block comment (`/*`, `*/`).
+    pub block: Option<(String, String)>,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LineEnding {
     #[default]
@@ -83,6 +92,9 @@ pub struct Buffer {
     pub fold_strategy: FoldStrategy,
     /// Edits are refused (a compare view's copy of a file on disk).
     pub read_only: bool,
+    /// The language's comment markers, for toggling comments; the app sets
+    /// them from the language.
+    pub comments: Option<CommentSyntax>,
     pub meta: FileMeta,
     /// Line edits since the last `take_line_edits`, for the highlighter.
     line_edits: Vec<LineEdit>,
@@ -100,6 +112,7 @@ impl Buffer {
             language: None,
             fold_strategy: FoldStrategy::Indent,
             read_only: false,
+            comments: None,
             meta,
             line_edits: Vec::new(),
         }

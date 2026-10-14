@@ -130,6 +130,10 @@ Windows and Linux. macOS is not supported.
 | Add a caret | Ctrl+click, Ctrl+Alt+Up/Down |
 | Back to one caret | Esc |
 | Select a line | click its line number (drag for several) |
+| Go to line | Ctrl+G |
+| Indent, unindent | Tab (with lines selected), Shift+Tab |
+| Toggle comment, block comment | Ctrl+/, Ctrl+Shift+/ |
+| Matching bracket: go, select | Ctrl+B, Ctrl+Alt+B |
 | Duplicate, move, join lines | Ctrl+D, Ctrl+Shift+Up/Down, Ctrl+J |
 | Fold, unfold the block at the caret | Ctrl+Alt+F, Ctrl+Alt+Shift+F |
 | Fold all, unfold all, fold a level | Alt+0, Alt+Shift+0, Alt+1 … Alt+8 |

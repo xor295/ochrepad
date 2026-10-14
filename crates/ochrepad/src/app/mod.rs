@@ -70,6 +70,7 @@ pub enum Tab {
 const NEXT_DIFF: KeyboardShortcut = KeyboardShortcut::new(Modifiers::NONE, Key::F8);
 const PREV_DIFF: KeyboardShortcut = KeyboardShortcut::new(Modifiers::SHIFT, Key::F8);
 
+const GO_TO_LINE: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::G);
 const FIND_IN_FILES: KeyboardShortcut =
     KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::F);
 const SIDEBAR: KeyboardShortcut =
@@ -119,6 +120,11 @@ pub struct OchrepadApp {
     new_entry: Option<workspace::NewEntry>,
     /// The time at the start of this frame.
     now: f64,
+    /// A short note in the status bar (an action that could not run), and
+    /// when it goes away.
+    status_note: Option<(String, f64)>,
+    /// The Go to Line dialog's field, while it is open.
+    go_to_line: Option<String>,
     pub macros: Macros,
     persist: autosave::Persist,
     external: external::External,
@@ -176,6 +182,8 @@ impl OchrepadApp {
             tree: None,
             new_entry: None,
             now: 0.0,
+            status_note: None,
+            go_to_line: None,
             macros: Macros::default(),
             persist: autosave::Persist::default(),
             external: external::External::default(),
@@ -654,7 +662,9 @@ impl OchrepadApp {
     }
 
     fn apply(&mut self, action: Action) {
-        let _ = self.editor.apply(self.active, action);
+        if let Err(e) = self.editor.apply(self.active, action) {
+            self.note(&e);
+        }
         let state = self.view_state_mut();
         state.reveal_caret();
         state.request_focus();
@@ -776,6 +786,14 @@ impl OchrepadApp {
                 .show_inside(ui, &mut tabs);
         });
         self.paint_tab_accents(ui, &tab_rects);
+        let errors: Vec<_> = self
+            .view_states
+            .values_mut()
+            .filter_map(|s| s.last_error.take())
+            .collect();
+        for e in errors {
+            self.note(&e);
+        }
         let tab_rects: Vec<egui::Rect> = tab_rects.iter().map(|(_, r, _)| *r).collect();
         self.new_tab_on_tab_bar_double_click(ui, &tab_rects);
         if let Some((_, Tab::Editor(view))) = self.dock.find_active_focused()
@@ -798,6 +816,7 @@ impl OchrepadApp {
         self.dialogs(ui);
         self.replace_all_dialog(ui);
         self.new_entry_dialog(ui);
+        self.go_to_line_dialog(ui);
         self.external_dialog(ui);
         self.preferences_window(ui);
         if let Some((source, repeat)) = self.macros.dialogs(ui) {
@@ -900,6 +919,9 @@ impl OchrepadApp {
         }
         if pressed(ui, &SAVE) {
             self.save();
+        }
+        if pressed(ui, &GO_TO_LINE) {
+            self.go_to_line = Some(String::new());
         }
         // Before Ctrl+F, which would also match Ctrl+Shift+F.
         if pressed(ui, &FIND_IN_FILES) {
@@ -1090,6 +1112,21 @@ impl OchrepadApp {
             self.apply(Action::SelectAll);
         }
         ui.separator();
+        for (label, shortcut, action) in [
+            ("Toggle Comment", "Ctrl+/", Action::ToggleLineComment),
+            (
+                "Toggle Block Comment",
+                "Ctrl+Shift+/",
+                Action::ToggleBlockComment,
+            ),
+            ("Indent", "Tab", Action::Indent),
+            ("Unindent", "Shift+Tab", Action::Unindent),
+        ] {
+            if ui.add(Button::new(label).shortcut_text(shortcut)).clicked() {
+                self.apply(action);
+            }
+        }
+        ui.separator();
         ui.menu_button("Convert Case", |ui| {
             for (label, shortcut, mode) in [
                 ("UPPERCASE", "Ctrl+Shift+U", CaseMode::Upper),
@@ -1273,6 +1310,17 @@ impl OchrepadApp {
         if item(ui, "Replace…", "Ctrl+H") {
             self.find.open(&self.editor, self.active, true);
         }
+        ui.separator();
+        if item(ui, "Go to Line…", "Ctrl+G") {
+            self.go_to_line = Some(String::new());
+        }
+        if item(ui, "Go to Matching Bracket", "Ctrl+B") {
+            self.apply(Action::GoToMatchingBracket);
+        }
+        if item(ui, "Select to Matching Bracket", "Ctrl+Alt+B") {
+            self.apply(Action::SelectToMatchingBracket);
+        }
+        ui.separator();
         if item(ui, "Find in Files…", "Ctrl+Shift+F") {
             self.open_find_in_files(None);
         }
@@ -1559,6 +1607,18 @@ impl OchrepadApp {
         let meta = self.buffer().meta.clone();
         ui.horizontal(|ui| {
             ui.label(self.caret_status());
+            if let Some((note, until)) = &self.status_note {
+                if self.now < *until {
+                    ui.separator();
+                    ui.colored_label(ui.visuals().warn_fg_color, note);
+                    ui.ctx()
+                        .request_repaint_after(std::time::Duration::from_secs_f64(
+                            (until - self.now).max(0.0),
+                        ));
+                } else {
+                    self.status_note = None;
+                }
+            }
             if let Some(recorded) = self.editor.recorded() {
                 ui.separator();
                 ui.colored_label(
@@ -1883,5 +1943,79 @@ fn new_file_meta() -> FileMeta {
     FileMeta {
         line_ending: fileio::default_line_ending(),
         ..FileMeta::default()
+    }
+}
+
+impl OchrepadApp {
+    /// Shows `error` in the status bar for a few seconds.
+    fn note(&mut self, error: &ochrepad_core::ActionError) {
+        use ochrepad_core::ActionError;
+        let text = match error {
+            ActionError::UnknownView(_) | ActionError::UnknownBuffer(_) => return,
+            ActionError::NotFound => "Not found".to_owned(),
+            e => {
+                let s = e.to_string();
+                let mut c = s.chars();
+                c.next()
+                    .map(|f| f.to_uppercase().collect::<String>() + c.as_str())
+                    .unwrap_or_default()
+            }
+        };
+        self.status_note = Some((text, self.now + 4.0));
+    }
+
+    /// Ctrl+G: a line, or `line:column`, counted from 1.
+    fn go_to_line_dialog(&mut self, ui: &mut Ui) {
+        let lines = self.buffer().doc().line_count();
+        let Some(text) = &mut self.go_to_line else {
+            return;
+        };
+        let resp = Modal::new(Id::new("ochrepad-go-to-line")).show(ui.ctx(), |ui| {
+            ui.label(format!("Go to line (1–{lines}), or line:column"));
+            let field = ui.add(
+                egui::TextEdit::singleline(text)
+                    .id(Id::new("ochrepad-go-to-line-field"))
+                    .desired_width(160.0),
+            );
+            if !field.has_focus() && !field.lost_focus() {
+                field.request_focus();
+            }
+            let enter = field.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                if ui.button("Go").clicked() || enter {
+                    Some(true)
+                } else if ui.button("Cancel").clicked() {
+                    Some(false)
+                } else {
+                    None
+                }
+            })
+            .inner
+        });
+        let choice = if resp.should_close() {
+            Some(false)
+        } else {
+            resp.inner
+        };
+        match choice {
+            Some(true) => {
+                let mut parts = text.trim().splitn(2, [':', ',']);
+                let line = parts.next().and_then(|l| l.trim().parse::<usize>().ok());
+                let column = parts
+                    .next()
+                    .and_then(|c| c.trim().parse::<usize>().ok())
+                    .unwrap_or(1);
+                if let Some(line) = line {
+                    self.go_to_line = None;
+                    self.apply(Action::GoToLine { line, column });
+                }
+            }
+            Some(false) => {
+                self.go_to_line = None;
+                self.view_state_mut().request_focus();
+            }
+            None => {}
+        }
     }
 }

@@ -41,6 +41,39 @@ pub(crate) fn resolve(
 ) -> Resolved {
     let tab_width = settings.tab_width;
     match action {
+        Action::Indent => transform::indent(doc, sels, &indent_unit(settings)),
+        // Tab with a selection over several lines indents them.
+        Action::InsertTab if transform::spans_lines(doc, sels) => {
+            transform::indent(doc, sels, &indent_unit(settings))
+        }
+        Action::Unindent => transform::unindent(doc, sels, tab_width),
+        Action::GoToLine { line, column } => {
+            let line = line.saturating_sub(1).min(doc.line_count() - 1);
+            let col = VisualCol(column.saturating_sub(1));
+            Resolved::Selections(SelectionSet::caret(visual_col_to_byte(
+                doc, line, col, tab_width,
+            )))
+        }
+        Action::GoToMatchingBracket | Action::SelectToMatchingBracket => {
+            let select = matches!(action, Action::SelectToMatchingBracket);
+            let pair = crate::brackets::bracket_at(doc, sels.primary().head);
+            match pair.and_then(|p| p.matching.map(|m| (p, m))) {
+                None => Resolved::Selections(sels.clone()),
+                Some((p, m)) if select => {
+                    let (a, b) = (p.at.min(m), p.at.max(m));
+                    Resolved::Selections(SelectionSet::single(Selection::new(
+                        a,
+                        ByteOffset(b.0 + 1),
+                    )))
+                }
+                // The caret keeps its side: before the bracket stays before.
+                Some((p, m)) => Resolved::Selections(SelectionSet::caret(if p.after_caret {
+                    m
+                } else {
+                    ByteOffset(m.0 + 1)
+                })),
+            }
+        }
         Action::InsertTab => {
             // A tab character, or spaces up to the next tab stop.
             edit_each(doc, sels, EditKind::Other, |_, s| {
@@ -221,6 +254,8 @@ pub(crate) fn resolve(
         | Action::UnfoldAll
         | Action::FoldLevel(_)
         | Action::UnfoldLevel(_)
+        | Action::ToggleLineComment
+        | Action::ToggleBlockComment
         | Action::Find { .. }
         | Action::Replace { .. }
         | Action::ReplaceAll { .. }
@@ -321,6 +356,15 @@ pub(crate) fn resolve_search(
         }
         // Only search actions are routed here.
         _ => Ok(Resolved::Selections(sels.clone())),
+    }
+}
+
+/// One level of indentation: a tab, or `tab_width` spaces.
+fn indent_unit(settings: &Settings) -> String {
+    if settings.use_spaces {
+        " ".repeat(settings.tab_width.max(1))
+    } else {
+        "\t".to_owned()
     }
 }
 

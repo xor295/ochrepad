@@ -69,6 +69,8 @@ pub struct EditorViewState {
     pub word_wrap: bool,
     /// Show the document map beside the text.
     pub document_map: bool,
+    /// The last error from an action a key ran (shown by the app).
+    pub last_error: Option<ochrepad_core::ActionError>,
     map_cache: crate::doc_map::MapCache,
     /// Dragging the map's viewport marker: where it was grabbed, from its top.
     map_drag: Option<f32>,
@@ -80,6 +82,7 @@ impl Default for EditorViewState {
             fold_margin: true,
             word_wrap: false,
             document_map: true,
+            last_error: None,
             map_cache: Default::default(),
             map_drag: None,
             cache: LayoutCache::default(),
@@ -402,7 +405,9 @@ pub fn editor_view(
     for op in ops {
         match op {
             Op::Apply(a) => {
-                let _ = editor.apply(view, a);
+                if let Err(e) = editor.apply(view, a) {
+                    state.last_error = Some(e);
+                }
             }
             Op::Copy | Op::Cut => {
                 if copy_selection(ui.ctx(), editor, view) && matches!(op, Op::Cut) {
@@ -1277,6 +1282,12 @@ fn paint(
         .unwrap_or_default();
     let smart_bg = crate::theme::smart_highlight_bg(&visuals);
     let accent = crate::theme::accent(&visuals);
+    // The bracket beside the primary caret and its match.
+    let primary = v.selections.primary();
+    let bracket = primary
+        .is_empty()
+        .then(|| ochrepad_core::brackets::bracket_at(doc, primary.head))
+        .flatten();
     let tab_width = editor.settings.tab_width;
     let strategy = editor
         .buffer(buffer)
@@ -1397,6 +1408,27 @@ fn paint(
             text_painter.clone()
         };
         paint_line_text(&row_painter, &layout, rx0, y, &f.font, f.line_h);
+        if let Some(p) = bracket {
+            let color = if p.matching.is_some() {
+                accent
+            } else {
+                visuals.error_fg_color
+            };
+            for b in std::iter::once(p.at).chain(p.matching) {
+                if b >= row_start && b < row_end {
+                    let r = Rect::from_min_max(
+                        Pos2::new(x_at(b), y + 1.0),
+                        Pos2::new(x_at(ByteOffset(b.0 + 1)), y + f.line_h - 1.0),
+                    );
+                    text_painter.rect_stroke(
+                        r,
+                        2.0,
+                        Stroke::new(1.0, color),
+                        egui::StrokeKind::Inside,
+                    );
+                }
+            }
+        }
 
         let folded = v.folds().is_folded(line);
         if folded && row_end == line_end {

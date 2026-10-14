@@ -197,6 +197,17 @@ impl Default for Keymap {
                 Chord::new(ArrowDown).cmd().alt(),
                 act(Action::AddCursorBelow),
             ),
+            (Chord::new(Tab).shift(), act(Action::Unindent)),
+            (Chord::new(Slash).cmd(), act(Action::ToggleLineComment)),
+            (
+                Chord::new(Slash).cmd().shift(),
+                act(Action::ToggleBlockComment),
+            ),
+            (Chord::new(B).cmd(), act(Action::GoToMatchingBracket)),
+            (
+                Chord::new(B).cmd().alt(),
+                act(Action::SelectToMatchingBracket),
+            ),
             // Folding (Notepad++'s View > Fold/Collapse shortcuts).
             (Chord::new(F).cmd().alt(), act(Action::Fold)),
             (Chord::new(F).cmd().alt().shift(), act(Action::Unfold)),

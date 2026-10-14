@@ -2,6 +2,7 @@
 //! and undo. No egui and no filesystem access (PLAN 3.1, 7).
 
 pub mod action;
+pub mod brackets;
 pub mod buffer;
 pub mod changeset;
 pub mod diff;
@@ -19,7 +20,7 @@ pub mod transform;
 pub mod view;
 
 pub use action::{Action, ActionError, Direction, Motion};
-pub use buffer::{Buffer, BufferId, FileMeta, LineEdit, LineEnding};
+pub use buffer::{Buffer, BufferId, CommentSyntax, FileMeta, LineEdit, LineEnding};
 pub use changeset::{Bias, ChangeSet, Edit};
 pub use display::{DisplayMap, Padding, RowPos};
 pub use editor::{Clock, Editor, ManualClock, Settings, SystemClock};

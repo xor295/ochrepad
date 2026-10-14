@@ -154,6 +154,30 @@ pub enum Action {
     /// (1 is outermost), the heading level in Markdown.
     FoldLevel(usize),
     UnfoldLevel(usize),
+    /// Move the caret to a line and visual column, both counted from 1 as
+    /// in the status bar (column 1 is the line start).
+    GoToLine {
+        line: usize,
+        column: usize,
+    },
+    /// Indent the selected lines, or the caret's line, by one level (Tab
+    /// does this only when a selection spans lines).
+    Indent,
+    /// Shift+Tab: remove one level of indentation from the selected lines,
+    /// or the caret's line. (Tab with a selection over several lines
+    /// indents them.)
+    Unindent,
+    /// Comment the selected lines (or the caret's line) with the language's
+    /// line comment, or uncomment them if they all are. Languages with only
+    /// block comments get a block comment around the lines.
+    ToggleLineComment,
+    /// Wrap each selection (or the caret's line) in a block comment, or
+    /// unwrap it.
+    ToggleBlockComment,
+    /// Move the caret to the bracket matching the one beside it.
+    GoToMatchingBracket,
+    /// Select from the bracket beside the caret to its match, both included.
+    SelectToMatchingBracket,
     Undo,
     Redo,
 }
@@ -166,6 +190,8 @@ pub enum ActionError {
     NotFound,
     /// The buffer is read-only.
     ReadOnly,
+    /// The language has no comment markers ochrepad knows.
+    NoCommentSyntax,
 }
 
 impl fmt::Display for ActionError {
@@ -176,6 +202,9 @@ impl fmt::Display for ActionError {
             ActionError::InvalidPattern(e) => write!(f, "invalid search pattern: {e}"),
             ActionError::NotFound => f.write_str("no match found"),
             ActionError::ReadOnly => f.write_str("the document is read-only"),
+            ActionError::NoCommentSyntax => {
+                f.write_str("no comment markers are known for this language")
+            }
         }
     }
 }

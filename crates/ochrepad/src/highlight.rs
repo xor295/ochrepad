@@ -97,6 +97,7 @@ impl Highlighting {
 
     pub fn set_language(&mut self, buffer: &mut Buffer, language: &str, dark: bool) {
         buffer.language = Some(language.to_owned());
+        buffer.comments = ochrepad_syntax::comment_syntax(language);
         buffer.fold_strategy = if language == "Markdown" {
             ochrepad_core::FoldStrategy::Markdown
         } else {
