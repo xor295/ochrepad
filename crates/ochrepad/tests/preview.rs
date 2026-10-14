@@ -255,3 +255,50 @@ fn snapshot_with_a_relative_image() {
     h.run();
     h.snapshot("markdown_preview");
 }
+
+/// The URLs the last frame asked the browser to open.
+fn opened_urls(h: &Harness<'_, OchrepadApp>) -> Vec<String> {
+    h.output()
+        .platform_output
+        .commands
+        .iter()
+        .filter_map(|c| match c {
+            egui::OutputCommand::OpenUrl(o) => Some(o.url.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn links_open_files_here_and_only_web_links_go_to_the_browser() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join("other.md"), "# Other\n").unwrap();
+    let file = tmp.path().join("doc.md");
+    std::fs::write(
+        &file,
+        "[web](https://example.com/) and [settings](ms-settings:privacy) and [other](other.md)\n",
+    )
+    .unwrap();
+    let mut h = harness(OchrepadApp::new());
+    h.state_mut().open_path(&file);
+    h.state_mut().open_preview();
+    h.run();
+
+    h.get_by_label("web").click();
+    h.step();
+    assert_eq!(opened_urls(&h), vec!["https://example.com/".to_owned()]);
+    h.run();
+
+    // A handler the operating system would run is refused, with a note.
+    h.get_by_label("settings").click();
+    h.step();
+    assert!(opened_urls(&h).is_empty());
+    h.run();
+    h.get_by_label_contains("are not opened");
+
+    // A relative link to a file opens it in ochrepad.
+    h.get_by_label("other").click();
+    h.run();
+    let path = h.state().buffer().meta.path.clone().unwrap();
+    assert_eq!(path.file_name().unwrap(), "other.md");
+}

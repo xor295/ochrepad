@@ -71,8 +71,18 @@ pub fn snapshot_paths(dir: &Path, id: &str) -> (PathBuf, PathBuf) {
     )
 }
 
+/// Whether `id` can name a snapshot: the app makes them from hex digits and
+/// `-`. Anything else (such as `../x` in a tampered session file) would
+/// reach outside the backup folder.
+pub fn is_snapshot_id(id: &str) -> bool {
+    !id.is_empty() && id.len() <= 64 && id.chars().all(|c| c.is_ascii_hexdigit() || c == '-')
+}
+
 /// Reads a snapshot written by [`Job::Snapshot`].
 pub fn read_snapshot(dir: &Path, id: &str) -> Result<(String, SnapshotInfo), String> {
+    if !is_snapshot_id(id) {
+        return Err(format!("{id:?} is not a backup name"));
+    }
     let (text_path, info_path) = snapshot_paths(dir, id);
     let info = crate::load_json::<SnapshotInfo>(&info_path)?
         .ok_or_else(|| format!("{} is missing", info_path.display()))?;

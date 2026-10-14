@@ -1056,18 +1056,29 @@ pub(crate) fn paint_line_text(
 ) {
     let clip = painter.clip_rect();
     for piece in &layout.pieces {
-        let px = x0 + piece.x;
+        let mut px = x0 + piece.x;
         if px > clip.max.x {
             break;
         }
         if px + piece.width < clip.min.x {
             continue;
         }
-        let galley = painter.layout_no_wrap(
-            layout.text[piece.range.clone()].to_owned(),
-            font.clone(),
-            piece.color,
-        );
+        let mut range = piece.range.clone();
+        if !piece.clip {
+            // An ASCII run: one byte per cell. Lay out only the part on
+            // screen; a long line would otherwise produce more vertices
+            // than the GPU buffer holds.
+            let cell = piece.width / range.len() as f32;
+            if px < clip.min.x {
+                let skip = (((clip.min.x - px) / cell).floor() as usize).min(range.len());
+                range.start += skip;
+                px += skip as f32 * cell;
+            }
+            let keep = ((clip.max.x - px) / cell).ceil().max(0.0) as usize + 1;
+            range.end = range.end.min(range.start + keep);
+        }
+        let galley =
+            painter.layout_no_wrap(layout.text[range].to_owned(), font.clone(), piece.color);
         if piece.clip {
             let slot = Rect::from_min_size(Pos2::new(px, y), Vec2::new(piece.width, line_h));
             painter.with_clip_rect(slot.intersect(clip)).galley(
@@ -1124,17 +1135,9 @@ fn paint_marks(
     let clip = painter.clip_rect();
     let mid = y + f.line_h / 2.0;
     if symbols.space_tab {
-        let (lo, hi) = (clip.min.x - x0, clip.max.x - x0);
-        let b = &layout.boundaries;
-        // From the grapheme that crosses the left edge (a tab may).
-        let from = b.partition_point(|&(_, x)| x <= lo).saturating_sub(1);
         let bytes = layout.text.as_bytes();
         let dot = (f.cell_w * 0.09).max(1.0);
-        for w in b[from..].windows(2) {
-            let ((at, x), (_, next)) = (w[0], w[1]);
-            if x > hi {
-                break;
-            }
+        for (at, x, next) in layout.graphemes_between(clip.min.x - x0, clip.max.x - x0) {
             match bytes[at] {
                 b' ' => {
                     painter.circle_filled(Pos2::new(x0 + (x + next) / 2.0, mid), dot, m.symbol);

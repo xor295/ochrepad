@@ -314,11 +314,20 @@ impl OchrepadApp {
 /// Shows `path` in the system's file manager: selected in Explorer on
 /// Windows; its folder (or itself, for a folder) elsewhere.
 fn reveal_in_file_manager(path: &Path) -> std::io::Result<()> {
-    if cfg!(windows) {
-        let mut arg = std::ffi::OsString::from("/select,");
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // Explorer splits its arguments at commas, which file names may
+        // contain, so the path is quoted (it cannot contain a quote).
+        let mut arg = std::ffi::OsString::from("/select,\"");
         arg.push(path);
-        std::process::Command::new("explorer").arg(arg).spawn()?;
-    } else {
+        arg.push("\"");
+        std::process::Command::new("explorer")
+            .raw_arg(arg)
+            .spawn()?;
+    }
+    #[cfg(not(windows))]
+    {
         let dir = if path.is_dir() {
             path
         } else {

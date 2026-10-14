@@ -44,7 +44,9 @@ A fast, native text editor in the spirit of Notepad++, written in Rust with
   jump between changes. Both sides are editable, with syntax highlighting,
   and the diff updates as you type.
 - **Markdown preview** beside the editor, updating as you type, with images
-  (PNG, JPEG, WebP, SVG) loaded from the document's folder.
+  (PNG, JPEG, WebP, SVG) loaded from the document's folder. Web and mail
+  links open in the browser, links to files open in ochrepad, and other
+  kinds of link are not followed.
 - **Backups and session restore**: unsaved work is backed up every few seconds
   and comes back, with your tabs and layout, the next time you start. Optional
   automatic saving of named files ([more](docs/backups-and-session.md)).

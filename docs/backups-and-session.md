@@ -60,6 +60,13 @@ cover those.
 Saving works the same way as **Save**: the file keeps its encoding and line
 endings, and is replaced in one step (see [File handling](file-handling.md)).
 
+## If ochrepad crashes
+
+If ochrepad hits a bug and has to close, it first backs up every unsaved tab
+and writes the session, as on exit, and then says so in a message. The next
+start brings the work back. (With backups turned off there is nothing to
+bring back, and the message says that too.)
+
 ## The session file
 
 The list of open tabs and the layout are kept in `session.json` in the

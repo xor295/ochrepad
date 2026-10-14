@@ -61,6 +61,28 @@ fn spans_cover_tokens_and_exclude_the_newline() {
 }
 
 #[test]
+fn very_long_lines_are_left_plain_and_skipped_over() {
+    // A huge minified line between two ordinary ones: it is not parsed (that
+    // would take seconds) and the next line is highlighted from the state
+    // before it.
+    let long = format!("let a = [{}];", "1, ".repeat(10_000));
+    assert!(long.len() > ochrepad_syntax::MAX_HIGHLIGHT_LINE);
+    let doc = Document::new(&format!("// before\n{long}\nfn after() {{}}"));
+    let t = Instant::now();
+    let spans = full(&doc, "Rust");
+    assert!(spans[1].as_ref().unwrap().is_empty());
+    let alone = full(&Document::new("// before\nfn after() {}"), "Rust");
+    assert_eq!(spans[2], alone[1]);
+    if !cfg!(debug_assertions) {
+        assert!(
+            t.elapsed() < Duration::from_millis(200),
+            "{:?}",
+            t.elapsed()
+        );
+    }
+}
+
+#[test]
 fn edit_at_the_top_of_a_large_file_converges_quickly() {
     let text = rust_file(10_000);
     let mut ed = Editor::new();

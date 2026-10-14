@@ -19,7 +19,33 @@ impl eframe::App for Shell {
         if let Some(b) = &mut self.bench {
             b.drive(&mut self.app);
         }
-        self.app.show(ui);
+        let shown = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.app.show(ui)));
+        if let Err(panic) = shown {
+            // A bug: keep the unsaved work (as on exit), say so, then end as
+            // the panic would have.
+            let kept = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                self.app.emergency_backup()
+            }))
+            .unwrap_or(false);
+            let what = panic
+                .downcast_ref::<&str>()
+                .map(|s| (*s).to_owned())
+                .or_else(|| panic.downcast_ref::<String>().cloned())
+                .unwrap_or_default();
+            let after = if kept {
+                "Unsaved work was backed up and will come back when you start ochrepad again."
+            } else {
+                "Backups are turned off, so unsaved work could not be kept."
+            };
+            rfd::MessageDialog::new()
+                .set_level(rfd::MessageLevel::Error)
+                .set_title("ochrepad stopped")
+                .set_description(format!(
+                    "ochrepad hit a bug and has to close.\n\n{after}\n\n{what}"
+                ))
+                .show();
+            std::panic::resume_unwind(panic);
+        }
         if let Some(b) = &mut self.bench {
             let ui_ms = start.elapsed().as_secs_f64() * 1000.0;
             let cpu_ms = f64::from(frame.info().cpu_usage.unwrap_or(0.0)) * 1000.0;

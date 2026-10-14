@@ -53,7 +53,11 @@ pub fn find_match(doc: &Document, at: ByteOffset) -> Option<ByteOffset> {
     // Brackets are ASCII, which never occurs inside a UTF-8 multibyte
     // sequence, so scanning bytes is safe.
     if let Some(&(open, close)) = PAIRS.iter().find(|p| p.0 == b) {
-        let end = (at.0 + 1 + SEARCH_LIMIT).min(doc.len().0);
+        // The window's edge may fall inside a multibyte character.
+        let mut end = (at.0 + 1 + SEARCH_LIMIT).min(doc.len().0);
+        while !doc.is_char_boundary(ByteOffset(end)) {
+            end -= 1;
+        }
         let text = doc.slice(ByteOffset(at.0 + 1)..ByteOffset(end));
         let mut depth = 0usize;
         for (i, c) in text.bytes().enumerate() {
@@ -69,7 +73,10 @@ pub fn find_match(doc: &Document, at: ByteOffset) -> Option<ByteOffset> {
         None
     } else {
         let &(open, close) = PAIRS.iter().find(|p| p.1 == b)?;
-        let start = at.0.saturating_sub(SEARCH_LIMIT);
+        let mut start = at.0.saturating_sub(SEARCH_LIMIT);
+        while !doc.is_char_boundary(ByteOffset(start)) {
+            start += 1;
+        }
         let text = doc.slice(ByteOffset(start)..at);
         let mut depth = 0usize;
         for (i, c) in text.bytes().enumerate().rev() {
@@ -115,5 +122,22 @@ mod tests {
         );
         assert_eq!(pair("abc", 1), None);
         assert_eq!(pair("İx", 2), None, "after a two-byte character");
+    }
+
+    #[test]
+    fn the_search_window_never_splits_a_character() {
+        // Unmatched brackets with more than the search limit of multibyte
+        // text beside them: every alignment of the window's edge.
+        for pad in 0..4 {
+            let filler = "é".repeat(SEARCH_LIMIT / 2 + 3);
+            let open = format!("{}{{{filler}", "x".repeat(pad));
+            assert_eq!(pair(&open, pad), Some((pad, None, true)));
+            let close = format!("{filler}{}}}", "x".repeat(pad));
+            let at = close.len() - 1;
+            assert_eq!(pair(&close, at), Some((at, None, true)));
+            // 3- and 4-byte characters too.
+            let wide = format!("{}[{}", "x".repeat(pad), "漢😀".repeat(SEARCH_LIMIT / 6));
+            assert_eq!(pair(&wide, pad), Some((pad, None, true)));
+        }
     }
 }

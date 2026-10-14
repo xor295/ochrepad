@@ -43,6 +43,36 @@ people downloading the release.
 - Control characters (NUL, ESC, ...) are drawn as boxes. Before, they were
   drawn with the font's replacement glyph, which could push the rest of the
   line off its columns.
+- A line of several megabytes (minified code, a log without line breaks)
+  crashed the app when drawn. Only the part on screen is laid out now, a
+  long line takes little more memory than its text, and lines over 20,000
+  characters are not highlighted (one of a megabyte took seconds).
+- A caret beside a bracket in a large file with non-ASCII text crashed the
+  app.
+- Opening a folder, a device such as `/dev/zero` or a pipe (from the file
+  tree, the session or a reload) could hang the app or fill its memory.
+  These are refused now, as are files over 1 GB.
+- New files saved on Linux were readable only by you; they get the usual
+  permissions now. ochrepad's own backups and settings stay private.
+- Reveal in File Manager on Windows failed for names with commas.
+- If ochrepad hits a bug, it backs up unsaved work and writes the session
+  before closing, and says so.
+
+### Security
+
+- The Markdown preview passes only web (`http`, `https`) and mail links to
+  the system. Links to files open in ochrepad, relative to the document; any
+  other kind (`ms-settings:`, `search-ms:`, custom protocol handlers, network
+  paths) is refused with a note. Hovering a link shows where it goes.
+- Preview images can no longer crash the app or exhaust its memory: images
+  larger than the graphics card's largest texture are shrunk, SVGs are drawn
+  at most that large, and image files over 32 MB, devices and pipes are not
+  read. Image paths through a symbolic link to a network share are refused
+  like network paths.
+- Saving keeps Windows' "downloaded from the internet" mark on a file, so
+  Windows still warns before running a downloaded script edited here.
+- Backup names from a damaged or tampered session file can no longer point
+  outside the backup folder.
 
 ## [0.2.0] - 2026-10-13
 

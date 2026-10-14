@@ -110,6 +110,75 @@ fn mixed_line_endings_are_flagged_and_saved_with_the_dominant_ending() {
 }
 
 #[test]
+fn saving_keeps_the_downloaded_mark_and_gives_new_files_normal_permissions() {
+    let dir = tempfile::tempdir().unwrap();
+    let meta = ochrepad_core::FileMeta::default();
+    if cfg!(windows) {
+        let file = dir.path().join("script.ps1");
+        std::fs::write(&file, "old").unwrap();
+        let mark = format!("{}:Zone.Identifier", file.display());
+        std::fs::write(&mark, "[ZoneTransfer]\r\nZoneId=3\r\n").unwrap();
+        ochrepad_fileio::save(&file, "new", &meta).unwrap();
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "new");
+        assert_eq!(
+            std::fs::read_to_string(&mark).unwrap(),
+            "[ZoneTransfer]\r\nZoneId=3\r\n"
+        );
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        let user = dir.path().join("new.txt");
+        ochrepad_fileio::save(&user, "x", &meta).unwrap();
+        // Readable by others under the usual umask, like any new file.
+        let made = dir.path().join("made.txt");
+        std::fs::write(&made, "x").unwrap();
+        assert_eq!(mode(&user), mode(&made));
+        // ochrepad's own files stay private.
+        let private = dir.path().join("backup.txt");
+        ochrepad_fileio::write_atomic(&private, b"x").unwrap();
+        assert_eq!(mode(&private), 0o600);
+    }
+}
+
+#[test]
+fn refuses_folders_devices_pipes_and_huge_files() {
+    let dir = tempfile::tempdir().unwrap();
+    assert!(matches!(
+        ochrepad_fileio::load(dir.path()),
+        Err(ochrepad_fileio::LoadError::NotAFile) | Err(ochrepad_fileio::LoadError::Io(_))
+    ));
+    let file = dir.path().join("ten.txt");
+    std::fs::write(&file, "0123456789").unwrap();
+    assert!(matches!(
+        ochrepad_fileio::read_file_up_to(&file, 9),
+        Err(ochrepad_fileio::LoadError::TooLarge(10))
+    ));
+    assert_eq!(
+        ochrepad_fileio::read_file_up_to(&file, 10).unwrap(),
+        b"0123456789"
+    );
+    #[cfg(target_os = "linux")]
+    {
+        // A device that never ends, and a pipe nobody writes to: refused at
+        // once instead of reading forever or blocking.
+        assert!(matches!(
+            ochrepad_fileio::load(Path::new("/dev/zero")),
+            Err(ochrepad_fileio::LoadError::NotAFile)
+        ));
+        let fifo = dir.path().join("fifo");
+        let made = std::process::Command::new("mkfifo").arg(&fifo).status();
+        if made.is_ok_and(|s| s.success()) {
+            assert!(matches!(
+                ochrepad_fileio::load(&fifo),
+                Err(ochrepad_fileio::LoadError::NotAFile)
+            ));
+        }
+    }
+}
+
+#[test]
 fn refuses_binary_and_undecodable_files() {
     assert!(matches!(
         decode(&read("binary.bin")),

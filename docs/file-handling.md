@@ -25,6 +25,10 @@ The status bar shows the result, for example `UTF-8`, `UTF-8 BOM`,
 - **Text that isn't valid in its encoding**, for example a file with a UTF-16
   BOM but an odd number of bytes. ochrepad won't replace the bad bytes with
   `�`, because saving would then lose them for good.
+- **Anything that isn't a regular file**: a folder, a device (such as
+  `/dev/zero`, which never ends) or a pipe (which would wait for a writer
+  forever), even behind a symbolic link.
+- **Files over 1 GB**: the text is held in memory several times over.
 
 UTF-16 files without a BOM contain NUL bytes, so they are treated as binary.
 
@@ -94,7 +98,10 @@ the same folder, flushes it to disk, then swaps it in place of the old file
 in one step. If the computer crashes or the disk fills up in the middle, you
 have either the old file or the new one, never a mix. The file keeps its
 permissions, and if the file is a symbolic link, the file it points to is
-updated and the link stays.
+updated and the link stays. A new file gets the usual permissions for the
+folder (on Linux, `0666` less your umask). On Windows, a file downloaded
+from the internet keeps its "downloaded" mark when saved, so Windows still
+warns before running it.
 
 Saving happens in the background, so typing never waits for a slow disk. A
 tab's `*` goes away when the write has finished. If you close a tab or exit
@@ -113,6 +120,10 @@ Above 10 MB (**Highlight files up to … MB** in Preferences) syntax
 highlighting is turned off, and the status bar says so. Scrolling, typing and
 search stay fast in files of 100 MB, the largest size tested. Bigger files
 should still open and save correctly, but more slowly.
+
+Lines longer than 20,000 characters are shown without highlighting (the
+rest of the file keeps it), and lines of any length are drawn quickly: only
+the part on screen is laid out.
 
 ## Backups and other programs
 

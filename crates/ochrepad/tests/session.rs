@@ -332,3 +332,19 @@ fn the_open_folder_comes_back_with_the_session() {
     let tree = h.state().file_tree().expect("a folder is open");
     assert_eq!(tree.root(), project.as_path());
 }
+
+#[test]
+fn a_crash_backup_brings_unsaved_work_back() {
+    let d = dirs();
+    let mut h = app(&d);
+    // Typed just now: no autosave tick has run.
+    typ(&mut h, "typed right before a crash");
+    assert!(h.state_mut().emergency_backup());
+    drop(h);
+    let h = app(&d);
+    assert_eq!(
+        h.state().buffer().doc().to_string(),
+        "typed right before a crash"
+    );
+    assert!(h.state().buffer().is_dirty());
+}

@@ -408,6 +408,19 @@ impl OchrepadApp {
         self.persist.pending.insert(tag, PendingJob::Other);
     }
 
+    /// After a crash (a panic while drawing): backs up unsaved work and
+    /// writes the session, as on exit, so it comes back on the next start.
+    /// Returns whether anything could be kept (backups are on).
+    pub fn emergency_backup(&mut self) -> bool {
+        if !self.snapshots_active() {
+            return false;
+        }
+        self.snapshot_dirty();
+        self.write_session();
+        self.flush_disk();
+        true
+    }
+
     /// Exit with snapshots on: back up everything, write the session, wait
     /// for the disk, and close without asking.
     pub(super) fn exit_with_snapshots(&mut self) {

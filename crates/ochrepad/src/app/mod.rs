@@ -89,6 +89,8 @@ enum TabCommand {
     Close(ViewId),
     CloseOthers(ViewId),
     CloneToOtherView(ViewId),
+    /// A link clicked in a Markdown preview.
+    Link(crate::preview::LinkClick),
 }
 
 pub struct OchrepadApp {
@@ -820,6 +822,14 @@ impl OchrepadApp {
                 TabCommand::CloneToOtherView(v) => {
                     self.clone_view(v);
                 }
+                TabCommand::Link(crate::preview::LinkClick::Open(path)) => {
+                    if path.is_file() {
+                        self.open_path(&path);
+                    } else {
+                        self.note_text(format!("{} is not a file", path.display()));
+                    }
+                }
+                TabCommand::Link(crate::preview::LinkClick::Refused(why)) => self.note_text(why),
             }
         }
 
@@ -1885,8 +1895,10 @@ impl TabViewer for Tabs<'_> {
         let view = match *tab {
             Tab::Editor(v) => v,
             Tab::Preview(b) => {
-                if let Some(buffer) = self.editor.buffer(b) {
-                    self.previews.show(ui, buffer);
+                if let Some(buffer) = self.editor.buffer(b)
+                    && let Some(click) = self.previews.show(ui, buffer)
+                {
+                    self.commands.push(TabCommand::Link(click));
                 }
                 return;
             }
@@ -2053,7 +2065,12 @@ impl OchrepadApp {
                     .unwrap_or_default()
             }
         };
-        self.status_note = Some((text, self.now + 4.0));
+        self.note_text(text);
+    }
+
+    /// Shows `text` in the status bar for a few seconds.
+    pub(super) fn note_text(&mut self, text: impl Into<String>) {
+        self.status_note = Some((text.into(), self.now + 4.0));
     }
 
     /// Ctrl+G: a line, or `line:column`, counted from 1.

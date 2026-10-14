@@ -33,6 +33,10 @@ pub const MAX_CATCH_UP: usize = CHECKPOINT_INTERVAL;
 pub const MAX_CACHED_LINES: usize = 100_000;
 /// Files larger than this are not highlighted (PLAN M4).
 pub const DEFAULT_SIZE_LIMIT: usize = 10 * 1024 * 1024;
+/// Lines longer than this (in bytes) are not highlighted: they show in the
+/// default colour, and the parser's state carries over them as if they were
+/// not there. Parsing a megabyte of minified code takes seconds.
+pub const MAX_HIGHLIGHT_LINE: usize = 20_000;
 pub const PLAIN_TEXT: &str = "Plain Text";
 
 /// A styled byte range within one line (never including its `\n`).
@@ -334,11 +338,8 @@ impl BufferHighlighter {
         budget: Duration,
     ) -> bool {
         let deadline = Instant::now() + budget;
-        let mut n = 0u32;
-        self.work_while(reg, doc, viewport, |_| {
-            n += 1;
-            !n.is_multiple_of(16) || Instant::now() < deadline
-        })
+        // The clock is cheap next to parsing even a short line.
+        self.work_while(reg, doc, viewport, |_| Instant::now() < deadline)
     }
 
     /// Like `work`, but processes at most `max_lines` lines.
@@ -562,6 +563,9 @@ fn highlight_line(
     syntax_set: &SyntaxSet,
     hl: &Highlighter<'_>,
 ) -> Result<LineSpans, String> {
+    if doc.line_end(s.line).0 - doc.line_start(s.line).0 > MAX_HIGHLIGHT_LINE {
+        return Ok(Vec::new().into());
+    }
     let mut text = doc.line_text(s.line);
     let content_len = text.len();
     text.push('\n');

@@ -5,7 +5,7 @@
 
 use std::borrow::Cow;
 use std::fmt;
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
 use encoding_rs::{EncoderResult, Encoding, UTF_8, UTF_16BE, UTF_16LE};
@@ -17,6 +17,11 @@ pub mod worker;
 /// How many leading bytes are checked for NUL when deciding a file is binary.
 const BINARY_SNIFF_LEN: usize = 8 * 1024;
 
+/// Files larger than this are not opened: the text is held in memory several
+/// times over (file bytes, decoded text, rope, undo), and a failed allocation
+/// would end the program.
+pub const MAX_LOAD_SIZE: u64 = 1024 * 1024 * 1024;
+
 #[derive(Debug)]
 pub enum LoadError {
     Io(io::Error),
@@ -26,6 +31,11 @@ pub enum LoadError {
     Undecodable {
         encoding: &'static str,
     },
+    /// A folder, device, pipe or socket: reading one could block or never
+    /// end.
+    NotAFile,
+    /// Larger than [`MAX_LOAD_SIZE`] (the size in bytes).
+    TooLarge(u64),
 }
 
 impl fmt::Display for LoadError {
@@ -36,6 +46,15 @@ impl fmt::Display for LoadError {
             LoadError::Undecodable { encoding } => write!(
                 f,
                 "the file is not valid {encoding}; refusing to open it rather than replace bytes"
+            ),
+            LoadError::NotAFile => {
+                f.write_str("it is not a regular file (a folder, device or pipe)")
+            }
+            LoadError::TooLarge(size) => write!(
+                f,
+                "the file is {} MB; files over {} MB are not opened",
+                size / (1024 * 1024),
+                MAX_LOAD_SIZE / (1024 * 1024)
             ),
         }
     }
@@ -94,9 +113,44 @@ pub struct Decoded {
     pub meta: FileMeta,
 }
 
+/// Reads a whole regular file of at most [`MAX_LOAD_SIZE`] bytes. The file
+/// is checked after opening it (on Linux without waiting, so a pipe cannot
+/// block the open), so it cannot be swapped for something else in between.
+pub fn read_file(path: &Path) -> Result<Vec<u8>, LoadError> {
+    read_file_up_to(path, MAX_LOAD_SIZE)
+}
+
+/// [`read_file`] with another size limit.
+pub fn read_file_up_to(path: &Path, limit: u64) -> Result<Vec<u8>, LoadError> {
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        // O_NONBLOCK on Linux: opening a FIFO with no writer returns at once.
+        // It changes nothing for regular files.
+        options.custom_flags(0o4000);
+    }
+    let file = options.open(path)?;
+    let meta = file.metadata()?;
+    if !meta.is_file() {
+        return Err(LoadError::NotAFile);
+    }
+    if meta.len() > limit {
+        return Err(LoadError::TooLarge(meta.len()));
+    }
+    let mut bytes = Vec::with_capacity(meta.len() as usize);
+    // At most one byte past the limit, in case the file grew since.
+    file.take(limit + 1).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > limit {
+        return Err(LoadError::TooLarge(bytes.len() as u64));
+    }
+    Ok(bytes)
+}
+
 /// Reads and decodes a file.
 pub fn load(path: &Path) -> Result<Decoded, LoadError> {
-    let bytes = std::fs::read(path)?;
+    let bytes = read_file(path)?;
     let mut decoded = decode(&bytes)?;
     decoded.meta.path = Some(path.to_path_buf());
     Ok(decoded)
@@ -127,7 +181,7 @@ pub const ENCODINGS: &[(&str, &str)] = &[
 /// detecting: Reopen with Encoding. A BOM for that encoding is skipped and
 /// remembered; bytes that are not valid in it are refused.
 pub fn load_as(path: &Path, encoding: &str) -> Result<Decoded, LoadError> {
-    let bytes = std::fs::read(path)?;
+    let bytes = read_file(path)?;
     let encoding = Encoding::for_label(encoding.as_bytes()).ok_or(LoadError::Undecodable {
         encoding: "unknown",
     })?;
@@ -361,7 +415,7 @@ pub fn unencodable(text: &str, encoding: &str, limit: usize) -> Vec<(char, usize
 /// encoding fails.
 pub fn save(path: &Path, text: &str, meta: &FileMeta) -> Result<(), SaveError> {
     let bytes = encode(text, meta)?;
-    write_atomic(path, &bytes)?;
+    write_user_file(path, &bytes)?;
     Ok(())
 }
 
@@ -369,6 +423,20 @@ pub fn save(path: &Path, text: &str, meta: &FileMeta) -> Result<(), SaveError> {
 /// renames it over the target. A symlinked target is resolved first so the
 /// link itself survives. The target's permissions are carried over.
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    replace_file(path, bytes, false)
+}
+
+/// Writes a user's file like [`write_atomic`], but a new file gets the
+/// usual permissions (on Linux `0666` less the umask) instead of the temp
+/// file's private `0600`, which suits only ochrepad's own backups and
+/// settings. On Windows the file's "downloaded from the internet" mark
+/// (its `Zone.Identifier` stream) is kept, so programs still warn before
+/// running a downloaded script that was edited here.
+pub fn write_user_file(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    replace_file(path, bytes, true)
+}
+
+fn replace_file(path: &Path, bytes: &[u8], user_file: bool) -> io::Result<()> {
     let target: PathBuf = match std::fs::symlink_metadata(path) {
         Ok(m) if m.file_type().is_symlink() => std::fs::canonicalize(path)?,
         _ => path.to_path_buf(),
@@ -383,10 +451,41 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
         .tempfile_in(&dir)?;
     tmp.write_all(bytes)?;
     tmp.as_file().sync_all()?;
-    if let Ok(m) = std::fs::metadata(&target) {
-        std::fs::set_permissions(tmp.path(), m.permissions())?;
+    match std::fs::metadata(&target) {
+        Ok(m) => std::fs::set_permissions(tmp.path(), m.permissions())?,
+        Err(_) if user_file => set_new_file_permissions(tmp.path())?,
+        Err(_) => {}
+    }
+    if user_file && cfg!(windows) {
+        // Best effort: a missing stream or a file system without streams is
+        // fine.
+        let stream = |p: &Path| PathBuf::from(format!("{}:Zone.Identifier", p.display()));
+        if let Ok(mark) = std::fs::read(stream(&target)) {
+            let _ = std::fs::write(stream(tmp.path()), mark);
+        }
     }
     tmp.persist(&target).map_err(|e| e.error)?;
+    Ok(())
+}
+
+/// Gives a new file the permissions `File::create` would: `0666` less the
+/// process's umask (read from `/proc`, else the usual `022`).
+#[cfg(unix)]
+fn set_new_file_permissions(path: &Path) -> io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let umask = std::fs::read_to_string("/proc/self/status")
+        .ok()
+        .and_then(|s| {
+            s.lines()
+                .find_map(|l| l.strip_prefix("Umask:"))
+                .and_then(|v| u32::from_str_radix(v.trim(), 8).ok())
+        })
+        .unwrap_or(0o022);
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o666 & !umask))
+}
+
+#[cfg(not(unix))]
+fn set_new_file_permissions(_path: &Path) -> io::Result<()> {
     Ok(())
 }
 
