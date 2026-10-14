@@ -7,6 +7,18 @@ use egui::{
     Color32, CornerRadius, Margin, Painter, Pos2, Rect, Stroke, Style, Theme, Vec2, Visuals,
 };
 
+/// Spacing, in points: a small set used for margins and gaps so panels
+/// line up with each other.
+pub mod space {
+    pub const XS: f32 = 4.0;
+    pub const S: f32 = 8.0;
+    pub const M: f32 = 12.0;
+    pub const L: f32 = 16.0;
+}
+
+/// Height of the tab bar, and of the sidebar's header beside it.
+pub const BAR_H: f32 = 36.0;
+
 /// The accent colour.
 pub const OCHRE: Color32 = Color32::from_rgb(
     crate::logo::OCHRE[0],
@@ -181,7 +193,7 @@ pub fn dock_style(style: &Style) -> egui_dock::Style {
     let border = v.widgets.noninteractive.bg_stroke.color;
     let weak = v.weak_text_color();
 
-    d.tab_bar.height = 32.0;
+    d.tab_bar.height = BAR_H;
     d.tab_bar.bg_fill = v.panel_fill;
     d.tab_bar.hline_color = border;
     d.tab_bar.corner_radius = CornerRadius::ZERO;
@@ -219,7 +231,7 @@ pub fn dock_style(style: &Style) -> egui_dock::Style {
         text_color: v.text_color(),
         ..other
     };
-    t.minimum_width = Some(96.0);
+    t.minimum_width = Some(104.0);
     t.spacing = 2.0;
     t.tab_body.bg_fill = v.extreme_bg_color;
     t.tab_body.stroke = Stroke::NONE;

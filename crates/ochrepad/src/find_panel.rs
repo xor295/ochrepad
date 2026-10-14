@@ -267,46 +267,51 @@ impl FindPanel {
                 }
             }
             let valid = matches!(self.searcher(), Some(Ok(_)));
+            ui.add_enabled_ui(valid, |ui| {
+                ui.menu_button("Find All", |ui| {
+                    if ui.button("In Current Document").clicked() {
+                        requests.push(FindRequest::FindAll {
+                            all_documents: false,
+                        });
+                    }
+                    if ui
+                        .button("In All Open Documents")
+                        .on_hover_text("\"In selection\" does not apply")
+                        .clicked()
+                    {
+                        requests.push(FindRequest::FindAll {
+                            all_documents: true,
+                        });
+                    }
+                })
+                .response
+                .on_hover_text("List every match in the Search Results panel");
+            });
+            ui.separator();
+            // The extra rows, as toggles.
             if ui
-                .add_enabled(valid, egui::Button::new("Find All in Current Document"))
+                .selectable_label(self.show_replace, "Replace…")
+                .on_hover_text("Ctrl+H")
                 .clicked()
             {
-                requests.push(FindRequest::FindAll {
-                    all_documents: false,
-                });
+                self.show_replace = !self.show_replace;
             }
             if ui
-                .add_enabled(valid, egui::Button::new("Find All in All Open Documents"))
-                .on_hover_text("\"In selection\" does not apply")
-                .clicked()
-            {
-                requests.push(FindRequest::FindAll {
-                    all_documents: true,
-                });
-            }
-            let files_label = if self.show_files {
-                "Hide Files"
-            } else {
-                "In Files…"
-            };
-            if ui
-                .button(files_label)
+                .selectable_label(self.show_files, "In Files…")
                 .on_hover_text("Find in Files (Ctrl+Shift+F)")
                 .clicked()
             {
                 self.show_files = !self.show_files;
             }
-            let label = if self.show_replace {
-                "Hide Replace"
-            } else {
-                "Replace…"
-            };
-            if ui.button(label).clicked() {
-                self.show_replace = !self.show_replace;
-            }
-            if ui.button("Close").on_hover_text("Esc").clicked() {
-                requests.push(FindRequest::Close);
-            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .add(egui::Button::new(RichText::new("×").size(18.0)).frame(false))
+                    .on_hover_text("Close (Esc)")
+                    .clicked()
+                {
+                    requests.push(FindRequest::Close);
+                }
+            });
         });
         if self.show_files {
             ui.horizontal_wrapped(|ui| {

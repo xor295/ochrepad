@@ -72,7 +72,14 @@ impl OchrepadApp {
 
     /// Shows the sidebar's file tree in the selected folder.
     pub fn reveal_active_file(&mut self) {
-        let path = self.buffer().meta.path.clone();
+        // The tree's paths are absolute; a file opened from the command
+        // line may not be.
+        let path = self
+            .buffer()
+            .meta
+            .path
+            .as_deref()
+            .map(|p| std::path::absolute(p).unwrap_or_else(|_| p.to_path_buf()));
         if let (Some(tree), Some(path)) = (&mut self.tree, path) {
             self.settings.show_sidebar = true;
             tree.reveal(&path);
@@ -88,7 +95,9 @@ impl OchrepadApp {
         let Some(tree) = &mut self.tree else {
             return;
         };
+        let frame = egui::Frame::new().fill(ui.visuals().panel_fill);
         let actions = Panel::left("sidebar")
+            .frame(frame)
             .resizable(true)
             .default_size(self.settings.sidebar_width)
             .size_range(120.0..=600.0)

@@ -42,12 +42,14 @@ fn three_documents(h: &mut Harness<'_, OchrepadApp>) {
     h.run();
 }
 
-/// Opens the find panel with `pattern` and clicks `button`.
-fn find(h: &mut Harness<'_, OchrepadApp>, pattern: &str, button: &str) {
+/// Opens the find panel with `pattern` and picks `item` from Find All.
+fn find(h: &mut Harness<'_, OchrepadApp>, pattern: &str, item: &str) {
     key(h, Modifiers::COMMAND, Key::F);
     h.event(Event::Text(pattern.to_owned()));
     h.run();
-    h.get_by_label(button).click();
+    h.get_by_label("Find All").click();
+    h.run();
+    h.get_by_label(item).click();
     h.run();
 }
 
@@ -71,7 +73,7 @@ fn selection(h: &Harness<'_, OchrepadApp>) -> (usize, usize) {
 fn find_all_in_open_documents_lists_and_goes_to_matches() {
     let mut h = harness(Vec2::new(900.0, 600.0));
     three_documents(&mut h);
-    find(&mut h, "total", "Find All in All Open Documents");
+    find(&mut h, "total", "In All Open Documents");
     {
         let s = &h.state().results.searches[0];
         assert!(s.done);
@@ -90,7 +92,7 @@ fn find_all_in_open_documents_lists_and_goes_to_matches() {
 fn a_result_in_an_edited_document_is_found_again_on_its_line() {
     let mut h = harness(Vec2::new(900.0, 600.0));
     paste(&mut h, "a\nlet total = 1;\n");
-    find(&mut h, "total", "Find All in Current Document");
+    find(&mut h, "total", "In Current Document");
     // Edit the line: the match moves right by three bytes, to 9..14.
     let view = h.state().active_view();
     h.state_mut()
@@ -154,7 +156,7 @@ fn replace_all_in_open_documents_asks_then_replaces_each_as_one_step() {
 fn the_results_panel_looks_right() {
     let mut h = harness(Vec2::new(760.0, 420.0));
     three_documents(&mut h);
-    find(&mut h, "total", "Find All in All Open Documents");
+    find(&mut h, "total", "In All Open Documents");
     key(&mut h, Modifiers::NONE, Key::Escape);
     util::snapshot(&mut h, "search_results");
 }

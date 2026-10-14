@@ -274,16 +274,30 @@ impl FileTree {
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| self.root.display().to_string());
+        // As tall as the tab bar beside it, so their bottom lines meet.
         let header = ui
-            .horizontal(|ui| {
-                ui.strong(name.to_uppercase());
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.menu_button("Folder", |ui| self.folder_menu(ui, &mut actions))
-                });
-            })
+            .allocate_ui_with_layout(
+                Vec2::new(ui.available_width(), crate::theme::BAR_H),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    ui.set_min_size(Vec2::new(ui.available_width(), crate::theme::BAR_H));
+                    ui.add_space(crate::theme::space::M);
+                    ui.label(egui::RichText::new(name.to_uppercase()).strong().size(12.0));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.add_space(crate::theme::space::S);
+                        ui.menu_button("Folder", |ui| self.folder_menu(ui, &mut actions))
+                    });
+                },
+            )
             .response;
+        let border = ui.visuals().widgets.noninteractive.bg_stroke.color;
+        ui.painter().hline(
+            header.rect.x_range(),
+            header.rect.bottom() - 0.5,
+            Stroke::new(1.0, border),
+        );
         header.on_hover_text(self.root.display().to_string());
-        ui.separator();
+        ui.add_space(crate::theme::space::XS);
 
         // Failed root: say so and offer to close.
         if let Some(Listing::Failed(e)) = self.listings.get(&self.root) {
@@ -641,7 +655,7 @@ fn tree_row(
             v.widgets.hovered.weak_bg_fill.gamma_multiply(0.6),
         );
     }
-    let x = rect.min.x + 8.0 + depth as f32 * INDENT;
+    let x = rect.min.x + crate::theme::space::S + depth as f32 * INDENT;
     let cy = rect.center().y;
     let weak = v.weak_text_color();
     if e.is_dir {

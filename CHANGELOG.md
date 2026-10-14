@@ -53,6 +53,9 @@ people downloading the release.
 
 - Ctrl+F and Ctrl+H select the search text, so you can type a new search
   straight away even when the find panel is already open.
+- The find panel is more compact: Find All is one menu, Replace and In
+  Files are toggles, and × closes it. The tab bar is a little taller.
+- The gutter is one column wider, for the fold margin.
 
 ### Fixed
 
