@@ -10,7 +10,8 @@ use ochrepad::OchrepadApp;
 
 fn app_harness(app: OchrepadApp) -> Harness<'static, OchrepadApp> {
     let mut h = Harness::builder()
-        .with_size(Vec2::new(900.0, 400.0))
+        // Tall enough for the right-click menu.
+        .with_size(Vec2::new(900.0, 560.0))
         .with_step_dt(1.0 / 60.0)
         .with_max_steps(10_000)
         .build_ui_state(|ui, app: &mut OchrepadApp| app.show(ui), app);

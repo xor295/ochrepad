@@ -37,6 +37,7 @@ pub use fold::{FoldSet, FoldStrategy};
 pub use history::{EditKind, SavedHistory, Transaction, sha256_hex};
 pub use macros::{MacroError, NamedMacro, Repeat};
 pub use position::{ByteOffset, CharIdx, LineCol, VisualCol};
+pub use resolve::word_at;
 pub use search::{SearchError, SearchOptions, SearchQuery, Searcher};
 pub use selection::{Rectangle, Selection, SelectionSet};
 pub use text::Document;

@@ -727,7 +727,9 @@ pub(crate) fn word_left(doc: &Document, mut p: ByteOffset) -> ByteOffset {
 
 /// The run of same-class graphemes around `p`, preferring a word on either
 /// side. Never crosses a newline.
-pub(crate) fn word_at(doc: &Document, p: ByteOffset) -> (ByteOffset, ByteOffset) {
+/// The word (or run of punctuation, or of blanks) at `p`, as a
+/// double-click selects it; empty between two line breaks.
+pub fn word_at(doc: &Document, p: ByteOffset) -> (ByteOffset, ByteOffset) {
     let a = after(doc, p).map(|x| x.1).filter(|c| *c != Class::Newline);
     let b = before(doc, p).map(|x| x.1).filter(|c| *c != Class::Newline);
     let class = match (a, b) {

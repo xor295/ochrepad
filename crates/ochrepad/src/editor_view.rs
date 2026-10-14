@@ -296,6 +296,9 @@ pub struct Decorations<'a> {
     pub row_style: Option<&'a dyn RowStyle>,
     /// The lines changed since the file was saved.
     pub changes: Option<&'a crate::change_history::LineMarks>,
+    /// Search > Style All Occurrences of Token: what to highlight, in which
+    /// colour.
+    pub token_styles: &'a [(&'a Searcher, egui::Color32)],
 }
 
 /// Shows the editor for `view` filling the available space. `label` names the
@@ -973,6 +976,7 @@ pub fn editor_view(
         decorations.find_highlight,
         decorations.row_style,
         decorations.changes,
+        decorations.token_styles,
     );
     match tip {
         Some(tip) => response.on_hover_text_at_pointer(tip),
@@ -1764,6 +1768,7 @@ fn paint(
     find_highlight: Option<&ochrepad_core::Searcher>,
     row_style: Option<&dyn RowStyle>,
     changes: Option<&crate::change_history::LineMarks>,
+    token_styles: &[(&Searcher, egui::Color32)],
 ) {
     let Some(v) = editor.view(view) else { return };
     let doc = doc_of(editor, buffer);
@@ -1812,6 +1817,11 @@ fn paint(
     };
     // Every match of the find panel's pattern on the visible lines.
     let matches = find_highlight.map(find_in_runs).unwrap_or_default();
+    // Styled tokens on the visible lines, with their colours.
+    let styled: Vec<(std::ops::Range<ByteOffset>, egui::Color32)> = token_styles
+        .iter()
+        .flat_map(|(s, color)| find_in_runs(s).into_iter().map(move |m| (m, *color)))
+        .collect();
     let match_bg = crate::theme::match_bg(&visuals);
     // Smart highlighting: other occurrences of the selected text.
     let smart = smart_searcher(&mut state.smart, doc, &v.selections)
@@ -1890,6 +1900,15 @@ fn paint(
         // shows on the caret's line.
         if let Some(bg) = row_bg {
             text_painter.rect_filled(rect, 0.0, bg);
+        }
+        for (m, color) in &styled {
+            if m.start >= m.end || m.end < row_start || m.start > row_end {
+                continue;
+            }
+            let a = m.start.max(row_start);
+            let b = m.end.min(row_end);
+            let r = Rect::from_min_max(Pos2::new(x_at(a), y), Pos2::new(x_at(b), y + f.line_h));
+            text_painter.rect_filled(r, 2.0, *color);
         }
         let from = matches.partition_point(|m| m.end <= row_start && m.start < row_start);
         for m in matches[from..].iter().take_while(|m| m.start <= row_end) {

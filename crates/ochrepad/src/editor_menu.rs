@@ -16,14 +16,25 @@ fn run(editor: &mut Editor, view: ViewId, state: &mut EditorViewState, action: A
     state.request_focus();
 }
 
+/// What the menu asks of the app.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MenuCommand {
+    /// Style All Occurrences of Token with this style.
+    StyleToken(usize),
+    /// Clear this style, or every one.
+    ClearStyle(Option<usize>),
+}
+
 /// Fills the context menu of the editor showing `view`.
-pub fn show(ui: &mut Ui, editor: &mut Editor, view: ViewId, state: &mut EditorViewState) {
-    let Some(buffer) = editor.view(view).map(|v| v.buffer()) else {
-        return;
-    };
-    let Some(b) = editor.buffer(buffer) else {
-        return;
-    };
+pub fn show(
+    ui: &mut Ui,
+    editor: &mut Editor,
+    view: ViewId,
+    state: &mut EditorViewState,
+) -> Option<MenuCommand> {
+    let mut command = None;
+    let buffer = editor.view(view).map(|v| v.buffer())?;
+    let b = editor.buffer(buffer)?;
     let editable = !b.read_only;
     let (can_undo, can_redo) = (b.history().can_undo(), b.history().can_redo());
     let selected = editor
@@ -76,6 +87,24 @@ pub fn show(ui: &mut Ui, editor: &mut Editor, view: ViewId, state: &mut EditorVi
         run(editor, view, state, Action::ToggleBlockComment);
     }
     ui.separator();
+    ui.menu_button("Style All Occurrences of Token", |ui| {
+        for (i, name) in crate::token_styles::NAMES.iter().enumerate() {
+            if ui.button(format!("Using {name} Style")).clicked() {
+                command = Some(MenuCommand::StyleToken(i));
+            }
+        }
+    });
+    ui.menu_button("Clear Style", |ui| {
+        for (i, name) in crate::token_styles::NAMES.iter().enumerate() {
+            if ui.button(format!("Clear {name} Style")).clicked() {
+                command = Some(MenuCommand::ClearStyle(Some(i)));
+            }
+        }
+        if ui.button("Clear All Styles").clicked() {
+            command = Some(MenuCommand::ClearStyle(None));
+        }
+    });
+    ui.separator();
     let label = if marked {
         "Remove Bookmark"
     } else {
@@ -88,4 +117,5 @@ pub fn show(ui: &mut Ui, editor: &mut Editor, view: ViewId, state: &mut EditorVi
         b.toggle_bookmark(line);
         state.request_focus();
     }
+    command
 }

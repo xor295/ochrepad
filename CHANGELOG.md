@@ -29,6 +29,9 @@ people downloading the release.
 - Edit > Multi-select Next and Multi-select All put selections on the
   other occurrences of the selected text (or the word at the caret), with
   Notepad++'s case and whole-word choices.
+- Search > Style All Occurrences of Token highlights a word everywhere in
+  one of five colours (also on the right-click menu), with Clear Style and
+  Jump Up/Down to go from one occurrence to the next.
 - Ctrl+F3 and Ctrl+Shift+F3 (Search > Select and Find Next/Previous) find
   the selected text or the word at the caret without the find panel.
 - File > Restore Recent Closed File (Ctrl+Shift+T) reopens the files closed

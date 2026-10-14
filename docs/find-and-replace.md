@@ -82,6 +82,21 @@ matches and asks before replacing. Each document gets its own undo step,
 the documents become unsaved, and nothing is written to disk until you save.
 It is not recorded in a macro.
 
+## Styling tokens
+
+**Search > Style All Occurrences of Token** highlights the selected text,
+or the word at the caret, everywhere in the document in one of five colours
+(sky, violet, yellow, rose and green), as in Notepad++. The right-click
+menu has it too. Styling a token again changes its colour. Case matters, and
+a word only matches whole words.
+
+- **Search > Clear Style** removes one style's highlights, or all of them.
+- **Search > Jump Down** and **Jump Up** select the next or previous
+  occurrence of a style's tokens, going round the document.
+
+Unlike Notepad++, an occurrence you type later is highlighted too. Styles
+belong to the document and last until you clear them or close it.
+
 ## Smart highlighting
 
 Selecting text on one line highlights every other place the same text appears,

@@ -432,6 +432,7 @@ impl Compare {
                         find_highlight,
                         row_style: Some(&style),
                         changes: None,
+                        token_styles: &[],
                     },
                 );
             });

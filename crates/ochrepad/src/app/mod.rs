@@ -118,6 +118,8 @@ enum TabCommand {
     OpenAsEditable(crate::viewer::ViewerId),
     /// A preview or comparison closed by a middle click.
     CloseTab(Tab),
+    /// A command from an editor's right-click menu.
+    Menu(ViewId, crate::editor_menu::MenuCommand),
 }
 
 pub struct OchrepadApp {
@@ -160,6 +162,8 @@ pub struct OchrepadApp {
     pub changes: crate::change_history::ChangeHistory,
     /// View > Function List.
     pub function_list: crate::function_list::FunctionList,
+    /// Search > Style All Occurrences of Token.
+    pub token_styles: crate::token_styles::TokenStyles,
     /// The View > Summary dialog, while it is open.
     summary: Option<summary::SummaryDialog>,
     /// The log highlight rules from the settings, compiled.
@@ -238,6 +242,7 @@ impl OchrepadApp {
             filter: Default::default(),
             changes: Default::default(),
             function_list: Default::default(),
+            token_styles: Default::default(),
             summary: None,
             closed_files: Vec::new(),
             log_rules: Default::default(),
@@ -944,6 +949,8 @@ impl OchrepadApp {
             ui.ctx().request_repaint();
         }
         self.visible.clear();
+        let editor = &self.editor;
+        self.token_styles.retain(|b| editor.buffer(b).is_some());
         let limit = self.settings.highlight_limit_mb * 1024 * 1024;
         if self.settings.change_history && self.changes.tick(&self.editor, self.now, limit) {
             ui.ctx()
@@ -964,6 +971,7 @@ impl OchrepadApp {
                 word_wrap: self.settings.word_wrap,
                 document_map: self.settings.document_map,
                 changes: self.settings.change_history.then_some(&self.changes),
+                token_styles: &self.token_styles,
                 compares: &mut self.compares,
                 previews: &mut self.previews,
                 find_highlight,
@@ -1026,6 +1034,18 @@ impl OchrepadApp {
                 TabCommand::File(command, v) => self.tab_file_command(command, v),
                 TabCommand::CloseViewer(id) => self.close_viewer(id),
                 TabCommand::OpenAsEditable(id) => self.ask_open_as_editable(id),
+                TabCommand::Menu(view, command) => {
+                    self.activate(view);
+                    match command {
+                        crate::editor_menu::MenuCommand::StyleToken(style) => {
+                            self.style_token(style)
+                        }
+                        crate::editor_menu::MenuCommand::ClearStyle(style) => {
+                            let buffer = self.buffer_id();
+                            self.token_styles.clear(buffer, style);
+                        }
+                    }
+                }
                 TabCommand::CloseTab(tab) => {
                     if let Some(path) = self.dock.find_tab(&tab) {
                         self.dock.remove_tab(path);
@@ -1755,7 +1775,81 @@ impl OchrepadApp {
         }
         if viewer.is_none() {
             ui.separator();
+            ui.menu_button("Style All Occurrences of Token", |ui| {
+                for (i, name) in crate::token_styles::NAMES.iter().enumerate() {
+                    if ui.button(format!("Using {name} Style")).clicked() {
+                        self.style_token(i);
+                    }
+                }
+            });
+            let buffer = self.buffer_id();
+            ui.menu_button("Clear Style", |ui| {
+                for (i, name) in crate::token_styles::NAMES.iter().enumerate() {
+                    if ui
+                        .add_enabled(
+                            self.token_styles.has(buffer, i),
+                            Button::new(format!("Clear {name} Style")),
+                        )
+                        .clicked()
+                    {
+                        self.token_styles.clear(buffer, Some(i));
+                    }
+                }
+                if ui.button("Clear All Styles").clicked() {
+                    self.token_styles.clear(buffer, None);
+                }
+            });
+            for (title, backward) in [("Jump Up", true), ("Jump Down", false)] {
+                ui.menu_button(title, |ui| {
+                    for (i, name) in crate::token_styles::NAMES.iter().enumerate() {
+                        if ui
+                            .add_enabled(
+                                self.token_styles.has(buffer, i),
+                                Button::new(format!("{name} Style")),
+                            )
+                            .clicked()
+                        {
+                            self.jump_to_style(i, backward);
+                        }
+                    }
+                });
+            }
             ui.menu_button("Bookmark", |ui| self.bookmark_menu(ui));
+        }
+    }
+
+    /// Style All Occurrences of Token: the selection (or the word at the
+    /// caret) everywhere in the document, in `style`.
+    fn style_token(&mut self, style: usize) {
+        let buffer = self.buffer_id();
+        let Some(token) = self
+            .editor
+            .view(self.active)
+            .and_then(|v| crate::token_styles::token_at(self.buffer().doc(), &v.selections))
+        else {
+            self.note_text("Select a word or some text to style");
+            return;
+        };
+        self.token_styles.add(buffer, token, style);
+    }
+
+    /// Jump Up/Down: the previous or next occurrence of `style`'s tokens.
+    fn jump_to_style(&mut self, style: usize, backward: bool) {
+        let buffer = self.buffer_id();
+        let Some(from) = self
+            .editor
+            .view(self.active)
+            .map(|v| v.selections.primary().range())
+        else {
+            return;
+        };
+        let found = self
+            .token_styles
+            .jump(buffer, self.buffer().doc(), style, from, backward);
+        if let Some(m) = found {
+            self.apply(Action::SetSelections(ochrepad_core::SelectionSet::single(
+                ochrepad_core::Selection::new(m.start, m.end),
+            )));
         }
     }
 
@@ -2483,6 +2577,7 @@ struct Tabs<'a> {
     word_wrap: bool,
     document_map: bool,
     changes: Option<&'a crate::change_history::ChangeHistory>,
+    token_styles: &'a crate::token_styles::TokenStyles,
     compares: &'a mut Compares,
     previews: &'a mut Previews,
     find_highlight: Option<&'a ochrepad_core::Searcher>,
@@ -2637,6 +2732,7 @@ impl TabViewer for Tabs<'_> {
         let log_style = log_doc.as_ref().map(|doc| {
             crate::log_rules::LogStyle::new(self.log_rules, doc, ui.visuals().dark_mode)
         });
+        let styled = self.token_styles.highlights(buffer, ui.visuals());
         let response = editor_view(
             ui,
             self.editor,
@@ -2645,6 +2741,7 @@ impl TabViewer for Tabs<'_> {
             self.keymap,
             &label,
             Decorations {
+                token_styles: &styled,
                 styler: styler.as_mut().map(|s| s as &mut dyn LineStyler),
                 find_highlight: self.find_highlight,
                 row_style: log_style
@@ -2653,7 +2750,13 @@ impl TabViewer for Tabs<'_> {
                 changes: self.changes.and_then(|c| c.marks(buffer)),
             },
         );
-        response.context_menu(|ui| crate::editor_menu::show(ui, self.editor, view, state));
+        let mut command = None;
+        response.context_menu(|ui| {
+            command = crate::editor_menu::show(ui, self.editor, view, state);
+        });
+        if let Some(command) = command {
+            self.commands.push(TabCommand::Menu(view, command));
+        }
     }
 
     fn context_menu(&mut self, ui: &mut Ui, tab: &mut Tab, _path: NodePath) {
