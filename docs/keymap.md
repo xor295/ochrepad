@@ -75,6 +75,8 @@ options is an object, `{ "Action": { "ConvertCase": "Upper" } }`.
 | `{"PageUp": {"extend": false}}` | Moves up by one screenful. |
 | `{"PageDown": {"extend": false}}` | Moves down by one screenful. |
 | `{"Action": "SelectAll"}` | Selects the whole document. |
+| `"BeginEndSelect"` | Edit > Begin/End Select: the first time marks the caret as where a selection begins, the second selects from there to the caret. No key by default. |
+| `"BeginEndSelectColumn"` | The same, ending in a column selection. |
 | `{"Action": "SelectWord"}` | Selects the word at each caret. |
 | `{"Action": "SelectLine"}` | Selects each caret's whole line, including its line break. |
 | `{"Action": "AddCursorAbove"}` | Adds a caret on the line above, in the same column. |

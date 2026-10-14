@@ -53,7 +53,12 @@ fn table_commands(md: &str) -> Vec<String> {
             s.starts_with("{\"Action\"")
                 || s.starts_with("{\"PageUp\": {")
                 || s.starts_with("{\"PageDown\": {")
-                || s == "\"ToggleOvertype\""
+                || [
+                    "\"ToggleOvertype\"",
+                    "\"BeginEndSelect\"",
+                    "\"BeginEndSelectColumn\"",
+                ]
+                .contains(&s.as_str())
         })
         .collect()
 }

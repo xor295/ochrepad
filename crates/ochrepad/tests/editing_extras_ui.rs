@@ -10,7 +10,7 @@ use ochrepad::OchrepadApp;
 fn harness() -> Harness<'static, OchrepadApp> {
     // Tall enough for the whole Edit menu.
     let mut h = Harness::builder()
-        .with_size(Vec2::new(900.0, 700.0))
+        .with_size(Vec2::new(900.0, 800.0))
         .with_step_dt(1.0 / 60.0)
         .with_max_steps(10_000)
         .build_ui_state(|ui, app: &mut OchrepadApp| app.show(ui), OchrepadApp::new());
@@ -296,4 +296,59 @@ fn the_right_click_menu_opens_a_web_link() {
         })
         .collect();
     assert_eq!(opened, ["https://example.com/x"]);
+}
+
+#[test]
+fn begin_end_select_selects_from_where_it_began() {
+    let mut h = harness();
+    let view = h.state().active_view();
+    let apply = |h: &mut Harness<'_, OchrepadApp>, a: ochrepad_core::Action| {
+        h.state_mut().editor.apply(view, a).unwrap();
+        h.run();
+    };
+    let caret = |h: &mut Harness<'_, OchrepadApp>, at: usize| {
+        let at = ochrepad_core::ByteOffset(at);
+        h.state_mut()
+            .editor
+            .apply(
+                view,
+                ochrepad_core::Action::SetSelections(ochrepad_core::SelectionSet::caret(at)),
+            )
+            .unwrap();
+        h.run();
+    };
+    apply(
+        &mut h,
+        ochrepad_core::Action::InsertText("hello world\nabcdefgh".into()),
+    );
+    caret(&mut h, 2);
+    click(&mut h, "Edit");
+    click(&mut h, "Begin/End Select");
+    assert!(h.state().view_state().unwrap().begin_select.is_some());
+    // Moving the caret, then ending it.
+    caret(&mut h, 8);
+    click(&mut h, "Edit");
+    click(&mut h, "Begin/End Select");
+    assert_eq!(selected(&h), "llo wo");
+    assert!(h.state().view_state().unwrap().begin_select.is_none());
+
+    // In column mode: a rectangle from the first corner (line 1, column 1)
+    // to the caret (line 2, column 3).
+    caret(&mut h, 1);
+    click(&mut h, "Edit");
+    click(&mut h, "Begin/End Select in Column Mode");
+    caret(&mut h, 15);
+    click(&mut h, "Edit");
+    click(&mut h, "Begin/End Select in Column Mode");
+    let app = h.state();
+    let v = app.editor.view(app.active_view()).unwrap();
+    assert!(v.selections.rect().is_some());
+    let doc = app.buffer().doc();
+    let parts: Vec<String> = v
+        .selections
+        .ranges()
+        .iter()
+        .map(|s| doc.slice(s.range()))
+        .collect();
+    assert_eq!(parts, ["el", "bc"]);
 }

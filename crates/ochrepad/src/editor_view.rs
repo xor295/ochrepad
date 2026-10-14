@@ -118,6 +118,8 @@ pub struct EditorViewState {
     pub context_file: Option<Option<crate::editor_menu::FileAt>>,
     /// The web link the context menu offers to open, once it has looked.
     pub context_url: Option<Option<String>>,
+    /// Where Begin/End Select began, until it ends.
+    pub begin_select: Option<ByteOffset>,
     /// Paste to (Replace) Bookmarked Lines asked for the clipboard at this
     /// time: the paste that answers goes to the bookmarked lines.
     paste_to_bookmarks: Option<f64>,
@@ -135,6 +137,7 @@ impl Default for EditorViewState {
             context_line: None,
             context_file: None,
             context_url: None,
+            begin_select: None,
             paste_to_bookmarks: None,
             cache: LayoutCache::default(),
             font_size: 14.0,
@@ -277,6 +280,7 @@ enum Op {
     Copy,
     Cut,
     ToggleOvertype,
+    BeginEndSelect { column: bool },
 }
 
 /// Per-row colours from outside the editor: a compare view's diff, or a
@@ -450,6 +454,12 @@ pub fn editor_view(
                         }))
                     }
                     Some(EditorCommand::ToggleOvertype) => ops.push(Op::ToggleOvertype),
+                    Some(EditorCommand::BeginEndSelect) => {
+                        ops.push(Op::BeginEndSelect { column: false })
+                    }
+                    Some(EditorCommand::BeginEndSelectColumn) => {
+                        ops.push(Op::BeginEndSelect { column: true })
+                    }
                     None => {}
                 },
                 Event::Text(t)
@@ -508,6 +518,7 @@ pub fn editor_view(
                 }
             }
             Op::ToggleOvertype => editor.settings.overtype = !editor.settings.overtype,
+            Op::BeginEndSelect { column } => begin_end_select(editor, view, state, column),
         }
         state.reveal_caret = true;
         state.last_activity = now;
@@ -1594,6 +1605,49 @@ fn remember_copy(ctx: &egui::Context, text: &str, rect: bool) {
 pub fn clip_history(ctx: &egui::Context) -> Vec<(String, bool)> {
     ctx.data(|d| d.get_temp(clip_history_id()))
         .unwrap_or_default()
+}
+
+/// Begin/End Select, as in Notepad++: the first time marks where the
+/// selection begins (the caret), the second selects from there to the
+/// caret, as a column selection with `column`.
+pub fn begin_end_select(
+    editor: &mut Editor,
+    view: ViewId,
+    state: &mut EditorViewState,
+    column: bool,
+) {
+    let Some(v) = editor.view(view) else {
+        return;
+    };
+    let head = v.selections.primary().head;
+    let Some(begin) = state.begin_select.take() else {
+        state.begin_select = Some(head);
+        return;
+    };
+    let action = if column {
+        let buffer = v.buffer();
+        let doc = doc_of(editor, buffer);
+        let tab_width = tab_width_of(editor, buffer);
+        // The text may have changed since: a place in it still.
+        let mut begin = begin.min(doc.len());
+        while !doc.is_char_boundary(begin) {
+            begin.0 -= 1;
+        }
+        let col = |p| ochrepad_core::position::byte_to_visual_col(doc, p, tab_width);
+        Action::ColumnSelect {
+            anchor_line: doc.line_of(begin),
+            anchor_col: col(begin),
+            head_line: doc.line_of(head),
+            head_col: col(head),
+        }
+    } else {
+        // Clamped into the text by the editor.
+        Action::SetSelections(SelectionSet::single(Selection::new(begin, head)))
+    };
+    if let Err(e) = editor.apply(view, action) {
+        state.last_error = Some(e);
+    }
+    state.reveal_caret = true;
 }
 
 /// Copies the selection to the clipboard; returns whether anything was

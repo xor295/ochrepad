@@ -26,6 +26,8 @@ people downloading the release.
 - Edit > Comment Lines (Ctrl+K) and Uncomment Lines (Ctrl+Shift+K), as
   Notepad++'s Single Line Comment and Uncomment: they add or take off one
   level whatever the lines already have, where Ctrl+Q toggles.
+- Edit > Begin/End Select (and in Column Mode), as in Notepad++: mark
+  where a selection begins, move anywhere, and select up to there.
 - Overtype: Insert switches to typing over the text, as in Notepad++. The
   status bar shows OVR and the caret becomes a bar under the character it
   replaces; typing never runs past the end of a line.

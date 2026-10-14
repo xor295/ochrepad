@@ -1536,6 +1536,26 @@ impl OchrepadApp {
         if item(ui, "Select All", "Ctrl+A") {
             self.apply(Action::SelectAll);
         }
+        let begun = self.view_state().is_some_and(|s| s.begin_select.is_some());
+        for (label, column) in [
+            ("Begin/End Select", false),
+            ("Begin/End Select in Column Mode", true),
+        ] {
+            if ui
+                .add(Button::new(label).selected(begun))
+                .on_hover_text(if begun {
+                    "Select from where you began to the caret"
+                } else {
+                    "Mark the caret as where a selection begins; use it again to select to the caret"
+                })
+                .clicked()
+            {
+                let view = self.active;
+                let state = self.view_states.entry(view).or_default();
+                crate::editor_view::begin_end_select(&mut self.editor, view, state, column);
+                state.request_focus();
+            }
+        }
         for (title, all) in [("Multi-select All", true), ("Multi-select Next", false)] {
             ui.menu_button(title, |ui| {
                 for (label, match_case, whole_word) in [

@@ -173,6 +173,17 @@ selection is one, the menu offers **Open Link**, which opens it in your
 browser. Punctuation after the link and brackets around it are left out.
 Other kinds of link are not offered.
 
+## Begin/End Select
+
+**Edit > Begin/End Select** selects text from one place to another without
+holding Shift: use it once to mark the caret as where the selection begins,
+move the caret (with the keys, a click, Go to Line or a search), and use it
+again to select everything in between. The menu item shows as on while a
+selection has begun. **Begin/End Select in Column Mode** ends in a column
+selection, with the two places as its corners. Neither has a key by
+default; bind `"BeginEndSelect"` or `"BeginEndSelectColumn"` in the
+[keymap](keymap.md) for one.
+
 ## Typing over the text
 
 **Insert** switches to overtype, as in Notepad++: what you type replaces

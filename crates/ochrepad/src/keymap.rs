@@ -18,6 +18,11 @@ pub enum EditorCommand {
     },
     /// Switches between inserting and typing over (Insert).
     ToggleOvertype,
+    /// Edit > Begin/End Select: marks where a selection begins, or selects
+    /// from there to the caret.
+    BeginEndSelect,
+    /// The same, ending in a column selection.
+    BeginEndSelectColumn,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
