@@ -61,6 +61,10 @@ A fast, native text editor in the spirit of Notepad++, written in Rust with
   (CRLF, LF or CR). Saves are atomic, so a crash never leaves a half-written
   file. Binary files are refused rather than mangled
   ([more](docs/file-handling.md)).
+- **Huge files**: files over 256 MB open read-only in a viewer that shows the
+  first screen at once and never reads the whole file into memory: scroll,
+  select, copy, Go to Line and search a 4 GB log while its line index builds
+  in the background ([more](docs/logs.md)).
 - **Watches open files**: if another program changes or deletes one, ochrepad
   offers to reload it (or warns you if you have unsaved changes).
 - Preferences for font, size, tabs or spaces, tab width, theme, and backups;

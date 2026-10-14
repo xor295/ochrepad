@@ -43,6 +43,9 @@ pub enum Source {
     Buffer(BufferId),
     /// A file that was not open when it was searched.
     Path(PathBuf),
+    /// A large file open in a viewer; a hit's `start` and `end` are offsets
+    /// in the file.
+    Viewer(crate::viewer::ViewerId),
 }
 
 /// An open document Find in Files should search instead of its file.
@@ -140,6 +143,35 @@ impl SearchResults {
     /// search; older ones are collapsed.
     pub fn start(&mut self, query: SearchQuery, scope: String, jobs: Vec<Job>) {
         self.spawn(query, scope, false, move |q, c, tx| search(q, jobs, c, tx));
+    }
+
+    /// Starts a search that `work` does on the background thread (the
+    /// viewer's, over a file too large to open), and lists what it returns:
+    /// the results and whether more matches were found than are kept.
+    pub fn start_external(
+        &mut self,
+        query: SearchQuery,
+        scope: String,
+        work: impl FnOnce(Arc<AtomicBool>) -> Result<(Vec<FileHits>, bool), String> + Send + 'static,
+    ) {
+        self.spawn(query, scope, false, move |_, cancel, tx| {
+            match work(cancel) {
+                Ok((files, truncated)) => {
+                    for f in files {
+                        if tx.send(Msg::File(f)).is_err() {
+                            return;
+                        }
+                    }
+                    let _ = tx.send(Msg::Done {
+                        truncated,
+                        skipped_large: 0,
+                    });
+                }
+                Err(e) => {
+                    let _ = tx.send(Msg::Failed(e));
+                }
+            }
+        });
     }
 
     /// Starts Find in Files over `folder`.
@@ -662,7 +694,7 @@ fn hits(doc: &Document, found: &[Range<ByteOffset>]) -> Vec<Hit> {
 }
 
 /// Cuts a long line down to a window around its first match.
-fn shorten(h: &mut Hit) {
+pub(crate) fn shorten(h: &mut Hit) {
     if h.text.len() <= MAX_LINE_BYTES {
         return;
     }

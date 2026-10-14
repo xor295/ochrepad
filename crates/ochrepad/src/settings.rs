@@ -71,6 +71,9 @@ pub struct AppSettings {
     pub show_wrap_symbol: bool,
     /// A vertical line after this column, if any.
     pub edge_column: Option<usize>,
+    /// Files larger than this (in MB) open read-only in the viewer for
+    /// large files.
+    pub viewer_threshold_mb: u32,
     /// The sidebar with the open folder's files.
     pub show_sidebar: bool,
     pub sidebar_width: f32,
@@ -101,6 +104,7 @@ impl Default for AppSettings {
             show_indent_guides: false,
             show_wrap_symbol: false,
             edge_column: None,
+            viewer_threshold_mb: 256,
             show_sidebar: true,
             sidebar_width: 240.0,
             recent_folders: Vec::new(),
@@ -127,6 +131,8 @@ impl AppSettings {
             .zoom
             .clamp(ZOOM_LEVELS[0], ZOOM_LEVELS[ZOOM_LEVELS.len() - 1]);
         self.edge_column = self.edge_column.map(|c| c.clamp(1, 1000));
+        // Up to what the editor can load.
+        self.viewer_threshold_mb = self.viewer_threshold_mb.clamp(1, 1024);
     }
 
     /// The editor font size after zooming.
@@ -243,6 +249,13 @@ impl AppSettings {
                 ui.horizontal(|ui| {
                     ui.add(egui::DragValue::new(&mut self.highlight_limit_mb).range(1..=4096));
                     ui.label("MB");
+                });
+                ui.end_row();
+
+                ui.label("Open read-only above");
+                ui.horizontal(|ui| {
+                    ui.add(egui::DragValue::new(&mut self.viewer_threshold_mb).range(1..=1024));
+                    ui.label("MB (in the viewer for large files)");
                 });
                 ui.end_row();
 

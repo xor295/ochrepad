@@ -28,7 +28,10 @@ The status bar shows the result, for example `UTF-8`, `UTF-8 BOM`,
 - **Anything that isn't a regular file**: a folder, a device (such as
   `/dev/zero`, which never ends) or a pipe (which would wait for a writer
   forever), even behind a symbolic link.
-- **Files over 1 GB**: the text is held in memory several times over.
+- **Files over 1 GB** can't be edited: the text would be held in memory
+  several times over. They open read-only in the
+  [viewer for large files](logs.md#large-files-the-viewer), as do files over
+  256 MB (a setting).
 
 UTF-16 files without a BOM contain NUL bytes, so they are treated as binary.
 
@@ -118,8 +121,12 @@ endings.
 
 Above 10 MB (**Highlight files up to … MB** in Preferences) syntax
 highlighting is turned off, and the status bar says so. Scrolling, typing and
-search stay fast in files of 100 MB, the largest size tested. Bigger files
-should still open and save correctly, but more slowly.
+search stay fast in files of 100 MB, the largest size tested.
+
+Files over 256 MB (**Open read-only above … MB** in Preferences) open in the
+[viewer for large files](logs.md#large-files-the-viewer), read-only and
+without reading them into memory: a log of several gigabytes opens at once.
+View > Open as Editable opens one for editing anyway, up to 1 GB.
 
 Lines longer than 20,000 characters are shown without highlighting (the
 rest of the file keeps it), and lines of any length are drawn quickly: only

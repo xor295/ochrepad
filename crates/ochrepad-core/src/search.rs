@@ -59,6 +59,22 @@ impl fmt::Display for SearchError {
     }
 }
 
+/// Bytes read on demand from somewhere too large to hold in memory, such as
+/// a huge file the app reads in pieces (see [`Searcher::find_next_in`]).
+pub trait ByteSource: Sync {
+    /// The length in bytes, fixed for the duration of a search.
+    fn len(&self) -> u64;
+
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Reads from `at` into `buf`; returns how many bytes were read: fewer
+    /// at the end of the data, and 0 past it, on an error, or to stop a
+    /// search early.
+    fn read_at(&self, at: u64, buf: &mut [u8]) -> usize;
+}
+
 /// A compiled pattern that can search a document.
 pub trait Matcher: Send + Sync {
     /// The leftmost match inside `span`, using the text around `span` as
@@ -72,8 +88,158 @@ pub trait Matcher: Send + Sync {
         span: Range<usize>,
     ) -> Box<dyn Iterator<Item = Range<usize>> + 'a>;
 
+    /// All non-overlapping matches inside `span` of bytes read from `src`.
+    fn find_iter_source<'a>(
+        &'a self,
+        src: &'a dyn ByteSource,
+        span: Range<usize>,
+    ) -> Box<dyn Iterator<Item = Range<usize>> + 'a>;
+
+    /// All non-overlapping matches inside `span` of `hay`.
+    fn find_iter_bytes<'a>(
+        &'a self,
+        hay: &'a [u8],
+        span: Range<usize>,
+    ) -> Box<dyn Iterator<Item = Range<usize>> + 'a>;
+
     /// Expands `$1`/`${name}` in `replacement` for the match at `m`.
     fn expand(&self, doc: &Document, m: Range<usize>, replacement: &str) -> String;
+}
+
+/// Bytes a [`SourceCursor`] reads at a time.
+const SOURCE_CHUNK: usize = 1 << 20;
+
+fn is_continuation(b: u8) -> bool {
+    b & 0xC0 == 0x80
+}
+
+/// A [`regex_cursor::Cursor`] over a [`ByteSource`], one chunk in memory at
+/// a time. Chunks start and end only where a byte is not a UTF-8
+/// continuation byte (as the cursor contract asks: no character is split),
+/// unless the data there is not UTF-8 anyway (four or more continuation
+/// bytes in a row).
+struct SourceCursor<'a> {
+    src: &'a dyn ByteSource,
+    len: usize,
+    buf: Vec<u8>,
+    /// Where the next chunk is read, swapped in when the read works.
+    spare: Vec<u8>,
+    /// The current chunk is `buf[..used]`, at `start` in the data.
+    used: usize,
+    start: usize,
+}
+
+impl<'a> SourceCursor<'a> {
+    /// A cursor whose first chunk holds `offset`.
+    fn at(src: &'a dyn ByteSource, offset: usize) -> Self {
+        let len = usize::try_from(src.len()).unwrap_or(usize::MAX);
+        let mut cursor = Self {
+            src,
+            len,
+            buf: Vec::new(),
+            spare: Vec::new(),
+            used: 0,
+            start: 0,
+        };
+        // A boundary at or before `offset`.
+        let mut start = (offset.min(len) / SOURCE_CHUNK) * SOURCE_CHUNK;
+        let mut probe = [0u8; 1];
+        for _ in 0..3 {
+            if start == 0 || src.read_at(start as u64, &mut probe) == 0 {
+                break;
+            }
+            if !is_continuation(probe[0]) {
+                break;
+            }
+            start -= 1;
+        }
+        if !cursor.load_from(start) {
+            // Nothing to read: an empty haystack (a chunk may be empty only
+            // then).
+            cursor.len = 0;
+        }
+        cursor
+    }
+
+    /// Makes the chunk starting at `from` current; false (and nothing
+    /// changed, as the cursor contract asks) at the end of the data.
+    fn load_from(&mut self, from: usize) -> bool {
+        let want = (SOURCE_CHUNK + 3).min(self.len.saturating_sub(from));
+        if want == 0 {
+            return false;
+        }
+        self.spare.resize(want, 0);
+        let n = self.src.read_at(from as u64, &mut self.spare);
+        if n == 0 {
+            return false;
+        }
+        let mut end = n.min(SOURCE_CHUNK);
+        if n > SOURCE_CHUNK {
+            // `spare[end]` starts the next chunk: not inside a character.
+            for _ in 0..3 {
+                if !is_continuation(self.spare[end]) {
+                    break;
+                }
+                end -= 1;
+            }
+        }
+        std::mem::swap(&mut self.buf, &mut self.spare);
+        self.used = end;
+        self.start = from;
+        true
+    }
+
+    /// Makes the chunk ending at `to` current; false (and nothing changed)
+    /// at the start.
+    fn load_to(&mut self, to: usize) -> bool {
+        if to == 0 {
+            return false;
+        }
+        let from = to.saturating_sub(SOURCE_CHUNK);
+        self.spare.resize(to - from, 0);
+        let n = self.src.read_at(from as u64, &mut self.spare);
+        if n < to - from {
+            // The data shrank under us. regex-cursor keeps backtracking
+            // until it can, so this must not fail: the missing bytes read
+            // as zeros (the results are no longer exact anyway).
+            self.spare[n..].fill(0);
+        }
+        let mut skip = 0;
+        if from > 0 {
+            while skip < 3 && is_continuation(self.spare[skip]) {
+                skip += 1;
+            }
+        }
+        self.spare.copy_within(skip.., 0);
+        self.spare.truncate(to - from - skip);
+        std::mem::swap(&mut self.buf, &mut self.spare);
+        self.used = self.buf.len();
+        self.start = from + skip;
+        true
+    }
+}
+
+impl Cursor for SourceCursor<'_> {
+    fn chunk(&self) -> &[u8] {
+        &self.buf[..self.used]
+    }
+
+    fn advance(&mut self) -> bool {
+        let next = self.start + self.used;
+        next < self.len && self.load_from(next)
+    }
+
+    fn backtrack(&mut self) -> bool {
+        self.start > 0 && self.load_to(self.start)
+    }
+
+    fn total_bytes(&self) -> Option<usize> {
+        Some(self.len)
+    }
+
+    fn offset(&self) -> usize {
+        self.start
+    }
 }
 
 /// A [`regex_cursor::Cursor`] over the document's chunks.
@@ -152,6 +318,34 @@ impl Matcher for CursorRegex {
         Box::new(self.re.find_iter(input(doc, span)).map(|m| m.range()))
     }
 
+    fn find_iter_source<'a>(
+        &'a self,
+        src: &'a dyn ByteSource,
+        span: Range<usize>,
+    ) -> Box<dyn Iterator<Item = Range<usize>> + 'a> {
+        let cursor = SourceCursor::at(src, span.start);
+        let len = cursor.len;
+        let span = span.start.min(len)..span.end.min(len);
+        Box::new(
+            self.re
+                .find_iter(Input::new(cursor).range(span))
+                .map(|m| m.range()),
+        )
+    }
+
+    fn find_iter_bytes<'a>(
+        &'a self,
+        hay: &'a [u8],
+        span: Range<usize>,
+    ) -> Box<dyn Iterator<Item = Range<usize>> + 'a> {
+        let span = span.start.min(hay.len())..span.end.min(hay.len());
+        Box::new(
+            self.re
+                .find_iter(Input::new(hay).range(span))
+                .map(|m| m.range()),
+        )
+    }
+
     fn expand(&self, doc: &Document, m: Range<usize>, replacement: &str) -> String {
         if !self.expand_captures {
             return replacement.to_owned();
@@ -223,6 +417,17 @@ pub struct Searcher {
 
 impl Searcher {
     pub fn new(query: &SearchQuery) -> Result<Self, SearchError> {
+        Self::build(query, false)
+    }
+
+    /// A searcher for text that keeps its CR LF and CR line endings (a file
+    /// read as it is on disk): `^`, `$` and `.` treat `\r` as part of the
+    /// line break, as they treat `\n`.
+    pub fn new_raw(query: &SearchQuery) -> Result<Self, SearchError> {
+        Self::build(query, true)
+    }
+
+    fn build(query: &SearchQuery, crlf: bool) -> Result<Self, SearchError> {
         let o = &query.options;
         if query.pattern.is_empty() {
             return Err(SearchError("nothing to find".to_owned()));
@@ -251,7 +456,8 @@ impl Searcher {
             .syntax(
                 syntax::Config::new()
                     .case_insensitive(!o.match_case)
-                    .multi_line(true),
+                    .multi_line(true)
+                    .crlf(crlf),
             )
             .build(&pattern)
             .map_err(|e| SearchError(e.to_string()))?;
@@ -314,6 +520,54 @@ impl Searcher {
             .find_iter(doc, range.start.0..range.end.0)
             .map(to_offsets)
             .collect()
+    }
+
+    /// Every match in `hay`: text already in memory, such as a line on
+    /// screen.
+    pub fn find_all_bytes(&self, hay: &[u8]) -> Vec<Range<usize>> {
+        self.matcher.find_iter_bytes(hay, 0..hay.len()).collect()
+    }
+
+    /// The matches inside `range` of `src`, found as the iterator is
+    /// advanced (reading `src` a chunk at a time).
+    pub fn matches_in<'a>(
+        &'a self,
+        src: &'a dyn ByteSource,
+        range: Range<u64>,
+    ) -> impl Iterator<Item = Range<u64>> + 'a {
+        self.matcher
+            .find_iter_source(src, range.start as usize..range.end as usize)
+            .map(|m| m.start as u64..m.end as u64)
+    }
+
+    /// The first match in `src` starting at or after `from`.
+    pub fn find_next_in(&self, src: &dyn ByteSource, from: u64) -> Option<Range<u64>> {
+        let len = src.len();
+        (from <= len)
+            .then(|| self.matches_in(src, from..len).next())
+            .flatten()
+    }
+
+    /// The last match in `src` starting before `before`, looked for in
+    /// growing windows before it. A match may run at most 64 KB past
+    /// `before` (the search stops there, so a document without matches
+    /// after the caret is not read to its end).
+    pub fn find_prev_in(&self, src: &dyn ByteSource, before: u64) -> Option<Range<u64>> {
+        let len = src.len();
+        let before = before.min(len);
+        let end = before.saturating_add(64 * 1024).min(len);
+        let mut window: u64 = 64 * 1024;
+        loop {
+            let start = before.saturating_sub(window);
+            let last = self
+                .matches_in(src, start..end)
+                .take_while(|m| m.start < before)
+                .last();
+            if last.is_some() || start == 0 {
+                return last;
+            }
+            window = window.saturating_mul(4);
+        }
     }
 
     /// The replacement text for the match at `m`.
@@ -489,6 +743,104 @@ mod tests {
             s.find_next(&doc, ByteOffset(1)).map(|r| r.start.0),
             Some(200_002)
         );
+    }
+
+    /// Bytes in memory, read like a file; with `shrink_to`, everything from
+    /// there on reads as gone (a file truncated during the search).
+    struct Bytes {
+        data: Vec<u8>,
+        shrink_to: Option<usize>,
+    }
+
+    impl ByteSource for Bytes {
+        fn len(&self) -> u64 {
+            self.data.len() as u64
+        }
+
+        fn read_at(&self, at: u64, buf: &mut [u8]) -> usize {
+            let end = self.shrink_to.unwrap_or(self.data.len());
+            let at = (at as usize).min(end);
+            let n = buf.len().min(end - at);
+            buf[..n].copy_from_slice(&self.data[at..at + n]);
+            n
+        }
+    }
+
+    fn source(text: &str) -> Bytes {
+        Bytes {
+            data: text.as_bytes().to_vec(),
+            shrink_to: None,
+        }
+    }
+
+    fn found(s: &Searcher, src: &Bytes) -> Vec<(usize, usize)> {
+        s.matches_in(src, 0..src.len())
+            .map(|m| (m.start as usize, m.end as usize))
+            .collect()
+    }
+
+    #[test]
+    fn sources_are_searched_across_chunk_boundaries() {
+        // Matches straddling every alignment of the 1 MB chunk boundary,
+        // with multibyte characters around it.
+        for shift in 0..8 {
+            let pad = SOURCE_CHUNK - 3 - shift;
+            let text = format!("{}é needle éé needle", "x".repeat(pad));
+            let src = source(&text);
+            let s = q("needle", |_| {});
+            let expected = all(&s, &text);
+            assert_eq!(expected.len(), 2);
+            assert_eq!(found(&s, &src), expected, "shift {shift}");
+            // Whole words need the characters on both sides of the boundary.
+            let w = q("é", |o| o.whole_word = true);
+            assert_eq!(found(&w, &src), all(&w, &text), "shift {shift}");
+        }
+    }
+
+    #[test]
+    fn next_and_previous_in_a_source() {
+        let text = format!("ab{}ab", "-".repeat(3 * SOURCE_CHUNK));
+        let src = source(&text);
+        let s = q("ab", |_| {});
+        let last = (text.len() - 2) as u64;
+        assert_eq!(s.find_next_in(&src, 1).map(|m| m.start), Some(last));
+        assert_eq!(s.find_prev_in(&src, src.len()).map(|m| m.start), Some(last));
+        assert_eq!(s.find_prev_in(&src, last).map(|m| m.start), Some(0));
+        assert_eq!(s.find_prev_in(&src, 0), None);
+        assert_eq!(s.find_next_in(&src, last + 1), None);
+    }
+
+    #[test]
+    fn raw_searchers_treat_cr_as_part_of_the_line_break() {
+        let text = "one\r\ntwo\rthree\n";
+        let raw = Searcher::new_raw(&SearchQuery::new(
+            r"\w+$",
+            SearchOptions {
+                regex: true,
+                ..Default::default()
+            },
+        ))
+        .unwrap();
+        let src = source(text);
+        assert_eq!(found(&raw, &src), vec![(0, 3), (5, 8), (9, 14)]);
+        assert_eq!(raw.find_all_bytes(text.as_bytes()).len(), 3);
+    }
+
+    #[test]
+    fn a_source_that_shrinks_mid_search_ends_it() {
+        let text = format!(
+            "{}needle{}needle",
+            "x".repeat(SOURCE_CHUNK),
+            "y".repeat(2 * SOURCE_CHUNK)
+        );
+        let mut src = source(&text);
+        src.shrink_to = Some(SOURCE_CHUNK + 100);
+        let s = q("needle", |_| {});
+        assert_eq!(found(&s, &src), vec![(SOURCE_CHUNK, SOURCE_CHUNK + 6)]);
+        // Backwards too (regex-cursor backtracks until it can).
+        assert!(s.find_prev_in(&src, src.len()).is_some());
+        let empty = source("");
+        assert_eq!(found(&s, &empty), vec![]);
     }
 
     #[test]

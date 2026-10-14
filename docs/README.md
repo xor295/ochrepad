@@ -25,3 +25,5 @@ menu item to explain:
   reloading files other programs change.
 - [How ochrepad reads and writes files](file-handling.md): encodings, line
   endings, which files are refused, and atomic saves.
+- [Logs and large files](logs.md): the read-only viewer that opens files of
+  any size at once.
