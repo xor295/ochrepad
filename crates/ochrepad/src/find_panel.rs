@@ -299,8 +299,10 @@ impl FindPanel {
                     requests.push(FindRequest::Reveal);
                 }
             }
+            // A widget of its own, not in a child `Ui`: a child at the point
+            // where the row wraps takes the whole height of the panel.
             let valid = matches!(self.searcher(), Some(Ok(_)));
-            ui.add_enabled_ui(valid, |ui| {
+            if valid {
                 ui.menu_button("Find All", |ui| {
                     if ui.button("In Current Document").clicked() {
                         requests.push(FindRequest::FindAll {
@@ -319,7 +321,9 @@ impl FindPanel {
                 })
                 .response
                 .on_hover_text("List every match in the Search Results panel");
-            });
+            } else {
+                ui.add_enabled(false, egui::Button::new("Find All"));
+            }
             ui.separator();
             // The extra rows, as toggles.
             if !in_viewer
