@@ -22,6 +22,9 @@ people downloading the release.
   caret's place in the document; F8 and Shift+F8 go from change to change.
 - The right-click menu opens a file named at the caret (`src/main.rs:12:5`
   goes to that line and column), and Search Results can copy its results.
+- Overtype: Insert switches to typing over the text, as in Notepad++. The
+  status bar shows OVR and the caret becomes a bar under the character it
+  replaces; typing never runs past the end of a line.
 - A right-click menu in the editor: undo and redo, the clipboard, case,
   comments and the line's bookmark.
 - View > Function List: a panel listing the document's functions, types,

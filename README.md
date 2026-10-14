@@ -167,6 +167,7 @@ Windows and Linux. macOS is not supported.
 | Delete line, swap with the line above | Ctrl+Shift+L, Ctrl+T |
 | New line above, below | Ctrl+Alt+Enter, Ctrl+Alt+Shift+Enter |
 | Column Editor (text or numbers down a column) | Alt+C |
+| Type over the text (overtype), and back | Insert |
 | Fold, unfold the block at the caret | Ctrl+Alt+F, Ctrl+Alt+Shift+F |
 | Fold all, unfold all, fold a level | Alt+0, Alt+Shift+0, Alt+1 … Alt+8 |
 | UPPERCASE, lowercase | Ctrl+Shift+U, Ctrl+U |

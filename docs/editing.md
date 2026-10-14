@@ -165,6 +165,22 @@ When the selection, or the text around the caret, names a file that exists
 with **Open** that file. A line and column after it, as compilers and logs
 write them (`src/main.rs:12:5`), go to that place.
 
+## Typing over the text
+
+**Insert** switches to overtype, as in Notepad++: what you type replaces
+the character after the caret instead of pushing it along. The status bar
+shows **OVR** while it is on (click it, or press Insert again, to go back)
+and the caret becomes a bar under the character it will replace.
+
+- At the end of a line, typing inserts; it never runs into the next line.
+- A character on screen made of several code points (a letter with an
+  accent mark, an emoji) is replaced as a whole, as is a tab.
+- A selection is replaced as usual. **Enter**, pasting and the Tab key
+  insert. With several carets, each types over its own text.
+- Typing over undoes like typing: one step for a run of keys.
+- It applies to every tab until you switch it off, and is not remembered
+  when ochrepad closes.
+
 ## Full screen and always on top
 
 **View > Full Screen** (**F11**) fills the screen with the window; F11 again

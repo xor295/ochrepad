@@ -2574,6 +2574,20 @@ impl OchrepadApp {
                     self.settings.zoom = 100;
                 }
             }
+            if self.editor.settings.overtype {
+                ui.separator();
+                if ui
+                    .button("OVR")
+                    .on_hover_text(
+                        "Overtype: typing replaces the character after the caret. \
+                         Click (or press Insert) to insert instead.",
+                    )
+                    .clicked()
+                {
+                    self.editor.settings.overtype = false;
+                    self.view_state_mut().request_focus();
+                }
+            }
             if let Some(problem) = self.highlighting.problem(self.buffer_id()) {
                 ui.separator();
                 ui.add(egui::Label::new(problem).truncate());

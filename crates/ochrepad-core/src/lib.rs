@@ -17,6 +17,7 @@ pub mod history;
 pub mod indent;
 pub mod macros;
 mod multiselect;
+mod overtype;
 pub mod position;
 mod resolve;
 pub mod search;

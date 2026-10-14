@@ -68,6 +68,9 @@ pub struct Settings {
     /// Enter after an opening bracket indents, and a closing bracket lines
     /// up with its partner (see `smart_indent`).
     pub smart_indent: bool,
+    /// Typing replaces the character after the caret (the Insert key; see
+    /// `overtype`).
+    pub overtype: bool,
 }
 
 impl Settings {
@@ -87,6 +90,7 @@ impl Default for Settings {
             use_spaces: false,
             auto_close: false,
             smart_indent: false,
+            overtype: false,
         }
     }
 }
@@ -387,6 +391,11 @@ impl Editor {
                 buffer.meta.line_ending,
             ),
             _ => {
+                if self.settings.overtype
+                    && let Some(r) = crate::overtype::resolve(action, &buffer.doc, sels)
+                {
+                    return Ok(Ok(r));
+                }
                 if self.settings.auto_close
                     && let Some(r) = crate::autoclose::resolve(action, &buffer.doc, sels)
                 {

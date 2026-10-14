@@ -273,6 +273,7 @@ enum Op {
     Apply(Action),
     Copy,
     Cut,
+    ToggleOvertype,
 }
 
 /// Per-row colours from outside the editor: a compare view's diff, or a
@@ -445,6 +446,7 @@ pub fn editor_view(
                             extend: *extend,
                         }))
                     }
+                    Some(EditorCommand::ToggleOvertype) => ops.push(Op::ToggleOvertype),
                     None => {}
                 },
                 Event::Text(t)
@@ -502,6 +504,7 @@ pub fn editor_view(
                     let _ = editor.apply(view, Action::InsertText(String::new()));
                 }
             }
+            Op::ToggleOvertype => editor.settings.overtype = !editor.settings.overtype,
         }
         state.reveal_caret = true;
         state.last_activity = now;
@@ -2127,11 +2130,33 @@ fn paint(
         let since = now - state.last_activity;
         let on = ((since / BLINK_HALF_PERIOD) as u64).is_multiple_of(2);
         if on {
-            let caret_stroke = Stroke::new(2.0, visuals.text_cursor.stroke.color);
+            let caret_color = visuals.text_cursor.stroke.color;
             for s in sels {
                 let (p, on_screen) = caret_pos(s.head, &mut state.cache);
-                if on_screen {
-                    text_painter.line_segment([p, p + Vec2::new(0.0, f.line_h)], caret_stroke);
+                if !on_screen {
+                    continue;
+                }
+                if editor.settings.overtype {
+                    // A bar under the character that typing replaces (a
+                    // cell wide at the line's end), as in Scintilla.
+                    let line_end = doc.line_end(doc.line_of(s.head));
+                    let next = ochrepad_core::position::next_grapheme_boundary(doc, s.head);
+                    let w = if next <= line_end && next > s.head {
+                        let (q, _) = caret_pos(next, &mut state.cache);
+                        if q.y == p.y { q.x - p.x } else { f.cell_w }
+                    } else {
+                        f.cell_w
+                    };
+                    let bar = Rect::from_min_size(
+                        Pos2::new(p.x, p.y + f.line_h - 2.0),
+                        Vec2::new(w.max(2.0), 2.0),
+                    );
+                    text_painter.rect_filled(bar, 0.0, caret_color);
+                } else {
+                    text_painter.line_segment(
+                        [p, p + Vec2::new(0.0, f.line_h)],
+                        Stroke::new(2.0, caret_color),
+                    );
                 }
             }
         }
