@@ -282,3 +282,53 @@ fn with_backups_off_exit_asks_as_before() {
     assert!(!h.state().may_close());
     h.get_by_label("Save changes to new 1?");
 }
+
+#[test]
+fn folds_come_back_with_the_session() {
+    let d = dirs();
+    let a = d.files.join("a.py");
+    write(
+        &a,
+        "def f():
+    return 1
+
+def g():
+    return 2
+",
+    );
+    {
+        let mut h = app(&d);
+        h.state_mut().open_path(&a);
+        h.run();
+        key(&mut h, Modifiers::ALT, Key::Num0);
+        h.state_mut().request_exit();
+        h.run();
+    }
+    let h = app(&d);
+    let app = h.state();
+    let folds: Vec<usize> = app
+        .editor
+        .view(app.active_view())
+        .unwrap()
+        .folds()
+        .headers()
+        .collect();
+    assert_eq!(folds, vec![0, 3]);
+}
+
+#[test]
+fn the_open_folder_comes_back_with_the_session() {
+    let d = dirs();
+    let project = d.files.join("project");
+    std::fs::create_dir_all(project.join("src")).unwrap();
+    {
+        let mut h = app(&d);
+        h.state_mut().open_folder(&project);
+        h.run();
+        h.state_mut().request_exit();
+        h.run();
+    }
+    let h = app(&d);
+    let tree = h.state().file_tree().expect("a folder is open");
+    assert_eq!(tree.root(), project.as_path());
+}

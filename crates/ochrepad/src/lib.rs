@@ -3,7 +3,9 @@
 pub mod app;
 pub mod bench;
 pub mod compare;
+pub mod doc_map;
 pub mod editor_view;
+pub mod file_tree;
 pub mod find_panel;
 pub mod fonts;
 pub mod highlight;
@@ -13,6 +15,7 @@ pub mod logo;
 pub mod macro_ui;
 pub mod preview;
 pub mod safe_images;
+pub mod search_results;
 pub mod settings;
 pub mod theme;
 

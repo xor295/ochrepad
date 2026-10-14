@@ -2,6 +2,7 @@
 //! go through recordable `Action`s; counting and highlighting use the core
 //! `Searcher` directly.
 
+use egui::text::{CCursor, CCursorRange};
 use egui::{Id, Key, RichText, TextEdit, Ui};
 use ochrepad_core::{Action, ActionError, Editor, SearchOptions, SearchQuery, Searcher, ViewId};
 
@@ -12,11 +13,24 @@ pub enum FindRequest {
     Close,
     /// The editor should scroll to its caret.
     Reveal,
+    /// List every match in the Search Results panel: in the current
+    /// document, or in every open one.
+    FindAll { all_documents: bool },
+    /// Replace every match in every open document (after confirming).
+    ReplaceAllInAll,
+    /// Find in Files with the folder and filters in the panel.
+    FindInFiles,
 }
 
 pub struct FindPanel {
     pub open: bool,
     pub show_replace: bool,
+    /// The Find in Files row: folder, filters and options.
+    pub show_files: bool,
+    pub folder: String,
+    pub filters: String,
+    pub subfolders: bool,
+    pub include_ignored: bool,
     pub pattern: String,
     pub replacement: String,
     pub options: SearchOptions,
@@ -31,6 +45,11 @@ impl Default for FindPanel {
         Self {
             open: false,
             show_replace: false,
+            show_files: false,
+            folder: String::new(),
+            filters: String::new(),
+            subfolders: true,
+            include_ignored: false,
             pattern: String::new(),
             replacement: String::new(),
             // Notepad++ wraps by default.
@@ -87,6 +106,11 @@ impl FindPanel {
         self.message.as_ref().map(|(m, _)| m.as_str())
     }
 
+    /// Shows `text` under the fields (an error in red).
+    pub fn set_message(&mut self, text: impl Into<String>, is_error: bool) {
+        self.message = Some((text.into(), is_error));
+    }
+
     /// Opens the panel (Ctrl+F / Ctrl+H), taking a one-line selection as
     /// the pattern.
     pub fn open(&mut self, editor: &Editor, view: ViewId, replace: bool) {
@@ -104,6 +128,22 @@ impl FindPanel {
                     self.pattern = text;
                 }
             }
+        }
+    }
+
+    /// Shows the Find in Files row, searching `folder` if one is given (or
+    /// `fallback` if the folder field is empty).
+    pub fn open_files(
+        &mut self,
+        folder: Option<&std::path::Path>,
+        fallback: Option<&std::path::Path>,
+    ) {
+        self.open = true;
+        self.show_files = true;
+        self.focus_field = true;
+        self.message = None;
+        if let Some(f) = folder.or(fallback.filter(|_| self.folder.trim().is_empty())) {
+            self.folder = f.display().to_string();
         }
     }
 
@@ -166,15 +206,23 @@ impl FindPanel {
         let field_width = (ui.available_width() * 0.4).clamp(120.0, 360.0);
         ui.horizontal_wrapped(|ui| {
             ui.label("Find:");
-            let field = ui.add(
-                TextEdit::singleline(&mut self.pattern)
-                    .id(field_id())
-                    .desired_width(field_width)
-                    .hint_text("text or regex"),
-            );
+            let mut output = TextEdit::singleline(&mut self.pattern)
+                .id(field_id())
+                .desired_width(field_width)
+                .hint_text("text or regex")
+                .show(ui);
+            // Ctrl+F / Ctrl+H select the whole pattern, as in Notepad++, so
+            // typing replaces it whether or not the panel was already open.
             if std::mem::take(&mut self.focus_field) {
-                field.request_focus();
+                output.response.request_focus();
+                let end = CCursor::new(self.pattern.chars().count());
+                output
+                    .state
+                    .cursor
+                    .set_char_range(Some(CCursorRange::two(CCursor::new(0), end)));
+                output.state.store(ui.ctx(), field_id());
             }
+            let field = output.response;
             if field.changed() {
                 self.message = None;
             }
@@ -218,18 +266,87 @@ impl FindPanel {
                     requests.push(FindRequest::Reveal);
                 }
             }
-            let label = if self.show_replace {
-                "Hide Replace"
-            } else {
-                "Replace…"
-            };
-            if ui.button(label).clicked() {
+            let valid = matches!(self.searcher(), Some(Ok(_)));
+            ui.add_enabled_ui(valid, |ui| {
+                ui.menu_button("Find All", |ui| {
+                    if ui.button("In Current Document").clicked() {
+                        requests.push(FindRequest::FindAll {
+                            all_documents: false,
+                        });
+                    }
+                    if ui
+                        .button("In All Open Documents")
+                        .on_hover_text("\"In selection\" does not apply")
+                        .clicked()
+                    {
+                        requests.push(FindRequest::FindAll {
+                            all_documents: true,
+                        });
+                    }
+                })
+                .response
+                .on_hover_text("List every match in the Search Results panel");
+            });
+            ui.separator();
+            // The extra rows, as toggles.
+            if ui
+                .selectable_label(self.show_replace, "Replace…")
+                .on_hover_text("Ctrl+H")
+                .clicked()
+            {
                 self.show_replace = !self.show_replace;
             }
-            if ui.button("Close").on_hover_text("Esc").clicked() {
-                requests.push(FindRequest::Close);
+            if ui
+                .selectable_label(self.show_files, "In Files…")
+                .on_hover_text("Find in Files (Ctrl+Shift+F)")
+                .clicked()
+            {
+                self.show_files = !self.show_files;
             }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .add(egui::Button::new(RichText::new("×").size(18.0)).frame(false))
+                    .on_hover_text("Close (Esc)")
+                    .clicked()
+                {
+                    requests.push(FindRequest::Close);
+                }
+            });
         });
+        if self.show_files {
+            ui.horizontal_wrapped(|ui| {
+                ui.label("Folder:");
+                ui.add(
+                    TextEdit::singleline(&mut self.folder)
+                        .id(Id::new("ochrepad-files-folder"))
+                        .desired_width(field_width)
+                        .hint_text("folder to search"),
+                );
+                if ui.button("Browse…").clicked()
+                    && let Some(dir) = rfd::FileDialog::new().pick_folder()
+                {
+                    self.folder = dir.display().to_string();
+                }
+                ui.label("Filters:");
+                ui.add(
+                    TextEdit::singleline(&mut self.filters)
+                        .id(Id::new("ochrepad-files-filters"))
+                        .desired_width(120.0)
+                        .hint_text("*.rs; *.toml"),
+                );
+                ui.checkbox(&mut self.subfolders, "Subfolders");
+                ui.checkbox(&mut self.include_ignored, "Ignored files")
+                    .on_hover_text("Also search files .gitignore leaves out");
+                let valid =
+                    matches!(self.searcher(), Some(Ok(_))) && !self.folder.trim().is_empty();
+                if ui
+                    .add_enabled(valid, egui::Button::new("Find in Files"))
+                    .clicked()
+                {
+                    requests.push(FindRequest::FindInFiles);
+                }
+            });
+        }
         if self.show_replace {
             ui.horizontal_wrapped(|ui| {
                 ui.label("Replace:");
@@ -264,6 +381,16 @@ impl FindPanel {
                     {
                         self.message = n.map(|n| (format!("Replaced {n} occurrences"), false));
                     }
+                }
+                let valid = matches!(self.searcher(), Some(Ok(_)));
+                if ui
+                    .add_enabled(
+                        valid,
+                        egui::Button::new("Replace All in All Open Documents"),
+                    )
+                    .clicked()
+                {
+                    requests.push(FindRequest::ReplaceAllInAll);
                 }
             });
         }

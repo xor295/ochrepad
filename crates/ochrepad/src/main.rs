@@ -71,6 +71,8 @@ fn main() -> eframe::Result {
                 eprintln!("ochrepad: no system CJK font found; CJK text will show as boxes");
             }
             let mut app = OchrepadApp::new();
+            // `--bench --wrap` measures with word wrap on.
+            app.settings.word_wrap = bench && args.iter().any(|a| a == "--wrap");
             if let Some(dir) = ochrepad_fileio::config_dir() {
                 app.set_macro_file(dir.join("macros.json"));
                 if let Some(data) = ochrepad_fileio::data_dir()
@@ -80,6 +82,10 @@ fn main() -> eframe::Result {
                 }
             }
             for path in paths {
+                if path.is_dir() {
+                    app.open_folder(&path);
+                    continue;
+                }
                 let t = Instant::now();
                 app.open_path(&path);
                 if bench {

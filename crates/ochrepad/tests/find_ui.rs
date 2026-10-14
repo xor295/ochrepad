@@ -104,6 +104,23 @@ fn ctrl_f_takes_the_selection_as_the_pattern() {
 }
 
 #[test]
+fn ctrl_f_selects_the_pattern_when_the_panel_is_already_open() {
+    let mut h = with_text("cat dog");
+    find_for(&mut h, "cat");
+    // Focus goes back to the editor, then Ctrl+F again: typing replaces the
+    // old pattern rather than appending to it.
+    h.get_by_label("Editor: new 1").click();
+    h.run();
+    key(&mut h, Modifiers::COMMAND, Key::F);
+    typ(&mut h, "dog");
+    assert_eq!(h.state().find.pattern, "dog");
+    // Also while the field already has the keyboard.
+    key(&mut h, Modifiers::COMMAND, Key::F);
+    typ(&mut h, "bird");
+    assert_eq!(h.state().find.pattern, "bird");
+}
+
+#[test]
 fn count_select_all_and_replace_all() {
     let mut h = with_text("one two one three one");
     find_for(&mut h, "one");

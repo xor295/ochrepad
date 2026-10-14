@@ -59,8 +59,9 @@ fn cell_pos(h: &Harness<'_, OchrepadApp>, line: usize, col: f32) -> Pos2 {
     let (cell_w, line_h) = h
         .ctx
         .fonts_mut(|f| (f.glyph_width(&font, 'M'), f.row_height(&font)));
-    // Gutter: 3 digits + 1 cell + 4 px padding; text starts 4 px further in.
-    let x = rect.min.x + 4.0 * cell_w + 8.0 + col * cell_w;
+    // Gutter: 3 digits + the 2-cell fold margin + 4 px padding; text starts
+    // 4 px further in.
+    let x = rect.min.x + 5.0 * cell_w + 8.0 + col * cell_w;
     Pos2::new(x, rect.min.y + (line as f32 + 0.5) * line_h)
 }
 

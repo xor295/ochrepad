@@ -296,6 +296,18 @@ impl Searcher {
         }
     }
 
+    /// The matches inside `range`, found as the iterator is advanced (so a
+    /// caller can stop after enough of them).
+    pub fn matches<'a>(
+        &'a self,
+        doc: &'a Document,
+        range: Range<ByteOffset>,
+    ) -> impl Iterator<Item = Range<ByteOffset>> + 'a {
+        self.matcher
+            .find_iter(doc, range.start.0..range.end.0)
+            .map(to_offsets)
+    }
+
     /// All matches inside `range`.
     pub fn find_all(&self, doc: &Document, range: Range<ByteOffset>) -> Vec<Range<ByteOffset>> {
         self.matcher

@@ -48,8 +48,9 @@ For example `Ctrl+Shift+Up`, `alt+f5`, `Ctrl+OpenBracket`.
 
 - **Application shortcuts** are fixed and are handled before the keymap,
   so binding them here has no effect: Ctrl+N, Ctrl+O, Ctrl+S, Ctrl+Shift+S,
-  Ctrl+W, Ctrl+Tab, Ctrl+Shift+Tab, Ctrl+F, Ctrl+H, F3, Shift+F3,
-  Ctrl+Shift+R, Ctrl+Shift+P, Ctrl+Shift+M, F8 and Shift+F8.
+  Ctrl+W, Ctrl+Tab, Ctrl+Shift+Tab, Ctrl+F, Ctrl+Shift+F, Ctrl+H, F3,
+  Shift+F3, Ctrl+Shift+R, Ctrl+Shift+P, Ctrl+Shift+M, Ctrl+Shift+E, F8 and
+  Shift+F8.
 - **Copy, cut and paste** (Ctrl+C, Ctrl+X, Ctrl+V) come from the system
   clipboard, not from key bindings.
 - **A saved macro's shortcut** takes precedence over a keymap binding for the
@@ -84,11 +85,13 @@ Motions for `MoveCursor`:
 |---|---|
 | `"Left"`, `"Right"` | the previous or next character (a whole accented letter or emoji counts as one) |
 | `"WordLeft"`, `"WordRight"` | the previous or next word boundary |
-| `"Up"`, `"Down"` | the line above or below, keeping the column you started from |
+| `"Up"`, `"Down"` | the line above or below (the row, with word wrap), keeping the column you started from; folded lines are skipped |
 | `"Home"` | the first non-blank character of the line, or the line start if already there |
+| `"RowHome"` | with word wrap, the start of the caret's row, then `"Home"` on a second press; without wrap, the same as `"Home"` (the Home key) |
+| `"RowEnd"` | with word wrap, the end of the caret's row, then the end of the line; without wrap, the line end (the End key) |
 | `"LineStart"`, `"LineEnd"` | the very start or end of the line |
 | `"DocStart"`, `"DocEnd"` | the start or end of the document |
-| `{"PageUp": 20}`, `{"PageDown": 20}` | the given number of lines up or down |
+| `{"PageUp": 20}`, `{"PageDown": 20}` | the given number of rows up or down |
 
 ### Typing and deleting
 
@@ -115,8 +118,25 @@ Motions for `MoveCursor`:
 | `{"Action": "MoveLinesDown"}` | Moves the selected lines down one line. |
 | `{"Action": "JoinLines"}` | Joins the selected lines (or the caret's line and the next). |
 | `{"Action": "TrimTrailingWhitespace"}` | Removes trailing spaces and tabs from the selected lines, or from every line when nothing is selected. |
+| `{"Action": {"RemoveEmptyLines": {"include_whitespace": false}}}` | Removes empty lines from the selected lines, or from the whole document when nothing is selected. With `include_whitespace`, lines of only spaces and tabs go too. |
+| `{"Action": {"RemoveDuplicateLines": {"consecutive_only": false}}}` | Removes lines equal to an earlier line, keeping the first one and the order, in the selected lines or the whole document. Lines compare exactly. With `consecutive_only`, only a line equal to the one right before it is removed. |
 | `{"Action": {"ConvertCase": "Upper"}}` | Converts the selections (or the caret's line) to `"Upper"`, `"Lower"`, `"Title"` or `"Invert"` case. |
 | `{"Action": {"SortLines": {"descending": false, "case_insensitive": true, "numeric": false, "remove_duplicates": false}}}` | Sorts the selected lines, or the whole document when nothing is selected. All four options must be given. `numeric` compares the number at the start of each line; `remove_duplicates` drops repeated lines. With a column selection, lines are sorted by the text inside the column. |
+
+### Folding
+
+Fold commands change only what the editor shows: they are not undo steps and
+are not recorded in macros. See [Folding](view.md#folding).
+
+| Command | Does |
+|---|---|
+| `{"Action": "Fold"}` | Folds the caret's line if a region starts there, else the innermost region around the caret (Ctrl+Alt+F). |
+| `{"Action": "Unfold"}` | Unfolds the caret's line, or every fold inside the region around the caret (Ctrl+Alt+Shift+F). |
+| `{"Action": "ToggleFold"}` | Unfolds the caret's line if it is folded, else folds as `Fold` does. No default keys. |
+| `{"Action": "FoldAll"}` | Folds every region (Alt+0). |
+| `{"Action": "UnfoldAll"}` | Unfolds everything (Alt+Shift+0). |
+| `{"Action": {"FoldLevel": 1}}` | Folds every region of a level: 1 is outermost; in Markdown the level is the heading level (Alt+1 … Alt+8). |
+| `{"Action": {"UnfoldLevel": 1}}` | Unfolds every region of a level (Alt+Shift+1 … Alt+Shift+8). |
 
 ### Searching
 

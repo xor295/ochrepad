@@ -9,6 +9,8 @@ use std::time::{Duration, Instant};
 use crate::action::{Action, ActionError};
 use crate::buffer::{Buffer, BufferId, FileMeta, LineEdit};
 use crate::changeset::{Bias, ChangeSet};
+use crate::display::DisplayMap;
+use crate::fold::{self, FoldSet};
 use crate::history::Transaction;
 use crate::position::{ByteOffset, byte_to_line_col, line_col_to_byte};
 use crate::resolve::{Resolved, resolve, resolve_search};
@@ -160,8 +162,22 @@ impl Editor {
         self.views.values()
     }
 
+    /// The views of `buffer` that are tabs (not auxiliary ones).
     pub fn views_of(&self, buffer: BufferId) -> impl Iterator<Item = &View> {
-        self.views.values().filter(move |v| v.buffer() == buffer)
+        self.views
+            .values()
+            .filter(move |v| v.buffer() == buffer && !v.is_aux())
+    }
+
+    /// A view that is not a tab of its own (one side of a compare view). It
+    /// follows edits like any view, is left out of
+    /// [`views_of`](Self::views_of), and goes when its buffer is removed.
+    pub fn add_aux_view(&mut self, buffer: BufferId) -> Result<ViewId, ActionError> {
+        let id = self.add_view(buffer)?;
+        if let Some(v) = self.views.get_mut(&id) {
+            v.set_aux();
+        }
+        Ok(id)
     }
 
     pub fn start_recording(&mut self) {
@@ -227,20 +243,40 @@ impl Editor {
     /// highlighter, bumps the revision and records the action if recording.
     pub fn apply(&mut self, view: ViewId, action: Action) -> Result<(), ActionError> {
         let (buffer_id, _) = self.lookup(view)?;
+        let read_only = self.buffers.get(&buffer_id).is_some_and(|b| b.read_only);
         match &action {
+            Action::Undo | Action::Redo if read_only => return Err(ActionError::ReadOnly),
             Action::Undo => self.undo(view, buffer_id),
             Action::Redo => self.redo(view, buffer_id),
+            Action::Fold
+            | Action::Unfold
+            | Action::ToggleFold
+            | Action::FoldAll
+            | Action::UnfoldAll
+            | Action::FoldLevel(_)
+            | Action::UnfoldLevel(_) => self.fold_action(view, buffer_id, &action),
             _ => {
                 let resolved = self.resolve_in(view, buffer_id, &action)??;
                 self.commit(view, buffer_id, resolved)?;
             }
         }
+        self.sync_folds(buffer_id);
         if let Some(rec) = &mut self.recording
             && action.is_recordable()
         {
             rec.push(action);
         }
         Ok(())
+    }
+
+    /// Like [`apply`](Self::apply), but never recorded in a macro being
+    /// recorded: for commands that act outside the view the macro plays in
+    /// (Replace All in all open documents).
+    pub fn apply_unrecorded(&mut self, view: ViewId, action: Action) -> Result<(), ActionError> {
+        let recording = self.recording.take();
+        let result = self.apply(view, action);
+        self.recording = recording;
+        result
     }
 
     /// Resolves `action` against the view's current state. The outer error
@@ -255,17 +291,20 @@ impl Editor {
             .buffers
             .get(&buffer_id)
             .ok_or(ActionError::UnknownBuffer(buffer_id))?;
-        let sels = &self
+        let v = self
             .views
             .get(&view)
-            .ok_or(ActionError::UnknownView(view))?
-            .selections;
+            .ok_or(ActionError::UnknownView(view))?;
+        let sels = &v.selections;
         Ok(match action {
             Action::Find { .. }
             | Action::Replace { .. }
             | Action::ReplaceAll { .. }
             | Action::SelectAllMatches(_) => resolve_search(action, &buffer.doc, sels),
-            _ => Ok(resolve(action, &buffer.doc, sels, &self.settings)),
+            _ => {
+                let rows = DisplayMap::new(buffer, v, self.settings.tab_width);
+                Ok(resolve(action, &buffer.doc, sels, &self.settings, &rows))
+            }
         })
     }
 
@@ -283,6 +322,9 @@ impl Editor {
                     b.history.break_coalescing();
                 }
                 self.set_selections(view, sels);
+            }
+            Resolved::Edit { .. } if self.buffers.get(&buffer_id).is_some_and(|b| b.read_only) => {
+                return Err(ActionError::ReadOnly);
             }
             Resolved::Edit {
                 changes,
@@ -314,6 +356,7 @@ impl Editor {
                 );
                 self.set_selections(view, after);
                 self.map_other_views(buffer_id, view, &changes);
+                self.map_folds(buffer_id, &changes);
             }
         }
         Ok(())
@@ -372,6 +415,7 @@ impl Editor {
             b.meta = meta;
             b.mark_saved();
         }
+        self.sync_folds(buffer);
         Ok(())
     }
 
@@ -392,6 +436,7 @@ impl Editor {
         self.set_selections(view, sels);
         for inv in &inverses {
             self.map_other_views(buffer_id, view, inv);
+            self.map_folds(buffer_id, inv);
         }
     }
 
@@ -412,6 +457,7 @@ impl Editor {
         self.set_selections(view, sels);
         for cs in &changes {
             self.map_other_views(buffer_id, view, cs);
+            self.map_folds(buffer_id, cs);
         }
     }
 
@@ -419,6 +465,129 @@ impl Editor {
         if let Some(v) = self.views.get_mut(&view) {
             v.selections = sels;
         }
+    }
+
+    /// Maps every view's folds through `changes`, dropping the folds it
+    /// touches (PLAN_v0.2.0 3.6). [`sync_folds`](Self::sync_folds) then
+    /// recomputes their lines.
+    fn map_folds(&mut self, buffer: BufferId, changes: &ChangeSet) {
+        for v in self.views.values_mut() {
+            if v.buffer() == buffer && !v.folds.is_empty() {
+                v.folds.map(changes);
+            }
+        }
+    }
+
+    /// After any action: brings the folds' line numbers up to date and
+    /// unfolds every fold hiding a caret, in every view of `buffer`.
+    fn sync_folds(&mut self, buffer: BufferId) {
+        let Some(doc) = self.buffers.get(&buffer).map(|b| &b.doc) else {
+            return;
+        };
+        for v in self.views.values_mut() {
+            if v.buffer() != buffer {
+                continue;
+            }
+            // Also when an edit dropped the last fold: the hidden lines need
+            // rebuilding. Cheap when nothing was mapped.
+            v.folds.relines(doc);
+            if v.folds.is_empty() {
+                continue;
+            }
+            let hidden: Vec<usize> = v
+                .selections
+                .ranges()
+                .iter()
+                .map(|s| doc.line_of(s.head))
+                .filter(|&l| v.folds.is_hidden(l))
+                .collect();
+            if !hidden.is_empty() {
+                v.folds
+                    .retain(|header, last| !hidden.iter().any(|&l| header < l && l <= last));
+            }
+        }
+    }
+
+    /// Folds the region `line` heads in `view`; returns whether it did.
+    /// Carets inside move to the end of the header line.
+    pub fn fold_at(&mut self, view: ViewId, line: usize) -> bool {
+        let tab_width = self.settings.tab_width;
+        let Some(v) = self.views.get_mut(&view) else {
+            return false;
+        };
+        let Some(b) = self.buffers.get(&v.buffer()) else {
+            return false;
+        };
+        let Some(last) = fold::region(&b.doc, line, b.fold_strategy, tab_width) else {
+            return false;
+        };
+        v.folds.insert(&b.doc, [(line, last)]);
+        reveal_carets(&b.doc, v);
+        true
+    }
+
+    /// Unfolds the fold at `line` in `view`; returns whether there was one.
+    pub fn unfold_at(&mut self, view: ViewId, line: usize) -> bool {
+        self.views
+            .get_mut(&view)
+            .is_some_and(|v| v.folds.remove(line))
+    }
+
+    /// Unfolds `line` if it is folded, else folds the region it heads.
+    pub fn toggle_fold_at(&mut self, view: ViewId, line: usize) -> bool {
+        self.unfold_at(view, line) || self.fold_at(view, line)
+    }
+
+    fn fold_action(&mut self, view: ViewId, buffer: BufferId, action: &Action) {
+        let tab_width = self.settings.tab_width;
+        let (Some(v), Some(b)) = (self.views.get_mut(&view), self.buffers.get(&buffer)) else {
+            return;
+        };
+        let (doc, strategy) = (&b.doc, b.fold_strategy);
+        let caret = doc.line_of(v.selections.primary().head);
+        let around = || fold::enclosing(doc, caret, strategy, tab_width);
+        match action {
+            Action::Fold => {
+                if let Some(r) = around() {
+                    v.folds.insert(doc, [r]);
+                }
+            }
+            Action::ToggleFold => {
+                if !v.folds.remove(caret)
+                    && let Some(r) = around()
+                {
+                    v.folds.insert(doc, [r]);
+                }
+            }
+            Action::Unfold => {
+                if !v.folds.remove(caret)
+                    && let Some((header, last)) = around()
+                {
+                    v.folds.retain(|h, _| h < header || h > last);
+                }
+            }
+            Action::FoldAll => {
+                let all = fold::regions(doc, strategy, tab_width);
+                v.folds.insert(doc, all.iter().map(|r| (r.header, r.last)));
+            }
+            Action::UnfoldAll => v.folds = FoldSet::default(),
+            Action::FoldLevel(n) => {
+                let all = fold::regions(doc, strategy, tab_width);
+                let level = all.iter().filter(|r| r.level == *n);
+                v.folds.insert(doc, level.map(|r| (r.header, r.last)));
+            }
+            Action::UnfoldLevel(n) => {
+                let level: std::collections::HashSet<usize> =
+                    fold::regions(doc, strategy, tab_width)
+                        .into_iter()
+                        .filter(|r| r.level == *n)
+                        .map(|r| r.header)
+                        .collect();
+                v.folds.retain(|h, _| !level.contains(&h));
+            }
+            _ => {}
+        }
+        reveal_carets(doc, v);
     }
 
     /// Shifts the selections of every other view of `buffer` through `changes`
@@ -434,6 +603,27 @@ impl Editor {
             }
         }
     }
+}
+
+/// Moves every selection head that a fold hides to the end of the fold's
+/// header line, so folding does not immediately unfold again.
+fn reveal_carets(doc: &crate::text::Document, v: &mut View) {
+    let folds = &v.folds;
+    if folds.is_empty() {
+        return;
+    }
+    let moved = v.selections.map(|s| {
+        let Some((start, _)) = folds.hidden_range(doc.line_of(s.head)) else {
+            return s.clone();
+        };
+        let head = doc.line_end(start - 1);
+        if s.is_empty() {
+            Selection::caret(head)
+        } else {
+            Selection::new(s.anchor, head)
+        }
+    });
+    v.selections = moved;
 }
 
 fn apply_changes(buffer: &mut Buffer, changes: &ChangeSet) {

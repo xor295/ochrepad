@@ -23,6 +23,13 @@ pub enum Motion {
     Home,
     LineStart,
     LineEnd,
+    /// Home with word wrap: to the start of the caret's display row, or
+    /// `Home` when already there or on a line's first row. Without wrap it
+    /// is `Home`.
+    RowHome,
+    /// End with word wrap: to the end of the caret's display row, or the
+    /// line end when already there. Without wrap it is `LineEnd`.
+    RowEnd,
     DocStart,
     DocEnd,
     /// Vertical moves keep a remembered visual column.
@@ -121,6 +128,32 @@ pub enum Action {
     MoveLinesDown,
     /// Join the selected lines (or the caret's line and the next).
     JoinLines,
+    /// Remove empty lines from the selected lines (all lines when nothing
+    /// is selected); with `include_whitespace`, also lines of only spaces
+    /// and tabs.
+    RemoveEmptyLines {
+        include_whitespace: bool,
+    },
+    /// Remove lines equal to an earlier selected line (all lines when
+    /// nothing is selected), keeping the order; with `consecutive_only`,
+    /// only lines equal to the line right before them.
+    RemoveDuplicateLines {
+        consecutive_only: bool,
+    },
+    /// Fold the region holding the caret: the caret's line if it starts a
+    /// region, else the innermost region around it. Fold actions change the
+    /// view only (no undo step) and are not recorded in macros.
+    Fold,
+    /// Unfold the caret's line, or every fold inside the region around it.
+    Unfold,
+    /// Unfold the caret's line if it is folded, else `Fold`.
+    ToggleFold,
+    FoldAll,
+    UnfoldAll,
+    /// Fold every region of this level: the nesting depth for indentation
+    /// (1 is outermost), the heading level in Markdown.
+    FoldLevel(usize),
+    UnfoldLevel(usize),
     Undo,
     Redo,
 }
@@ -131,6 +164,8 @@ pub enum ActionError {
     UnknownBuffer(BufferId),
     InvalidPattern(String),
     NotFound,
+    /// The buffer is read-only.
+    ReadOnly,
 }
 
 impl fmt::Display for ActionError {
@@ -140,6 +175,7 @@ impl fmt::Display for ActionError {
             ActionError::UnknownBuffer(b) => write!(f, "no buffer with id {}", b.0),
             ActionError::InvalidPattern(e) => write!(f, "invalid search pattern: {e}"),
             ActionError::NotFound => f.write_str("no match found"),
+            ActionError::ReadOnly => f.write_str("the document is read-only"),
         }
     }
 }

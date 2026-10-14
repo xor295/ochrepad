@@ -13,6 +13,7 @@ use crate::position::{
 };
 use std::ops::Range;
 
+use crate::display::DisplayMap;
 use crate::editor::Settings;
 use crate::search::{SearchQuery, Searcher};
 use crate::selection::{Rectangle, Selection, SelectionSet};
@@ -30,11 +31,13 @@ pub(crate) enum Resolved {
 }
 
 /// Resolves every action except `Undo`/`Redo`, which `Editor` handles.
+/// Vertical motions move by the view's display `rows`.
 pub(crate) fn resolve(
     action: &Action,
     doc: &Document,
     sels: &SelectionSet,
     settings: &Settings,
+    rows: &DisplayMap,
 ) -> Resolved {
     let tab_width = settings.tab_width;
     match action {
@@ -128,9 +131,15 @@ pub(crate) fn resolve(
         Action::MoveLinesUp => transform::move_lines(doc, sels, true),
         Action::MoveLinesDown => transform::move_lines(doc, sels, false),
         Action::JoinLines => transform::join(doc, sels),
+        Action::RemoveEmptyLines { include_whitespace } => {
+            transform::remove_empty(doc, sels, *include_whitespace)
+        }
+        Action::RemoveDuplicateLines { consecutive_only } => {
+            transform::remove_duplicates(doc, sels, *consecutive_only)
+        }
         Action::PasteBlock(text) => {
             if sels.len() > 1 || !sels.primary().is_empty() {
-                return resolve(&Action::Paste(text.clone()), doc, sels, settings);
+                return resolve(&Action::Paste(text.clone()), doc, sels, settings, rows);
             }
             paste_block(doc, sels.primary().head, text, tab_width)
         }
@@ -177,7 +186,7 @@ pub(crate) fn resolve(
             delete(doc, sels, EditKind::Other, |p| (p, word_right(doc, p)))
         }
         Action::MoveCursor { motion, extend } => {
-            Resolved::Selections(sels.map(|s| move_selection(doc, s, *motion, *extend, tab_width)))
+            Resolved::Selections(sels.map(|s| move_selection(doc, rows, s, *motion, *extend)))
         }
         Action::SelectAll => Resolved::Selections(SelectionSet::single(Selection::new(
             ByteOffset(0),
@@ -197,14 +206,21 @@ pub(crate) fn resolve(
             };
             Selection::new(doc.line_start(first), end)
         })),
-        Action::AddCursorAbove => add_cursor(doc, sels, -1, tab_width),
-        Action::AddCursorBelow => add_cursor(doc, sels, 1, tab_width),
+        Action::AddCursorAbove => add_cursor(rows, sels, -1),
+        Action::AddCursorBelow => add_cursor(rows, sels, 1),
         Action::CollapseSelections => {
             Resolved::Selections(SelectionSet::caret(sels.primary().head))
         }
         // Handled by `resolve_search` / `Editor`.
         Action::Undo
         | Action::Redo
+        | Action::Fold
+        | Action::Unfold
+        | Action::ToggleFold
+        | Action::FoldAll
+        | Action::UnfoldAll
+        | Action::FoldLevel(_)
+        | Action::UnfoldLevel(_)
         | Action::Find { .. }
         | Action::Replace { .. }
         | Action::ReplaceAll { .. }
@@ -366,10 +382,10 @@ fn delete(
 
 fn move_selection(
     doc: &Document,
+    rows: &DisplayMap,
     sel: &Selection,
     motion: Motion,
     extend: bool,
-    tab_width: usize,
 ) -> Selection {
     if !extend && !sel.is_empty() {
         match motion {
@@ -385,22 +401,32 @@ fn move_selection(
         Motion::Right => (next_grapheme_boundary(doc, head), None),
         Motion::WordLeft => (word_left(doc, head), None),
         Motion::WordRight => (word_right(doc, head), None),
-        Motion::Home => {
-            let first_non_blank = first_non_blank(doc, line);
-            if head == first_non_blank {
-                (doc.line_start(line), None)
+        Motion::Home => (smart_home(doc, line, head), None),
+        Motion::RowHome => {
+            let row = rows.row_of(head);
+            let start = rows.row_range(row).start;
+            if row.sub > 0 && head != start {
+                (start, None)
             } else {
-                (first_non_blank, None)
+                (smart_home(doc, line, head), None)
+            }
+        }
+        Motion::RowEnd => {
+            let end = rows.row_end(rows.row_of(head));
+            if head != end {
+                (end, None)
+            } else {
+                (doc.line_end(line), None)
             }
         }
         Motion::LineStart => (doc.line_start(line), None),
         Motion::LineEnd => (doc.line_end(line), None),
         Motion::DocStart => (ByteOffset(0), None),
         Motion::DocEnd => (doc.len(), None),
-        Motion::Up => vertical(doc, sel, -1, tab_width),
-        Motion::Down => vertical(doc, sel, 1, tab_width),
-        Motion::PageUp(n) => vertical(doc, sel, -(n as isize), tab_width),
-        Motion::PageDown(n) => vertical(doc, sel, n as isize, tab_width),
+        Motion::Up => vertical(rows, sel, -1),
+        Motion::Down => vertical(rows, sel, 1),
+        Motion::PageUp(n) => vertical(rows, sel, -(n as isize)),
+        Motion::PageDown(n) => vertical(rows, sel, n as isize),
     };
     Selection {
         anchor: if extend { sel.anchor } else { new_head },
@@ -409,24 +435,26 @@ fn move_selection(
     }
 }
 
-/// Moves `delta` lines keeping the remembered visual column. On the first or
-/// last line the head stays put, as in Notepad++.
-fn vertical(
-    doc: &Document,
-    sel: &Selection,
-    delta: isize,
-    tab_width: usize,
-) -> (ByteOffset, Option<VisualCol>) {
-    let line = doc.line_of(sel.head);
-    let goal = sel
-        .goal
-        .unwrap_or_else(|| byte_to_visual_col(doc, sel.head, tab_width));
-    let last = doc.line_count() as isize - 1;
-    let target = (line as isize + delta).clamp(0, last) as usize;
-    if target == line {
+/// Moves `delta` display rows keeping the remembered visual column (counted
+/// from the row's start). On the first or last row the head stays put, as
+/// in Notepad++.
+fn vertical(rows: &DisplayMap, sel: &Selection, delta: isize) -> (ByteOffset, Option<VisualCol>) {
+    let row = rows.row_of(sel.head);
+    let goal = sel.goal.unwrap_or_else(|| rows.col_in_row(sel.head));
+    let mut target = rows.advance(row, delta);
+    // Padding rows hold no text: keep going the same way, or stay put.
+    while rows.is_filler(target) {
+        let (next, moved) = rows.step(target, delta.signum());
+        if moved == 0 {
+            target = row;
+            break;
+        }
+        target = next;
+    }
+    if target == row {
         return (sel.head, Some(goal));
     }
-    (visual_col_to_byte(doc, target, goal, tab_width), Some(goal))
+    (rows.byte_at_col(target, goal), Some(goal))
 }
 
 /// One selection per line of the rectangle, anchor column to head column;
@@ -512,25 +540,34 @@ fn paste_block(doc: &Document, head: ByteOffset, text: &str, tab_width: usize) -
     }
 }
 
-fn add_cursor(doc: &Document, sels: &SelectionSet, delta: isize, tab_width: usize) -> Resolved {
+fn add_cursor(rows: &DisplayMap, sels: &SelectionSet, delta: isize) -> Resolved {
     let from = if delta < 0 {
         &sels.ranges()[0]
     } else {
         &sels.ranges()[sels.len() - 1]
     };
     let (pos, goal) = vertical(
-        doc,
+        rows,
         &Selection::caret(from.head).with_goal(from.goal),
         delta,
-        tab_width,
     );
-    if doc.line_of(pos) == doc.line_of(from.head) {
+    if rows.row_of(pos) == rows.row_of(from.head) {
         return Resolved::Selections(sels.clone());
     }
     let mut ranges = sels.ranges().to_vec();
     ranges.push(Selection::caret(pos).with_goal(goal));
     let primary = ranges.len() - 1;
     Resolved::Selections(SelectionSet::new(ranges, primary))
+}
+
+/// Home: the first non-blank of the line, or column 0 if already there.
+fn smart_home(doc: &Document, line: usize, head: ByteOffset) -> ByteOffset {
+    let first_non_blank = first_non_blank(doc, line);
+    if head == first_non_blank {
+        doc.line_start(line)
+    } else {
+        first_non_blank
+    }
 }
 
 fn first_non_blank(doc: &Document, line: usize) -> ByteOffset {

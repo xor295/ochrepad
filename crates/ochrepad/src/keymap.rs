@@ -117,8 +117,9 @@ impl Default for Keymap {
             (Chord::new(ArrowRight).cmd(), Motion::WordRight),
             (Chord::new(ArrowUp), Motion::Up),
             (Chord::new(ArrowDown), Motion::Down),
-            (Chord::new(Home), Motion::Home),
-            (Chord::new(End), Motion::LineEnd),
+            // Row-aware: the same as Home and LineEnd unless lines wrap.
+            (Chord::new(Home), Motion::RowHome),
+            (Chord::new(End), Motion::RowEnd),
             (Chord::new(Home).cmd(), Motion::DocStart),
             (Chord::new(End).cmd(), Motion::DocEnd),
         ];
@@ -196,7 +197,20 @@ impl Default for Keymap {
                 Chord::new(ArrowDown).cmd().alt(),
                 act(Action::AddCursorBelow),
             ),
+            // Folding (Notepad++'s View > Fold/Collapse shortcuts).
+            (Chord::new(F).cmd().alt(), act(Action::Fold)),
+            (Chord::new(F).cmd().alt().shift(), act(Action::Unfold)),
+            (Chord::new(Num0).alt(), act(Action::FoldAll)),
+            (Chord::new(Num0).alt().shift(), act(Action::UnfoldAll)),
         ]);
+        let digits = [Num1, Num2, Num3, Num4, Num5, Num6, Num7, Num8];
+        for (level, key) in (1..).zip(digits) {
+            b.push((Chord::new(key).alt(), act(Action::FoldLevel(level))));
+            b.push((
+                Chord::new(key).alt().shift(),
+                act(Action::UnfoldLevel(level)),
+            ));
+        }
         Self { bindings: b }
     }
 }

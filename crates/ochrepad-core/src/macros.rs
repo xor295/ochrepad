@@ -61,7 +61,17 @@ impl Action {
     pub fn is_recordable(&self) -> bool {
         !matches!(
             self,
-            Action::SetSelections(_) | Action::ColumnSelect { .. } | Action::Undo | Action::Redo
+            Action::SetSelections(_)
+                | Action::ColumnSelect { .. }
+                | Action::Undo
+                | Action::Redo
+                | Action::Fold
+                | Action::Unfold
+                | Action::ToggleFold
+                | Action::FoldAll
+                | Action::UnfoldAll
+                | Action::FoldLevel(_)
+                | Action::UnfoldLevel(_)
         )
     }
 }

@@ -1,8 +1,9 @@
 //! Text transforms: case conversion, line sorting, and line operations
-//! (trim, duplicate, move, join). Each resolves to one transaction.
+//! (trim, duplicate, move, join, remove empty or duplicate lines). Each
+//! resolves to one transaction.
 
 use std::cmp::Ordering;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 use std::ops::Range;
 
 use serde::{Deserialize, Serialize};
@@ -424,6 +425,99 @@ pub(crate) fn join(doc: &Document, sels: &SelectionSet) -> Resolved {
     let changes = ChangeSet::new(doc.len(), edits);
     let after = map_before(sels, &changes);
     edit_result(changes, after, sels)
+}
+
+/// The lines a removing line operation looks at: the rectangle's lines, the
+/// lines touched by non-empty selections, or every line. A trailing
+/// newline's empty last line is not a line here (as in `sort`).
+fn target_lines(doc: &Document, sels: &SelectionSet) -> Vec<usize> {
+    let mut lines: Vec<usize> = match sels.rect() {
+        Some(r) => (r.top()..=r.bottom()).collect(),
+        None => selected_lines(doc, sels).into_iter().collect(),
+    };
+    let last = doc.line_count() - 1;
+    if last > 0 && lines.last() == Some(&last) && doc.line_text(last).is_empty() {
+        lines.pop();
+    }
+    lines
+}
+
+/// Deletes whole lines (sorted, distinct) with their line breaks. A run of
+/// lines that ends the document takes the line break before it instead, so
+/// no empty line is left behind.
+fn remove_lines(doc: &Document, sels: &SelectionSet, lines: &[usize]) -> Resolved {
+    let last = doc.line_count() - 1;
+    let mut edits = Vec::new();
+    let mut i = 0;
+    while i < lines.len() {
+        let first = lines[i];
+        while i + 1 < lines.len() && lines[i + 1] == lines[i] + 1 {
+            i += 1;
+        }
+        let end = lines[i];
+        i += 1;
+        let range = if end < last {
+            doc.line_start(first)..doc.line_start(end + 1)
+        } else if first > 0 {
+            doc.line_end(first - 1)..doc.len()
+        } else {
+            ByteOffset(0)..doc.len()
+        };
+        if range.start < range.end {
+            edits.push(Edit::new(range.start, range.end, ""));
+        }
+    }
+    let changes = ChangeSet::new(doc.len(), edits);
+    let after = map_before(sels, &changes);
+    edit_result(changes, after, sels)
+}
+
+/// Removes the empty lines among the target lines; with
+/// `include_whitespace`, also lines of only spaces and tabs.
+pub(crate) fn remove_empty(
+    doc: &Document,
+    sels: &SelectionSet,
+    include_whitespace: bool,
+) -> Resolved {
+    let lines: Vec<usize> = target_lines(doc, sels)
+        .into_iter()
+        .filter(|&line| {
+            let text = doc.line_text(line);
+            if include_whitespace {
+                text.trim_matches([' ', '\t']).is_empty()
+            } else {
+                text.is_empty()
+            }
+        })
+        .collect();
+    remove_lines(doc, sels, &lines)
+}
+
+/// Removes target lines equal to an earlier target line, keeping the first
+/// of each and the order; with `consecutive_only`, only lines equal to the
+/// line right before them.
+pub(crate) fn remove_duplicates(
+    doc: &Document,
+    sels: &SelectionSet,
+    consecutive_only: bool,
+) -> Resolved {
+    let mut seen = HashSet::new();
+    let mut prev: Option<(usize, String)> = None;
+    let mut lines = Vec::new();
+    for line in target_lines(doc, sels) {
+        let text = doc.line_text(line);
+        let duplicate = if consecutive_only {
+            prev.as_ref()
+                .is_some_and(|(l, t)| l + 1 == line && *t == text)
+        } else {
+            !seen.insert(text.clone())
+        };
+        if duplicate {
+            lines.push(line);
+        }
+        prev = Some((line, text));
+    }
+    remove_lines(doc, sels, &lines)
 }
 
 #[cfg(test)]

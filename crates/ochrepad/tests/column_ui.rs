@@ -63,7 +63,7 @@ fn at(h: &Harness<'_, OchrepadApp>, line: usize, col: f32) -> Pos2 {
         .ctx
         .fonts_mut(|f| (f.glyph_width(&font, 'M'), f.row_height(&font)));
     Pos2::new(
-        rect.min.x + 4.0 * cell_w + 8.0 + col * cell_w,
+        rect.min.x + 5.0 * cell_w + 8.0 + col * cell_w,
         rect.min.y + (line as f32 + 0.5) * line_h,
     )
 }

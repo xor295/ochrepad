@@ -163,3 +163,127 @@ fn snapshot_compare_view() {
     h.run();
     util::snapshot(&mut h, "compare_view");
 }
+
+/// The point at `col` cells into screen row `row` of a compare side. Its
+/// gutter is 3 digits, one cell and 4 px (no fold margin); the text starts
+/// 4 px further in.
+fn side_pos(h: &Harness<'_, OchrepadApp>, side: &str, row: f32, col: f32) -> egui::Pos2 {
+    let rect = h.get_by_label_contains(&format!("Compare {side}:")).rect();
+    let font = egui::FontId::monospace(14.0);
+    let (w, lh) = h
+        .ctx
+        .fonts_mut(|f| (f.glyph_width(&font, 'M'), f.row_height(&font)));
+    egui::Pos2::new(
+        rect.min.x + 4.0 * w + 8.0 + col * w,
+        rect.min.y + (row + 0.5) * lh,
+    )
+}
+
+fn click_at(h: &mut Harness<'_, OchrepadApp>, pos: egui::Pos2) {
+    h.event(Event::PointerMoved(pos));
+    for pressed in [true, false] {
+        h.event(Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Modifiers::NONE,
+        });
+        h.step();
+    }
+    h.run();
+}
+
+fn buffer_text(h: &Harness<'_, OchrepadApp>, b: BufferId) -> String {
+    h.state().editor.buffer(b).unwrap().doc().to_string()
+}
+
+#[test]
+fn typing_in_a_side_edits_its_document() {
+    let mut h = harness();
+    let (_, right, id) = compared(&mut h);
+    // Screen row 5 of the right side is its line 5, "// entry point".
+    let p = side_pos(&h, "right", 5.0, 0.0);
+    click_at(&mut h, p);
+    h.event(Event::Text("x".into()));
+    h.run();
+    assert!(buffer_text(&h, right).contains("\nx// entry point\n"));
+    // Undo works there too, and the diff follows after a pause.
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    h.run();
+    assert_eq!(buffer_text(&h, right), RIGHT);
+    h.run_steps(30);
+    assert_eq!(h.state().compares.get(id).unwrap().diff.stats.added, 1);
+}
+
+#[test]
+fn carets_skip_the_blank_rows() {
+    let mut h = harness();
+    let (left, _, id) = compared(&mut h);
+    // Left line 4 (empty) is above a blank row; Down goes to line 5.
+    let p = side_pos(&h, "left", 4.0, 0.0);
+    click_at(&mut h, p);
+    h.key_press(Key::ArrowDown);
+    h.run();
+    let app = h.state();
+    let view = app.compares.get(id).unwrap().view(0);
+    let head = app.editor.view(view).unwrap().selections.primary().head;
+    let doc = app.editor.buffer(left).unwrap().doc();
+    assert_eq!(doc.line_of(head), 5);
+}
+
+#[test]
+fn the_sides_scroll_together() {
+    let mut h = harness();
+    // Long enough to scroll.
+    let tail = "x\n".repeat(60);
+    h.event(Event::Paste(format!("{LEFT}{tail}")));
+    h.run();
+    let left = h.state().buffer_id();
+    h.key_press_modifiers(Modifiers::COMMAND, Key::N);
+    h.run();
+    h.event(Event::Paste(format!("{RIGHT}{tail}")));
+    h.run();
+    let right = h.state().buffer_id();
+    let id = h.state_mut().compare(left, right);
+    h.run();
+    // Scroll the right side to its line 6 ("fn main", diff row 6): the left
+    // side follows to its line 5, the same row.
+    let right_view = h.state().compares.get(id).unwrap().view(1);
+    h.state_mut()
+        .editor
+        .view_mut(right_view)
+        .unwrap()
+        .scroll
+        .first_line = 6;
+    h.run();
+    let app = h.state();
+    let left_view = app.compares.get(id).unwrap().view(0);
+    assert_eq!(app.editor.view(left_view).unwrap().scroll.first_line, 5);
+}
+
+#[test]
+fn the_saved_side_is_read_only() {
+    let tmp = tempfile::tempdir().unwrap();
+    let file = tmp.path().join("a.txt");
+    std::fs::write(&file, "one\ntwo\n").unwrap();
+    let mut h = harness();
+    h.state_mut().open_path(&file);
+    h.run();
+    let id = h.state_mut().compare_with_saved().unwrap();
+    h.run();
+    let p = side_pos(&h, "left", 0.0, 1.0);
+    click_at(&mut h, p);
+    h.event(Event::Text("x".into()));
+    h.run();
+    let copy = h.state().compares.get(id).unwrap().owned_buffer().unwrap();
+    assert_eq!(buffer_text(&h, copy), "one\ntwo\n");
+    // Closing the comparison removes the copy and the side views.
+    let views = {
+        let c = h.state().compares.get(id).unwrap();
+        [c.view(0), c.view(1)]
+    };
+    let app = h.state_mut();
+    app.compares.remove(id, &mut app.editor);
+    assert!(app.editor.buffer(copy).is_none());
+    assert!(views.iter().all(|v| app.editor.view(*v).is_none()));
+}

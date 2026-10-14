@@ -38,6 +38,13 @@ pub enum Job {
     Delete(Vec<PathBuf>),
     /// Write bytes atomically, creating the directory.
     Write { path: PathBuf, bytes: Vec<u8> },
+    /// Create an empty file; fails if anything is already at `path`.
+    CreateFile(PathBuf),
+    /// Create a folder; fails if anything is already at `path`.
+    CreateDir(PathBuf),
+    /// Rename a file or folder; fails if something else is at `to` (a
+    /// change of letter case alone is fine).
+    Rename { from: PathBuf, to: PathBuf },
 }
 
 /// A finished job: the tag `submit` returned, and the outcome.
@@ -101,6 +108,24 @@ fn run(job: Job) -> Result<(), String> {
                 std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
             }
             write_atomic(&path, &bytes).map_err(|e| format!("{}: {e}", path.display()))
+        }
+        Job::CreateFile(path) => std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .map(drop)
+            .map_err(|e| format!("{}: {e}", path.display())),
+        Job::CreateDir(path) => {
+            std::fs::create_dir(&path).map_err(|e| format!("{}: {e}", path.display()))
+        }
+        Job::Rename { from, to } => {
+            // On a case-insensitive file system `to` may be `from` itself
+            // with other letter case; that rename is fine.
+            let same_file = std::fs::canonicalize(&from).ok() == std::fs::canonicalize(&to).ok();
+            if !same_file && std::fs::symlink_metadata(&to).is_ok() {
+                return Err(format!("{} already exists", to.display()));
+            }
+            std::fs::rename(&from, &to).map_err(|e| format!("{}: {e}", from.display()))
         }
     }
 }

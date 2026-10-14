@@ -20,15 +20,29 @@ A fast, native text editor in the spirit of Notepad++, written in Rust with
   ([more](docs/column-selection.md)).
 - **Find and replace** with regular expressions, match case, whole word, wrap
   around and in-selection, `$1`/`${name}` in replacements, Count, Select All
-  (one caret per match) and Replace All as a single undo step. See
+  (one caret per match) and Replace All as a single undo step. Find All
+  lists the matches in one or every open document in a results panel, and
+  Replace All can also work on every open document. Find in Files
+  (Ctrl+Shift+F) searches a folder on disk, honouring `.gitignore`. See
   [docs/find-and-replace.md](docs/find-and-replace.md) for the regex dialect.
 - **Macros**: record, play back once, N times or to the end of the file, save
   them with a name and a shortcut ([more](docs/macros.md)).
+- **Code folding** by indentation (and by heading in Markdown), with
+  Notepad++'s fold shortcuts; folds are kept with the session
+  ([more](docs/view.md)).
+- **Document map**: a zoomed-out view of the file beside the text, to see
+  its shape and jump around ([more](docs/view.md#document-map)).
+- **Word wrap** at the pane's edge, with continuation rows indented like
+  the line ([more](docs/view.md#word-wrap)).
+- **Folders**: open a folder to browse its files in a sidebar, with
+  `.gitignore`d files hidden, live updates, and new file, new folder and
+  rename ([more](docs/workspace.md)).
 - **Tabs and split screen**: drag tabs into side-by-side or stacked panes, or
   open a second view of the same file; edits show in both.
 - **Compare**: a side-by-side diff of two files (or a file against its saved
   version) with aligned lines, changed words highlighted, and F8/Shift+F8 to
-  jump between changes.
+  jump between changes. Both sides are editable, with syntax highlighting,
+  and the diff updates as you type.
 - **Markdown preview** beside the editor, updating as you type, with images
   (PNG, JPEG, WebP, SVG) loaded from the document's folder.
 - **Backups and session restore**: unsaved work is backed up every few seconds
@@ -36,7 +50,8 @@ A fast, native text editor in the spirit of Notepad++, written in Rust with
   automatic saving of named files ([more](docs/backups-and-session.md)).
 - **Text tools**: UPPER/lower/Title/iNVERT case, sort lines (ascending,
   descending, case-insensitive, numeric, by a column selection), duplicate,
-  move, join lines and trim trailing whitespace.
+  move, join lines, trim trailing whitespace, and remove empty or duplicate
+  lines.
 - **Faithful file handling**: UTF-8, UTF-16 and legacy encodings are detected,
   and files are saved back with the same encoding, BOM and line endings
   (CRLF, LF or CR). Saves are atomic, so a crash never leaves a half-written
@@ -47,7 +62,7 @@ A fast, native text editor in the spirit of Notepad++, written in Rust with
 - Preferences for font, size, tabs or spaces, tab width, theme, and backups;
   an editable keymap; recent files; drag and drop to open.
 
-Not included (by design, for now): word wrap, code folding, right-to-left
+Not included (by design, for now): right-to-left
 text, proportional fonts, plugins and language servers.
 
 ## Download
@@ -110,15 +125,19 @@ Windows and Linux. macOS is not supported.
 | Undo, Redo | Ctrl+Z, Ctrl+Y (or Ctrl+Shift+Z) |
 | Find, Replace | Ctrl+F, Ctrl+H |
 | Find next/previous | F3, Shift+F3 (Enter, Shift+Enter in the panel) |
+| Find in Files | Ctrl+Shift+F |
 | Column selection | Alt+drag, Alt+Shift+arrows |
 | Add a caret | Ctrl+click, Ctrl+Alt+Up/Down |
 | Back to one caret | Esc |
 | Select a line | click its line number (drag for several) |
 | Duplicate, move, join lines | Ctrl+D, Ctrl+Shift+Up/Down, Ctrl+J |
+| Fold, unfold the block at the caret | Ctrl+Alt+F, Ctrl+Alt+Shift+F |
+| Fold all, unfold all, fold a level | Alt+0, Alt+Shift+0, Alt+1 … Alt+8 |
 | UPPERCASE, lowercase | Ctrl+Shift+U, Ctrl+U |
 | Title Case, iNVERT cASE | Alt+U, Ctrl+Alt+U |
 | Record/stop macro, play macro | Ctrl+Shift+R, Ctrl+Shift+P |
 | Markdown preview | Ctrl+Shift+M |
+| Show or hide the sidebar | Ctrl+Shift+E |
 | Next/previous difference | F8, Shift+F8 |
 
 Double-click the empty part of a tab bar to open a new tab there. Sorting and

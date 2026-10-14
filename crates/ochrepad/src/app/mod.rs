@@ -25,6 +25,8 @@ use crate::editor_view::{
 mod autosave;
 mod external;
 mod prefs;
+mod search;
+mod workspace;
 
 pub use autosave::{AutosaveSettings, Session, SessionBuffer, SessionTab};
 pub use external::DiskChange;
@@ -68,6 +70,10 @@ pub enum Tab {
 const NEXT_DIFF: KeyboardShortcut = KeyboardShortcut::new(Modifiers::NONE, Key::F8);
 const PREV_DIFF: KeyboardShortcut = KeyboardShortcut::new(Modifiers::SHIFT, Key::F8);
 
+const FIND_IN_FILES: KeyboardShortcut =
+    KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::F);
+const SIDEBAR: KeyboardShortcut =
+    KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::E);
 const PREVIEW: KeyboardShortcut =
     KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::M);
 
@@ -105,6 +111,14 @@ pub struct OchrepadApp {
     title: String,
     pub highlighting: Highlighting,
     pub find: FindPanel,
+    /// The Search Results panel.
+    pub results: crate::search_results::SearchResults,
+    replace_all_plan: Option<search::ReplaceAllPlan>,
+    /// The open folder's file tree.
+    tree: Option<crate::file_tree::FileTree>,
+    new_entry: Option<workspace::NewEntry>,
+    /// The time at the start of this frame.
+    now: f64,
     pub macros: Macros,
     persist: autosave::Persist,
     external: external::External,
@@ -157,6 +171,11 @@ impl OchrepadApp {
             title: String::new(),
             highlighting: Highlighting::new(Arc::new(ochrepad_syntax::Registry::load())),
             find: FindPanel::default(),
+            results: Default::default(),
+            replace_all_plan: None,
+            tree: None,
+            new_entry: None,
+            now: 0.0,
             macros: Macros::default(),
             persist: autosave::Persist::default(),
             external: external::External::default(),
@@ -559,7 +578,7 @@ impl OchrepadApp {
                 if let Some(path) = self.dock.find_tab(&Tab::Compare(id)) {
                     self.dock.remove_tab(path);
                 }
-                self.compares.map.remove(&id);
+                self.compares.remove(id, &mut self.editor);
             }
             self.editor.remove_buffer(buffer);
             self.discard_approved.remove(&buffer);
@@ -645,6 +664,7 @@ impl OchrepadApp {
 
     /// Draws the whole application into `ui`.
     pub fn show(&mut self, ui: &mut Ui) {
+        self.now = ui.input(|i| i.time);
         self.apply_settings(ui);
         self.poll_disk(ui);
         self.watch_files(ui);
@@ -690,9 +710,28 @@ impl OchrepadApp {
                         self.view_state_mut().request_focus();
                     }
                     FindRequest::Reveal => self.view_state_mut().reveal_caret(),
+                    FindRequest::FindAll { all_documents } => self.find_all(all_documents),
+                    FindRequest::ReplaceAllInAll => self.plan_replace_all_in_all(),
+                    FindRequest::FindInFiles => self.find_in_files(),
                 }
             }
         }
+        if self.results.poll() {
+            ui.ctx().request_repaint();
+        }
+        if self.results.open {
+            let match_bg = crate::theme::match_bg(ui.visuals());
+            let go = Panel::bottom("search-results")
+                .resizable(true)
+                .default_size(200.0)
+                .show(ui, |ui| self.results.ui(ui, match_bg))
+                .inner;
+            if let Some(go) = go {
+                self.go_to_result(go);
+            }
+        }
+
+        self.sidebar(ui);
 
         self.dark = ui.visuals().dark_mode;
         if self
@@ -710,6 +749,9 @@ impl OchrepadApp {
             let find_highlight = self.find.highlighter();
             let mut tabs = Tabs {
                 font_size: self.settings.font_size,
+                fold_margin: self.settings.fold_margin,
+                word_wrap: self.settings.word_wrap,
+                document_map: self.settings.document_map,
                 compares: &mut self.compares,
                 previews: &mut self.previews,
                 find_highlight,
@@ -754,6 +796,8 @@ impl OchrepadApp {
 
         self.autosave_tick(ui);
         self.dialogs(ui);
+        self.replace_all_dialog(ui);
+        self.new_entry_dialog(ui);
         self.external_dialog(ui);
         self.preferences_window(ui);
         if let Some((source, repeat)) = self.macros.dialogs(ui) {
@@ -840,7 +884,11 @@ impl OchrepadApp {
     }
 
     fn shortcuts(&mut self, ui: &mut Ui) {
-        let pressed = |ui: &mut Ui, s: &KeyboardShortcut| ui.input_mut(|i| i.consume_shortcut(s));
+        // egui matches shortcuts ignoring extra Shift and Alt; an extra Alt
+        // means a different binding (Ctrl+Alt+F folds, Ctrl+F finds).
+        let pressed = |ui: &mut Ui, s: &KeyboardShortcut| {
+            ui.input_mut(|i| (s.modifiers.alt || !i.modifiers.alt) && i.consume_shortcut(s))
+        };
         if pressed(ui, &NEW) {
             self.new_file();
         }
@@ -852,6 +900,10 @@ impl OchrepadApp {
         }
         if pressed(ui, &SAVE) {
             self.save();
+        }
+        // Before Ctrl+F, which would also match Ctrl+Shift+F.
+        if pressed(ui, &FIND_IN_FILES) {
+            self.open_find_in_files(None);
         }
         if pressed(ui, &FIND) {
             self.find.open(&self.editor, self.active, false);
@@ -883,17 +935,20 @@ impl OchrepadApp {
                 .focused_compare()
                 .and_then(|id| self.compares.get_mut(id))
         {
-            c.previous_change();
+            c.previous_change(&mut self.editor);
         }
         if pressed(ui, &NEXT_DIFF)
             && let Some(c) = self
                 .focused_compare()
                 .and_then(|id| self.compares.get_mut(id))
         {
-            c.next_change();
+            c.next_change(&mut self.editor);
         }
         if pressed(ui, &PREVIEW) {
             self.open_preview();
+        }
+        if pressed(ui, &SIDEBAR) {
+            self.settings.show_sidebar = !self.settings.show_sidebar;
         }
         if pressed(ui, &CLOSE) {
             self.close_view(self.active);
@@ -964,6 +1019,26 @@ impl OchrepadApp {
             self.open_dialog();
         }
         self.recent_files_menu(ui);
+        if ui.button("Open Folder…").clicked() {
+            self.open_folder_dialog();
+        }
+        let recent = self.settings.recent_folders.clone();
+        ui.add_enabled_ui(!recent.is_empty(), |ui| {
+            ui.menu_button("Recent Folders", |ui| {
+                for dir in recent {
+                    if ui.button(dir.display().to_string()).clicked() {
+                        self.open_folder(&dir);
+                    }
+                }
+            });
+        });
+        if ui
+            .add_enabled(self.tree.is_some(), Button::new("Close Folder"))
+            .clicked()
+        {
+            self.close_folder();
+        }
+        ui.separator();
         if item(ui, "Save", "Ctrl+S") {
             self.save();
         }
@@ -1046,6 +1121,37 @@ impl OchrepadApp {
             ("Trim Trailing Space", "", Action::TrimTrailingWhitespace),
         ] {
             if item(ui, label, shortcut) {
+                self.apply(action);
+            }
+        }
+        ui.separator();
+        for (label, action) in [
+            (
+                "Remove Empty Lines",
+                Action::RemoveEmptyLines {
+                    include_whitespace: false,
+                },
+            ),
+            (
+                "Remove Empty Lines (Containing Blank characters)",
+                Action::RemoveEmptyLines {
+                    include_whitespace: true,
+                },
+            ),
+            (
+                "Remove Duplicate Lines",
+                Action::RemoveDuplicateLines {
+                    consecutive_only: false,
+                },
+            ),
+            (
+                "Remove Consecutive Duplicate Lines",
+                Action::RemoveDuplicateLines {
+                    consecutive_only: true,
+                },
+            ),
+        ] {
+            if ui.button(label).clicked() {
                 self.apply(action);
             }
         }
@@ -1167,6 +1273,9 @@ impl OchrepadApp {
         if item(ui, "Replace…", "Ctrl+H") {
             self.find.open(&self.editor, self.active, true);
         }
+        if item(ui, "Find in Files…", "Ctrl+Shift+F") {
+            self.open_find_in_files(None);
+        }
         if item(ui, "Find Next", "F3") && !self.find.pattern.is_empty() {
             self.find.find(&mut self.editor, self.active, false);
             self.view_state_mut().reveal_caret();
@@ -1202,7 +1311,16 @@ impl OchrepadApp {
     }
 
     fn open_compare(&mut self, left: CompareSide, right: CompareSide) -> CompareId {
-        let compare = Compare::new(&self.editor, left, right);
+        let original = left.buffer();
+        let compare = Compare::new(&mut self.editor, left, right);
+        // A saved copy is highlighted like the file it is a copy of.
+        if let Some(copy) = compare.owned_buffer() {
+            let language = self.highlighting.language(original).to_owned();
+            let dark = self.dark;
+            if let Some(b) = self.editor.buffer_mut(copy) {
+                self.highlighting.set_language(b, &language, dark);
+            }
+        }
         let id = self.compares.add(compare);
         self.dock.push_to_focused_leaf(Tab::Compare(id));
         id
@@ -1256,7 +1374,7 @@ impl OchrepadApp {
             .clicked()
             && let Some(c) = focused.and_then(|id| self.compares.get_mut(id))
         {
-            c.next_change();
+            c.next_change(&mut self.editor);
         }
         if ui
             .add_enabled(
@@ -1266,7 +1384,7 @@ impl OchrepadApp {
             .clicked()
             && let Some(c) = focused.and_then(|id| self.compares.get_mut(id))
         {
-            c.previous_change();
+            c.previous_change(&mut self.editor);
         }
     }
 
@@ -1327,6 +1445,61 @@ impl OchrepadApp {
             .clicked()
         {
             self.cycle_tab(false);
+        }
+        ui.separator();
+        for (label, shortcut, action) in [
+            ("Fold All", "Alt+0", Action::FoldAll),
+            ("Unfold All", "Alt+Shift+0", Action::UnfoldAll),
+            ("Fold Current", "Ctrl+Alt+F", Action::Fold),
+            ("Unfold Current", "Ctrl+Alt+Shift+F", Action::Unfold),
+        ] {
+            if ui.add(Button::new(label).shortcut_text(shortcut)).clicked() {
+                self.apply(action);
+            }
+        }
+        for (label, unfold) in [("Fold Level", false), ("Unfold Level", true)] {
+            ui.menu_button(label, |ui| {
+                for level in 1..=8 {
+                    let shortcut = if unfold {
+                        format!("Alt+Shift+{level}")
+                    } else {
+                        format!("Alt+{level}")
+                    };
+                    if ui
+                        .add(Button::new(level.to_string()).shortcut_text(shortcut))
+                        .clicked()
+                    {
+                        self.apply(if unfold {
+                            Action::UnfoldLevel(level)
+                        } else {
+                            Action::FoldLevel(level)
+                        });
+                    }
+                }
+            });
+        }
+        ui.checkbox(&mut self.settings.fold_margin, "Show Fold Margin");
+        ui.checkbox(&mut self.settings.word_wrap, "Word Wrap");
+        ui.checkbox(&mut self.settings.document_map, "Document Map");
+        ui.separator();
+        if ui
+            .add(
+                Button::new("Sidebar")
+                    .selected(self.settings.show_sidebar)
+                    .shortcut_text("Ctrl+Shift+E"),
+            )
+            .clicked()
+        {
+            self.settings.show_sidebar = !self.settings.show_sidebar;
+        }
+        if ui
+            .add_enabled(
+                self.tree.is_some(),
+                Button::new("Reveal Active File in Sidebar"),
+            )
+            .clicked()
+        {
+            self.reveal_active_file();
         }
         ui.separator();
         let theme = &mut self.settings.theme;
@@ -1496,6 +1669,9 @@ impl OchrepadApp {
 /// Draws the tabs: one editor per view, Markdown previews and comparisons.
 struct Tabs<'a> {
     font_size: f32,
+    fold_margin: bool,
+    word_wrap: bool,
+    document_map: bool,
     compares: &'a mut Compares,
     previews: &'a mut Previews,
     find_highlight: Option<&'a ochrepad_core::Searcher>,
@@ -1566,7 +1742,16 @@ impl TabViewer for Tabs<'_> {
                 let (editor, untitled) = (&*self.editor, self.untitled);
                 let name = |b| buffer_name(editor, untitled, b);
                 if let Some(c) = self.compares.get_mut(id) {
-                    c.show(ui, editor, &name, id);
+                    let labels = [c.left.label(&name), c.right.label(&name)];
+                    c.show(
+                        ui,
+                        self.editor,
+                        self.highlighting,
+                        self.keymap,
+                        labels,
+                        self.font_size,
+                        self.find_highlight,
+                    );
                 }
                 return;
             }
@@ -1587,6 +1772,9 @@ impl TabViewer for Tabs<'_> {
         );
         let state = self.view_states.entry(view).or_default();
         state.font_size = self.font_size;
+        state.fold_margin = self.fold_margin;
+        state.word_wrap = self.word_wrap;
+        state.document_map = self.document_map;
         if *self.focus_request == Some(view) {
             state.request_focus();
             *self.focus_request = None;
@@ -1602,6 +1790,7 @@ impl TabViewer for Tabs<'_> {
             Decorations {
                 styler: styler.as_mut().map(|s| s as &mut dyn LineStyler),
                 find_highlight: self.find_highlight,
+                row_style: None,
             },
         );
     }
@@ -1638,7 +1827,7 @@ impl TabViewer for Tabs<'_> {
             }
             Tab::Preview(_) => OnCloseResponse::Close,
             Tab::Compare(id) => {
-                self.compares.map.remove(id);
+                self.compares.remove(*id, self.editor);
                 OnCloseResponse::Close
             }
         }

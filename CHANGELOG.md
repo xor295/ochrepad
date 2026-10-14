@@ -8,6 +8,67 @@ adds features and a patch version fixes bugs).
 Each release's section becomes its GitHub release notes, so write it for
 people downloading the release.
 
+## [Unreleased]
+
+## [0.2.0] - 2026-10-13
+
+### Added
+
+- Code folding. Blocks fold by indentation, and Markdown files fold by
+  heading. Click the chevron beside a line number, or use Notepad++'s
+  shortcuts: Ctrl+Alt+F and Ctrl+Alt+Shift+F for the block at the caret,
+  Alt+0 and Alt+Shift+0 for everything, Alt+1 to Alt+8 (with Shift to
+  unfold) for one level. The same commands are in the View menu. Folds are
+  kept with the session. See docs/view.md.
+- Word wrap (View > Word Wrap). Long lines wrap at the edge of the pane,
+  after spaces where possible, and their continuation rows are indented
+  like the line. Up and Down move by row; Home and End go to the start or
+  end of the row first, then of the line.
+- Document map: a zoomed-out view of the document on the right of each
+  editor. Drag its marker to scroll, or click to jump there. View >
+  Document Map turns it off.
+- Folders: File > Open Folder (or `ochrepad <folder>`, or dropping a folder
+  on the window) shows the folder's files in a sidebar (View > Sidebar,
+  Ctrl+Shift+E). Files ignored by `.gitignore` are hidden. The tree follows
+  changes on disk, and its menus create files and folders, rename (F2),
+  copy paths and reveal files in the file manager. Renaming an open file
+  keeps its tab. The folder comes back with the session; File > Recent
+  Folders lists the last ten.
+- Find All in Current Document and Find All in All Open Documents list every
+  match in a new Search Results panel; click a result to go to it. Replace
+  All in All Open Documents replaces in every open document after asking,
+  one undo step per document.
+- Find in Files (Search > Find in Files…, Ctrl+Shift+F): searches the files
+  in a folder, with filters such as `*.rs; *.toml`, subfolders, and
+  `.gitignore`d files left out unless asked for. Files in any encoding are
+  found; binary files and files over 50 MB are skipped. Open files are
+  searched with their unsaved changes. Results stream into the Search
+  Results panel, and Stop ends a long search.
+- Edit > Line Operations: Remove Empty Lines, Remove Empty Lines (Containing
+  Blank characters), Remove Duplicate Lines and Remove Consecutive Duplicate
+  Lines. They work on the selected lines, or on the whole document when
+  nothing is selected.
+- Smart highlighting: selecting text highlights its other occurrences, as in
+  Notepad++.
+
+### Changed
+
+- The compare view is editable: each side is a full editor (typing, undo,
+  multiple carets, syntax highlighting), the two sides scroll together, and
+  the differences update a moment after you stop typing. A side showing the
+  saved file stays read-only.
+- Ctrl+F and Ctrl+H select the search text, so you can type a new search
+  straight away even when the find panel is already open.
+- The find panel is more compact: Find All is one menu, Replace and In
+  Files are toggles, and × closes it. The tab bar is a little taller.
+- The gutter is one column wider, for the fold margin.
+
+### Fixed
+
+- Symbols such as ✓ and ✗ showed as boxes. A system symbol font (Segoe UI
+  Symbol on Windows, DejaVu Sans Mono on Linux) is now used for characters
+  the editor font lacks.
+
 ## [0.1.0] - 2026-10-10
 
 The first release, for Windows and Linux.
@@ -46,5 +107,6 @@ The first release, for Windows and Linux.
   highlighting size limit; an editable keymap; recent files; drag and drop.
 - A warm light and dark theme with ochre accents.
 
-[Unreleased]: https://github.com/xor295/ochrepad/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/xor295/ochrepad/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/xor295/ochrepad/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/xor295/ochrepad/releases/tag/v0.1.0

@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::fold::FoldStrategy;
 use crate::history::{History, Revision};
 use crate::text::Document;
 
@@ -78,6 +79,10 @@ pub struct Buffer {
     pub(crate) next_revision: Revision,
     saved_revision: Revision,
     pub language: Option<String>,
+    /// How fold regions are found; the app sets it from the language.
+    pub fold_strategy: FoldStrategy,
+    /// Edits are refused (a compare view's copy of a file on disk).
+    pub read_only: bool,
     pub meta: FileMeta,
     /// Line edits since the last `take_line_edits`, for the highlighter.
     line_edits: Vec<LineEdit>,
@@ -93,6 +98,8 @@ impl Buffer {
             next_revision: 1,
             saved_revision: 0,
             language: None,
+            fold_strategy: FoldStrategy::Indent,
+            read_only: false,
             meta,
             line_edits: Vec::new(),
         }

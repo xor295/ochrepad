@@ -192,6 +192,8 @@ impl OchrepadApp {
         for path in dropped {
             if path.is_file() {
                 self.open_path(&path);
+            } else if path.is_dir() {
+                self.open_folder(&path);
             }
         }
         if hovering {

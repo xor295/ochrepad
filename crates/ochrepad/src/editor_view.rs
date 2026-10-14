@@ -5,10 +5,12 @@ use egui::{
     Stroke, Ui, Vec2, WidgetInfo, WidgetType,
 };
 use ochrepad_core::{
-    Action, ByteOffset, Document, Editor, Motion, Selection, SelectionSet, ViewId,
+    Action, ByteOffset, DisplayMap, Document, Editor, Motion, RowPos, SearchOptions, SearchQuery,
+    Searcher, Selection, SelectionSet, ViewId,
 };
 use ochrepad_fileio::normalize_line_endings;
 
+use crate::doc_map::{MAP_W, MapView};
 use crate::keymap::{EditorCommand, Keymap};
 use crate::layout::{LayoutCache, LineLayout, Styling, visual_col_at_x};
 
@@ -59,11 +61,27 @@ pub struct EditorViewState {
     max_width: f32,
     reveal_caret: bool,
     request_focus: bool,
+    /// The selected text and its searcher, for smart highlighting.
+    smart: Option<(String, Option<Searcher>)>,
+    /// Show the fold margin (chevrons) in the gutter.
+    pub fold_margin: bool,
+    /// Wrap lines at the pane's width.
+    pub word_wrap: bool,
+    /// Show the document map beside the text.
+    pub document_map: bool,
+    map_cache: crate::doc_map::MapCache,
+    /// Dragging the map's viewport marker: where it was grabbed, from its top.
+    map_drag: Option<f32>,
 }
 
 impl Default for EditorViewState {
     fn default() -> Self {
         Self {
+            fold_margin: true,
+            word_wrap: false,
+            document_map: true,
+            map_cache: Default::default(),
+            map_drag: None,
             cache: LayoutCache::default(),
             font_size: 14.0,
             last_activity: 0.0,
@@ -74,6 +92,7 @@ impl Default for EditorViewState {
             max_width: 0.0,
             reveal_caret: true,
             request_focus: false,
+            smart: None,
         }
     }
 }
@@ -103,20 +122,93 @@ struct Frame {
     cell_w: f32,
     line_h: f32,
     rows_full: usize,
-    line_count: usize,
-    max_scroll: f64,
+    /// Lines that are not hidden, for the scrollbar.
+    visible_lines: usize,
+    /// Width of the gutter's right part, after the line numbers: the fold
+    /// margin, or one cell of padding without it.
+    fold_w: f32,
+    fold_margin: bool,
+    /// The document map strip, when shown.
+    map: Option<Rect>,
 }
 
 impl Frame {
     fn text_left(&self) -> f32 {
         self.content.min.x + TEXT_PAD
     }
+
+    /// Whether `p` is in the fold margin.
+    fn in_fold_margin(&self, p: Pos2) -> bool {
+        self.fold_margin && self.gutter.contains(p) && p.x >= self.gutter.max.x - self.fold_w
+    }
+
+    /// The `⋯` marker after a folded line whose text ends at `x_end`.
+    fn fold_pill(&self, x_end: f32, y: f32) -> Rect {
+        let h = (self.line_h * 0.7).round();
+        Rect::from_min_size(
+            Pos2::new(x_end + self.cell_w, y + (self.line_h - h) / 2.0),
+            Vec2::new(self.cell_w * 3.0, h),
+        )
+    }
+}
+
+/// The scroll position: the top display row and the fraction of it
+/// scrolled past.
+#[derive(Clone, Copy, PartialEq)]
+struct Top {
+    row: RowPos,
+    frac: f32,
+}
+
+impl Top {
+    /// The scrollbar offset (in visible lines).
+    fn offset(self, rows: &DisplayMap) -> f64 {
+        rows.offset_of(self.row, self.frac)
+    }
+
+    fn at_offset(rows: &DisplayMap, offset: f64) -> Self {
+        let (row, frac) = rows.pos_at_offset(offset);
+        Top { row, frac }
+    }
+
+    fn scrolled(self, rows: &DisplayMap, by: f64) -> Self {
+        let (row, frac) = rows.scroll_by(self.row, self.frac, by);
+        Top { row, frac }
+    }
+
+    /// Keeps the last row from scrolling above the bottom of the viewport.
+    fn clamped(self, rows: &DisplayMap, rows_full: usize) -> Self {
+        let max = rows.max_top(rows_full);
+        if self.row > max || (self.row == max && self.frac > 0.0) {
+            Top {
+                row: max,
+                frac: 0.0,
+            }
+        } else {
+            self
+        }
+    }
+}
+
+/// The display rows of `view`.
+fn display_map(editor: &Editor, view: ViewId) -> DisplayMap<'_> {
+    let v = editor.view(view).expect("view exists");
+    let b = editor.buffer(v.buffer()).expect("view's buffer exists");
+    DisplayMap::new(b, v, editor.settings.tab_width)
 }
 
 enum Op {
     Apply(Action),
     Copy,
     Cut,
+}
+
+/// Per-row colours from outside the editor: a compare view's diff.
+pub trait RowStyle {
+    /// The background of `row` (`blank` for a padding row).
+    fn background(&self, row: RowPos, blank: bool) -> Option<egui::Color32>;
+    /// Byte ranges (within the line) to tint on `line`, and their colour.
+    fn spans(&self, line: usize) -> (Vec<std::ops::Range<usize>>, egui::Color32);
 }
 
 /// Optional extras drawn over the text.
@@ -126,6 +218,8 @@ pub struct Decorations<'a> {
     pub styler: Option<&'a mut dyn LineStyler>,
     /// Highlights every match of the find panel's pattern.
     pub find_highlight: Option<&'a ochrepad_core::Searcher>,
+    /// Row backgrounds and spans (the compare view).
+    pub row_style: Option<&'a dyn RowStyle>,
 }
 
 /// Shows the editor for `view` filling the available space. `label` names the
@@ -149,19 +243,30 @@ pub fn editor_view(
     response.widget_info(|| WidgetInfo::labeled(WidgetType::TextEdit, true, label));
 
     let now = ui.input(|i| i.time);
-    let tab_width = editor.settings.tab_width;
     let font = FontId::monospace(state.font_size);
     let (cell_w, line_h) = ui.fonts_mut(|f| (f.glyph_width(&font, 'M'), f.row_height(&font)));
 
-    let geometry = |line_count: usize| {
+    let fold_margin = state.fold_margin;
+    let fold_w = if fold_margin { 2.0 } else { 1.0 } * cell_w;
+    let wrap = state.word_wrap;
+    let show_map = state.document_map;
+    // No horizontal scrollbar while lines wrap.
+    let hbar_h = if wrap { 0.0 } else { SCROLLBAR_W };
+    let geometry = |line_count: usize, visible_lines: usize| {
         let digits = line_count.to_string().len().max(3);
-        let gutter_w = (digits + 1) as f32 * cell_w + TEXT_PAD;
+        let gutter_w = digits as f32 * cell_w + fold_w + TEXT_PAD;
         let body = Rect::from_min_max(
             rect.min,
-            Pos2::new(rect.max.x - SCROLLBAR_W, rect.max.y - SCROLLBAR_W),
+            Pos2::new(rect.max.x - SCROLLBAR_W, rect.max.y - hbar_h),
         );
         let gutter = Rect::from_min_max(body.min, Pos2::new(body.min.x + gutter_w, body.max.y));
-        let content = Rect::from_min_max(Pos2::new(gutter.max.x, body.min.y), body.max);
+        let mut content = Rect::from_min_max(Pos2::new(gutter.max.x, body.min.y), body.max);
+        // The map takes the right of the text area while 40 columns of text
+        // still fit beside it.
+        let map = (show_map && content.width() - MAP_W >= 40.0 * cell_w).then(|| {
+            content.max.x -= MAP_W;
+            Rect::from_min_max(Pos2::new(content.max.x, content.min.y), body.max)
+        });
         let rows_full = ((content.height() / line_h).floor() as usize).max(1);
         Frame {
             vbar: Rect::from_min_max(
@@ -178,8 +283,10 @@ pub fn editor_view(
             cell_w,
             line_h,
             rows_full,
-            line_count,
-            max_scroll: line_count.saturating_sub(rows_full) as f64,
+            visible_lines,
+            fold_w,
+            fold_margin,
+            map,
         }
     };
 
@@ -205,10 +312,28 @@ pub fn editor_view(
         });
     }
 
+    // The wrap width follows the pane (the core's motions use it). One cell
+    // stays free at the right for the caret at the end of a full row.
+    let wrap_cols = wrap.then(|| {
+        let line_count = doc_of(editor, buffer_id).line_count();
+        let content = geometry(line_count, line_count).content;
+        ((content.width() - TEXT_PAD - cell_w) / cell_w)
+            .floor()
+            .max(1.0) as usize
+    });
+    if let Some(v) = editor.view_mut(view)
+        && v.wrap_cols != wrap_cols
+    {
+        v.wrap_cols = wrap_cols;
+    }
+
     // --- Keyboard, clipboard and IME ------------------------------------------
     let page = {
         let line_count = doc_of(editor, buffer_id).line_count();
-        geometry(line_count).rows_full.saturating_sub(1).max(1)
+        geometry(line_count, line_count)
+            .rows_full
+            .saturating_sub(1)
+            .max(1)
     };
     let mut ops = Vec::new();
     if focused {
@@ -216,10 +341,15 @@ pub fn editor_view(
             match event {
                 Event::Key {
                     key,
+                    physical_key,
                     pressed: true,
                     modifiers,
                     ..
-                } => match keymap.lookup(key, modifiers) {
+                } => match keymap.lookup(key, modifiers).or_else(|| {
+                    // With Shift, a digit arrives as its symbol (Alt+Shift+1
+                    // as "!"); the physical key still matches Alt+Shift+1.
+                    physical_key.and_then(|k| keymap.lookup(k, modifiers))
+                }) {
                     Some(EditorCommand::Action(a)) => ops.push(Op::Apply(a.clone())),
                     Some(EditorCommand::PageUp { extend }) => {
                         ops.push(Op::Apply(Action::MoveCursor {
@@ -284,31 +414,61 @@ pub fn editor_view(
         state.last_activity = now;
     }
 
-    // From here on the document only changes through mouse selection.
-    let f = geometry(doc_of(editor, buffer_id).line_count());
-    let (mut scroll, mut x_off) = editor
+    // From here on the document only changes through mouse selection, which
+    // does not change the display rows.
+    let f = {
+        let rows = display_map(editor, view);
+        geometry(rows.doc().line_count(), rows.visible_line_count())
+    };
+    let (mut top, mut x_off) = editor
         .view(view)
         .map(|v| {
             (
-                v.scroll.first_line as f64 + v.scroll.line_fraction as f64,
+                Top {
+                    row: RowPos::new(v.scroll.first_line, v.scroll.first_sub),
+                    frac: v.scroll.line_fraction,
+                },
                 v.scroll.x_offset,
             )
         })
-        .unwrap_or_default();
+        .expect("view exists");
+    let rows = display_map(editor, view);
+    // The document may have shrunk, or rewrapped, since the last frame.
+    top.row = rows.clamp_row(top.row);
+    top = top.clamped(&rows, f.rows_full);
+    if wrap {
+        x_off = 0.0;
+    }
+    let max_offset = Top {
+        row: rows.max_top(f.rows_full),
+        frac: 0.0,
+    }
+    .offset(&rows);
 
     // --- Wheel -------------------------------------------------------------------
     if response.contains_pointer() {
         let d = ui.input(|i| i.smooth_scroll_delta);
         if d != Vec2::ZERO {
-            scroll -= (d.y / line_h) as f64;
+            top = top.scrolled(&rows, -(d.y / line_h) as f64);
             x_off -= d.x;
             ui.input_mut(|i| i.smooth_scroll_delta = Vec2::ZERO);
         }
     }
 
     // --- Scrollbars ---------------------------------------------------------------
-    let h_max = (state.max_width + 4.0 * cell_w - f.content.width()).max(0.0);
-    let (v_thumb, h_thumb) = thumbs(&f, scroll, x_off, h_max, state.max_width);
+    let h_max = if wrap {
+        0.0
+    } else {
+        (state.max_width + 4.0 * cell_w - f.content.width()).max(0.0)
+    };
+    let (v_thumb, h_thumb) = thumbs(
+        &f,
+        top.offset(&rows),
+        max_offset,
+        x_off,
+        h_max,
+        state.max_width,
+    );
     let (pressed, down, pointer, dt) = ui.input(|i| {
         (
             i.pointer.primary_pressed(),
@@ -345,7 +505,7 @@ pub fn editor_view(
             BarDrag::Vertical { grab } => {
                 let track = f.vbar.height() - v_thumb.height();
                 let t = ((p.y - grab - f.vbar.min.y) / track.max(1.0)).clamp(0.0, 1.0);
-                scroll = t as f64 * f.max_scroll;
+                top = Top::at_offset(&rows, t as f64 * max_offset);
             }
             BarDrag::Horizontal { grab } => {
                 let track = f.hbar.width() - h_thumb.width();
@@ -354,11 +514,65 @@ pub fn editor_view(
             }
         }
     }
-    scroll = scroll.clamp(0.0, f.max_scroll);
+    top = top.clamped(&rows, f.rows_full);
     x_off = x_off.clamp(0.0, h_max.max(x_off.min(state.max_width)));
+
+    // --- Document map --------------------------------------------------------------
+    if !down {
+        state.map_drag = None;
+    }
+    if let Some(strip) = f.map {
+        let rows = display_map(editor, view);
+        let map = MapView::new(
+            &rows,
+            strip,
+            top.row,
+            top.offset(&rows),
+            max_offset,
+            f.rows_full,
+        );
+        if pressed
+            && state.bar_drag.is_none()
+            && let Some(p) = pointer
+            && response.contains_pointer()
+            && strip.contains(p)
+        {
+            let marker = map.viewport_rect(strip);
+            if marker.contains(p) {
+                state.map_drag = Some(p.y - marker.min.y);
+            } else if let Some(row) = map.row_at(strip, p.y) {
+                // Centre the editor on the clicked row; keep dragging from
+                // the middle of the marker.
+                let half = f.rows_full as isize / 2;
+                top = Top {
+                    row: rows.advance(row, -half),
+                    frac: 0.0,
+                }
+                .clamped(&rows, f.rows_full);
+                state.map_drag = Some(marker.height() / 2.0);
+            }
+        } else if let (Some(grab), Some(p)) = (state.map_drag, pointer) {
+            let t = ((p.y - grab - strip.min.y) / map.track).clamp(0.0, 1.0);
+            top = Top::at_offset(&rows, t as f64 * max_offset).clamped(&rows, f.rows_full);
+        }
+    }
+
+    // --- Fold margin and folded-line markers ------------------------------------
+    let mut fold_click = false;
+    if pressed
+        && state.bar_drag.is_none()
+        && let Some(p) = pointer
+        && response.contains_pointer()
+        && let Some(line) = fold_target(editor, view, &mut state.cache, &f, top, x_off, ui, p)
+    {
+        editor.toggle_fold_at(view, line);
+        fold_click = true;
+        state.last_activity = now;
+    }
 
     // --- Mouse in the text area ------------------------------------------------
     if pressed
+        && !fold_click
         && state.bar_drag.is_none()
         && let Some(p) = pointer
         && response.contains_pointer()
@@ -369,17 +583,7 @@ pub fn editor_view(
             _ => 1,
         };
         state.last_press = Some((now, p, count));
-        let hit = hit_test(
-            editor,
-            buffer_id,
-            &mut state.cache,
-            &f,
-            scroll,
-            x_off,
-            tab_width,
-            ui,
-            p,
-        );
+        let hit = hit_test(editor, view, &mut state.cache, &f, top, x_off, ui, p);
         let mods = ui.input(|i| i.modifiers);
         let shift = mods.shift;
         // A click on a line number selects the whole line (and dragging
@@ -389,7 +593,8 @@ pub fn editor_view(
         let mode = match count {
             _ if in_gutter => DragMode::Line,
             _ if mods.alt => {
-                let (line, col) = line_col_at(&f, scroll, x_off, p);
+                let (line, col) =
+                    line_col_at(editor, view, &mut state.cache, &f, top, x_off, ui, p);
                 DragMode::Column(line, col)
             }
             1 => DragMode::Char,
@@ -489,10 +694,11 @@ pub fn editor_view(
     if let (Some(drag), Some(p)) = (&state.drag, pointer) {
         // Autoscroll when dragging past the edges.
         let speed = |dist: f32| (4.0 + 20.0 * dist / line_h) * dt;
+        let rows = display_map(editor, view);
         if p.y < f.content.min.y {
-            scroll -= speed(f.content.min.y - p.y) as f64;
+            top = top.scrolled(&rows, -speed(f.content.min.y - p.y) as f64);
         } else if p.y > f.content.max.y {
-            scroll += speed(p.y - f.content.max.y) as f64;
+            top = top.scrolled(&rows, speed(p.y - f.content.max.y) as f64);
         }
         if p.x > f.content.max.x {
             x_off += speed(p.x - f.content.max.x) * cell_w;
@@ -502,21 +708,12 @@ pub fn editor_view(
         if !f.content.contains(p) {
             ui.ctx().request_repaint();
         }
-        scroll = scroll.clamp(0.0, f.max_scroll);
+        top = top.clamped(&rows, f.rows_full);
         let clamped = p.clamp(f.content.min, f.content.max - Vec2::splat(0.5));
-        let head = hit_test(
-            editor,
-            buffer_id,
-            &mut state.cache,
-            &f,
-            scroll,
-            x_off,
-            tab_width,
-            ui,
-            clamped,
-        );
+        let head = hit_test(editor, view, &mut state.cache, &f, top, x_off, ui, clamped);
         if let DragMode::Column(anchor_line, anchor_col) = drag.mode {
-            let (head_line, head_col) = line_col_at(&f, scroll, x_off, clamped);
+            let (head_line, head_col) =
+                line_col_at(editor, view, &mut state.cache, &f, top, x_off, ui, clamped);
             let rect = editor.view(view).and_then(|v| v.selections.rect().cloned());
             if rect.is_none_or(|r| (r.end_line, r.end_col) != (head_line, head_col)) {
                 let _ = editor.apply(
@@ -562,27 +759,37 @@ pub fn editor_view(
         state.reveal_caret = false;
         if let Some(head) = editor.view(view).map(|v| v.selections.primary().head) {
             let doc = doc_of(editor, buffer_id);
-            let line = doc.line_of(head);
-            if (line as f64) < scroll {
-                scroll = line as f64;
-            } else if line as f64 + 1.0 > scroll + f.rows_full as f64 {
-                scroll = line as f64 + 1.0 - f.rows_full as f64;
+            let rows = display_map(editor, view);
+            let row = rows.row_of(head);
+            let line = row.line;
+            // The lowest top row that still shows the caret's row.
+            let lowest = rows.advance(row, -(f.rows_full as isize - 1));
+            if row < top.row || (row == top.row && top.frac > 0.0) {
+                top = Top { row, frac: 0.0 };
+            } else if top.row < lowest {
+                top = Top {
+                    row: lowest,
+                    frac: 0.0,
+                };
             }
-            scroll = scroll.clamp(0.0, f.max_scroll);
+            top = top.clamped(&rows, f.rows_full);
+            let row_start = rows.row_range(row).start;
             let layout = line_layout(
                 editor,
                 buffer_id,
                 &mut state.cache,
                 line,
                 &f,
-                tab_width,
                 ui,
                 Styling::Any,
             );
-            let x = layout.x_of(head.0 - doc.line_start(line).0);
+            let line_start = doc.line_start(line).0;
+            let x = layout.x_of(head.0 - line_start) - layout.x_of(row_start.0 - line_start);
             let margin = 4.0 * cell_w;
             let visible = f.content.width() - TEXT_PAD - cell_w;
-            if x < x_off {
+            if wrap {
+                // Rows fit the pane.
+            } else if x < x_off {
                 x_off = (x - margin).max(0.0);
             } else if x > x_off + visible {
                 x_off = x - visible + margin;
@@ -591,18 +798,24 @@ pub fn editor_view(
     }
 
     if let Some(v) = editor.view_mut(view) {
-        v.scroll.first_line = scroll.floor() as usize;
-        v.scroll.line_fraction = scroll.fract() as f32;
+        v.scroll.first_line = top.row.line;
+        v.scroll.first_sub = top.row.sub;
+        v.scroll.line_fraction = top.frac;
         v.scroll.x_offset = x_off;
     }
 
-    if response.hovered()
-        && ui
-            .input(|i| i.pointer.hover_pos())
-            .is_some_and(|p| f.content.contains(p))
-    {
-        ui.ctx().set_cursor_icon(CursorIcon::Text);
+    let hover = ui
+        .input(|i| i.pointer.hover_pos())
+        .filter(|_| response.hovered());
+    if let Some(p) = hover {
+        if fold_target(editor, view, &mut state.cache, &f, top, x_off, ui, p).is_some() {
+            ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
+        } else if f.content.contains(p) {
+            ui.ctx().set_cursor_icon(CursorIcon::Text);
+        }
     }
+    // Fold chevrons for every header show while the pointer is on the gutter.
+    let show_chevrons = hover.is_some_and(|p| f.gutter.contains(p));
 
     paint(
         ui,
@@ -612,17 +825,113 @@ pub fn editor_view(
         state,
         &f,
         Scroll {
-            scroll,
+            top,
+            max_offset,
             x_off,
             h_max,
         },
         focused,
         now,
-        tab_width,
+        show_chevrons,
         decorations.styler,
         decorations.find_highlight,
+        decorations.row_style,
     );
     response
+}
+
+/// A fold chevron in the fold margin of the row at `y`: pointing right when
+/// folded, down when open.
+fn paint_chevron(
+    painter: &egui::Painter,
+    f: &Frame,
+    visuals: &egui::Visuals,
+    y: f32,
+    folded: bool,
+) {
+    let c = Pos2::new(f.gutter.max.x - f.fold_w / 2.0, y + f.line_h / 2.0);
+    let s = (f.cell_w * 0.3).round().max(3.0);
+    let points = if folded {
+        [
+            c + Vec2::new(-s / 2.0, -s),
+            c + Vec2::new(s / 2.0, 0.0),
+            c + Vec2::new(-s / 2.0, s),
+        ]
+    } else {
+        [
+            c + Vec2::new(-s, -s / 2.0),
+            c + Vec2::new(0.0, s / 2.0),
+            c + Vec2::new(s, -s / 2.0),
+        ]
+    };
+    let color = if folded {
+        visuals.text_color()
+    } else {
+        visuals.weak_text_color()
+    };
+    painter.line(points.to_vec(), Stroke::new(1.5, color));
+}
+
+/// The `⋯` marker after a folded line whose text ends at `x_end`.
+fn paint_fold_pill(
+    painter: &egui::Painter,
+    f: &Frame,
+    visuals: &egui::Visuals,
+    x_end: f32,
+    y: f32,
+) {
+    let r = f.fold_pill(x_end, y);
+    painter.rect_filled(r, r.height() / 2.0, visuals.widgets.inactive.bg_fill);
+    let dot = (f.cell_w * 0.12).max(1.2);
+    for i in [-1.0, 0.0, 1.0] {
+        let p = r.center() + Vec2::new(i * f.cell_w * 0.75, 0.0);
+        painter.circle_filled(p, dot, visuals.weak_text_color());
+    }
+}
+
+/// The header line a click at `p` folds or unfolds: a fold header (or a
+/// folded line) in the fold margin, or a folded line's `⋯` marker.
+#[allow(clippy::too_many_arguments)]
+fn fold_target(
+    editor: &Editor,
+    view: ViewId,
+    cache: &mut LayoutCache,
+    f: &Frame,
+    top: Top,
+    x_off: f32,
+    ui: &Ui,
+    p: Pos2,
+) -> Option<usize> {
+    let in_margin = f.in_fold_margin(p);
+    if !in_margin && !f.content.contains(p) {
+        return None;
+    }
+    let rows = display_map(editor, view);
+    let down = ((p.y - f.content.min.y) / f.line_h + top.frac).floor();
+    let (row, moved) = rows.step(top.row, down as isize);
+    if moved != down as isize {
+        return None; // below the last row
+    }
+    let v = editor.view(view)?;
+    let b = editor.buffer(v.buffer())?;
+    let folded = v.folds().is_folded(row.line);
+    if in_margin {
+        let header = folded
+            || ochrepad_core::fold::is_header(
+                b.doc(),
+                row.line,
+                b.fold_strategy,
+                editor.settings.tab_width,
+            );
+        return (row.sub == 0 && header).then_some(row.line);
+    }
+    if !folded || rows.row_range(row).end != b.doc().line_end(row.line) {
+        return None;
+    }
+    let layout = line_layout(editor, v.buffer(), cache, row.line, f, ui, Styling::Any);
+    let y = f.content.min.y + (down - top.frac) * f.line_h;
+    let x_end = f.text_left() - x_off - row_x0(&rows, &layout, row, f.cell_w) + layout.width;
+    f.fold_pill(x_end, y).contains(p).then_some(row.line)
 }
 
 /// Draws a line's text from its layout with its first cell at `x0`, row top
@@ -665,6 +974,45 @@ pub(crate) fn paint_line_text(
 }
 
 /// The egui id of the editor widget for `view` (it holds keyboard focus).
+/// Longest selection, in bytes, that smart highlighting searches for.
+const SMART_MAX_LEN: usize = 1024;
+
+/// The searcher for smart highlighting, as in Notepad++: when the primary
+/// selection is non-blank text on one line, every exact (case-sensitive)
+/// occurrence of it is highlighted. The searcher is rebuilt only when the
+/// selected text changes.
+fn smart_searcher<'s>(
+    cache: &'s mut Option<(String, Option<Searcher>)>,
+    doc: &Document,
+    sels: &SelectionSet,
+) -> Option<&'s Searcher> {
+    let sel = sels.primary();
+    let range = sel.range();
+    if sel.is_empty()
+        || range.end.0 - range.start.0 > SMART_MAX_LEN
+        || doc.line_of(range.start) != doc.line_of(range.end)
+    {
+        *cache = None;
+        return None;
+    }
+    let text = doc.slice(range);
+    if text.trim().is_empty() {
+        *cache = None;
+        return None;
+    }
+    if cache.as_ref().is_none_or(|(t, _)| *t != text) {
+        let query = SearchQuery::new(
+            text.clone(),
+            SearchOptions {
+                match_case: true,
+                ..SearchOptions::default()
+            },
+        );
+        *cache = Some((text, Searcher::new(&query).ok()));
+    }
+    cache.as_ref().and_then(|(_, s)| s.as_ref())
+}
+
 pub fn editor_id(view: ViewId) -> Id {
     Id::new(("ochrepad-editor", view.0))
 }
@@ -730,21 +1078,47 @@ pub fn copy_selection(ctx: &egui::Context, editor: &Editor, view: ViewId) -> boo
     true
 }
 
-/// Line and visual column under `p` (columns may lie past the line end).
-fn line_col_at(f: &Frame, scroll: f64, x_off: f32, p: Pos2) -> (usize, ochrepad_core::VisualCol) {
-    let row = ((p.y - f.content.min.y) / f.line_h) as f64 + scroll;
-    let line = (row.max(0.0).floor() as usize).min(f.line_count - 1);
-    (line, visual_col_at_x(p.x - f.text_left() + x_off, f.cell_w))
+/// The display row under `p`: rows below the top row, clamped to the
+/// document.
+fn row_at(rows: &DisplayMap, f: &Frame, top: Top, p: Pos2) -> RowPos {
+    let down = ((p.y - f.content.min.y) / f.line_h + top.frac).floor();
+    rows.advance(top.row, down as isize)
 }
 
+/// The x (in the line's layout) of the start of `row`, less its
+/// continuation indent: a wrapped row draws its slice of the line's layout
+/// shifted left by this much.
+fn row_x0(rows: &DisplayMap, layout: &LineLayout, row: RowPos, cell_w: f32) -> f32 {
+    let line_start = rows.doc().line_start(row.line).0;
+    layout.x_of(rows.row_range(row).start.0 - line_start) - rows.row_indent(row) as f32 * cell_w
+}
+
+/// Line and visual column under `p` (columns may lie past the line end).
 #[allow(clippy::too_many_arguments)]
+fn line_col_at(
+    editor: &Editor,
+    view: ViewId,
+    cache: &mut LayoutCache,
+    f: &Frame,
+    top: Top,
+    x_off: f32,
+    ui: &Ui,
+    p: Pos2,
+) -> (usize, ochrepad_core::VisualCol) {
+    let rows = display_map(editor, view);
+    let row = row_at(&rows, f, top, p);
+    let buffer = editor.view(view).expect("view exists").buffer();
+    let layout = line_layout(editor, buffer, cache, row.line, f, ui, Styling::Any);
+    let x = p.x - f.text_left() + x_off + row_x0(&rows, &layout, row, f.cell_w);
+    (row.line, visual_col_at_x(x, f.cell_w))
+}
+
 fn line_layout(
     editor: &Editor,
     buffer: ochrepad_core::BufferId,
     cache: &mut LayoutCache,
     line: usize,
     f: &Frame,
-    tab_width: usize,
     ui: &Ui,
     styling: Styling<'_>,
 ) -> std::sync::Arc<LineLayout> {
@@ -754,7 +1128,7 @@ fn line_layout(
         (buffer, b.revision()),
         line,
         f.cell_w,
-        tab_width,
+        editor.settings.tab_width,
         ui.visuals().text_color(),
         styling,
     )
@@ -764,30 +1138,41 @@ fn line_layout(
 #[allow(clippy::too_many_arguments)]
 fn hit_test(
     editor: &Editor,
-    buffer: ochrepad_core::BufferId,
+    view: ViewId,
     cache: &mut LayoutCache,
     f: &Frame,
-    scroll: f64,
+    top: Top,
     x_off: f32,
-    tab_width: usize,
     ui: &Ui,
     p: Pos2,
 ) -> ByteOffset {
-    let doc = doc_of(editor, buffer);
-    let row = ((p.y - f.content.min.y) / f.line_h) as f64 + scroll;
-    let line = (row.max(0.0).floor() as usize).min(f.line_count - 1);
-    let layout = line_layout(editor, buffer, cache, line, f, tab_width, ui, Styling::Any);
-    let x = p.x - f.text_left() + x_off;
-    ByteOffset(doc.line_start(line).0 + layout.byte_at_x(x))
+    let rows = display_map(editor, view);
+    let row = row_at(&rows, f, top, p);
+    let buffer = editor.view(view).expect("view exists").buffer();
+    let layout = line_layout(editor, buffer, cache, row.line, f, ui, Styling::Any);
+    let x = p.x - f.text_left() + x_off + row_x0(&rows, &layout, row, f.cell_w);
+    let range = rows.row_range(row);
+    let line_start = rows.doc().line_start(row.line).0;
+    // A click past a wrapped row's end stays on that row.
+    ByteOffset(line_start + layout.byte_at_x(x)).clamp(range.start, rows.row_end(row))
 }
 
-fn thumbs(f: &Frame, scroll: f64, x_off: f32, h_max: f32, max_width: f32) -> (Rect, Rect) {
-    let total = (f.line_count as f32).max(1.0);
+/// The vertical and horizontal scrollbar thumbs. `offset` and `max_offset`
+/// are the scroll position and its maximum in visible lines.
+fn thumbs(
+    f: &Frame,
+    offset: f64,
+    max_offset: f64,
+    x_off: f32,
+    h_max: f32,
+    max_width: f32,
+) -> (Rect, Rect) {
+    let total = (f.visible_lines as f32).max(1.0);
     let vh = (f.vbar.height() * (f.rows_full as f32 / total).min(1.0))
         .max(20.0)
         .min(f.vbar.height());
-    let vt = if f.max_scroll > 0.0 {
-        (scroll / f.max_scroll) as f32
+    let vt = if max_offset > 0.0 {
+        (offset / max_offset) as f32
     } else {
         0.0
     };
@@ -811,7 +1196,8 @@ fn thumbs(f: &Frame, scroll: f64, x_off: f32, h_max: f32, max_width: f32) -> (Re
 }
 
 struct Scroll {
-    scroll: f64,
+    top: Top,
+    max_offset: f64,
     x_off: f32,
     h_max: f32,
 }
@@ -825,18 +1211,21 @@ fn paint(
     state: &mut EditorViewState,
     f: &Frame,
     Scroll {
-        scroll,
+        top,
+        max_offset,
         x_off,
         h_max,
     }: Scroll,
     focused: bool,
     now: f64,
-    tab_width: usize,
+    show_chevrons: bool,
     styler: Option<&mut dyn LineStyler>,
     find_highlight: Option<&ochrepad_core::Searcher>,
+    row_style: Option<&dyn RowStyle>,
 ) {
     let Some(v) = editor.view(view) else { return };
     let doc = doc_of(editor, buffer);
+    let rows = display_map(editor, view);
     let sels = v.selections.ranges();
     let visuals = ui.visuals().clone();
     let painter = ui.painter().clone();
@@ -847,109 +1236,210 @@ fn paint(
     painter.rect_filled(f.gutter, 0.0, visuals.extreme_bg_color);
     painter.rect_filled(f.vbar.union(f.hbar), 0.0, visuals.extreme_bg_color);
 
-    let first = scroll.floor() as usize;
-    let y0 = f.content.min.y - scroll.fract() as f32 * f.line_h;
-    let last = (first + f.rows_full + 2).min(f.line_count);
+    // The rows on screen, plus one partly shown below.
+    let shown: Vec<RowPos> = rows.rows_from(top.row, f.rows_full + 2).collect();
+    let y0 = f.content.min.y - top.frac * f.line_h;
+    // The document lines the shown rows come from, as runs of consecutive
+    // lines: a fold between two runs may hide any amount of text, which is
+    // neither highlighted nor searched.
+    let first = shown.first().map_or(0, |r| r.line);
+    let last = shown.last().map_or(0, |r| r.line + 1);
+    let mut runs: Vec<std::ops::Range<usize>> = Vec::new();
+    for r in &shown {
+        match runs.last_mut() {
+            Some(run) if r.line <= run.end => run.end = r.line + 1,
+            _ => runs.push(r.line..r.line + 1),
+        }
+    }
     let x0 = f.text_left() - x_off;
     let text_color = visuals.text_color();
     let current_line_bg = visuals.faint_bg_color;
     let sel_bg = visuals.selection.bg_fill;
-    let spans = styler.map(|s| s.line_spans(doc, first..last));
-    // Every match of the find panel's pattern on the visible lines.
-    let matches = match find_highlight {
-        Some(s) if first < last => s.find_all(doc, doc.line_start(first)..doc.line_end(last - 1)),
-        _ => Vec::new(),
+    let mut styler = styler;
+    let spans: Vec<(usize, Vec<Option<ochrepad_syntax::LineSpans>>)> = match styler.as_deref_mut() {
+        Some(s) => runs
+            .iter()
+            .map(|r| (r.start, s.line_spans(doc, r.clone())))
+            .collect(),
+        None => Vec::new(),
     };
+    let find_in_runs = |s: &Searcher| -> Vec<std::ops::Range<ByteOffset>> {
+        runs.iter()
+            .flat_map(|r| s.find_all(doc, doc.line_start(r.start)..doc.line_end(r.end - 1)))
+            .collect()
+    };
+    // Every match of the find panel's pattern on the visible lines.
+    let matches = find_highlight.map(find_in_runs).unwrap_or_default();
     let match_bg = crate::theme::match_bg(&visuals);
+    // Smart highlighting: other occurrences of the selected text.
+    let smart = smart_searcher(&mut state.smart, doc, &v.selections)
+        .map(find_in_runs)
+        .unwrap_or_default();
+    let smart_bg = crate::theme::smart_highlight_bg(&visuals);
     let accent = crate::theme::accent(&visuals);
+    let tab_width = editor.settings.tab_width;
+    let strategy = editor
+        .buffer(buffer)
+        .map(|b| b.fold_strategy)
+        .unwrap_or_default();
 
-    for line in first..last {
-        let y = y0 + (line - first) as f32 * f.line_h;
+    for (i, &row) in shown.iter().enumerate() {
+        let line = row.line;
+        let y = y0 + i as f32 * f.line_h;
+        let run = spans.partition_point(|(start, _)| *start <= line);
         let styling = Styling::Exact(
-            spans
-                .as_ref()
-                .and_then(|s| s.get(line - first))
+            run.checked_sub(1)
+                .and_then(|r| spans[r].1.get(line - spans[r].0))
                 .and_then(Option::as_ref),
         );
-        let layout = line_layout(
-            editor,
-            buffer,
-            &mut state.cache,
-            line,
-            f,
-            tab_width,
-            ui,
-            styling,
-        );
+        let layout = line_layout(editor, buffer, &mut state.cache, line, f, ui, styling);
         state.max_width = state.max_width.max(layout.width);
         let line_start = doc.line_start(line);
         let line_end = doc.line_end(line);
-        let row = Rect::from_min_size(
+        let range = rows.row_range(row);
+        let (row_start, row_end) = (range.start, range.end);
+        // Screen x of the line's text on this row, and of a byte in it.
+        let rx0 = x0 - row_x0(&rows, &layout, row, f.cell_w);
+        let x_at = |b: ByteOffset| rx0 + layout.x_of(b.0 - line_start.0);
+        let rect = Rect::from_min_size(
             Pos2::new(f.content.min.x, y),
             Vec2::new(f.content.width(), f.line_h),
         );
+        let blank = rows.is_filler(row);
+        if let Some(bg) = row_style.and_then(|s| s.background(row, blank)) {
+            text_painter.rect_filled(rect, 0.0, bg);
+        }
+        if blank {
+            // A padding row: no text, no number.
+            continue;
+        }
 
-        // Selections overlapping this line (they are sorted).
+        // Selections overlapping this row (they are sorted).
+        let from = sels.partition_point(|s| s.end() < row_start);
+        let on_row = sels[from..].iter().take_while(|s| s.start() <= row_end);
+        // The current line: every row of a line holding a caret.
         let from = sels.partition_point(|s| s.end() < line_start);
-        let on_line = sels[from..].iter().take_while(|s| s.start() <= line_end);
-        let mut has_caret = false;
-        for s in on_line.clone() {
-            has_caret |= s.head >= line_start && s.head <= line_end;
-        }
+        let has_caret = sels[from..]
+            .iter()
+            .take_while(|s| s.start() <= line_end)
+            .any(|s| s.head >= line_start && s.head <= line_end);
         if has_caret {
-            text_painter.rect_filled(row, 0.0, current_line_bg);
+            text_painter.rect_filled(rect, 0.0, current_line_bg);
         }
-        let from = matches.partition_point(|m| m.end <= line_start && m.start < line_start);
-        for m in matches[from..].iter().take_while(|m| m.start <= line_end) {
+        let from = matches.partition_point(|m| m.end <= row_start && m.start < row_start);
+        for m in matches[from..].iter().take_while(|m| m.start <= row_end) {
             if m.start == m.end {
                 continue;
             }
-            let a = m.start.max(line_start).0 - line_start.0;
-            let b = m.end.min(line_end).0 - line_start.0;
+            let a = m.start.max(row_start);
+            let b = m.end.min(row_end);
             let r = Rect::from_min_max(
-                Pos2::new(x0 + layout.x_of(a), y),
-                Pos2::new(x0 + layout.x_of(b).max(layout.x_of(a) + 2.0), y + f.line_h),
+                Pos2::new(x_at(a), y),
+                Pos2::new(x_at(b).max(x_at(a) + 2.0), y + f.line_h),
             );
             text_painter.rect_filled(r, 2.0, match_bg);
         }
-        for s in on_line {
+        let from = smart.partition_point(|m| m.end <= row_start && m.start < row_start);
+        for m in smart[from..].iter().take_while(|m| m.start <= row_end) {
+            // The selection itself is already marked, and find matches keep
+            // their own colour (an ochre tint over teal turns muddy).
+            let under_find = matches[matches.partition_point(|f| f.end <= m.start)..]
+                .first()
+                .is_some_and(|f| f.start < m.end);
+            if under_find || on_row.clone().any(|s| s.range() == *m) {
+                continue;
+            }
+            let a = m.start.max(row_start);
+            let b = m.end.min(row_end);
+            let r = Rect::from_min_max(Pos2::new(x_at(a), y), Pos2::new(x_at(b), y + f.line_h));
+            text_painter.rect_filled(r, 2.0, smart_bg);
+        }
+        for s in on_row {
             if s.is_empty() {
                 continue;
             }
-            let a = s.start().max(line_start).0 - line_start.0;
-            let b = s.end().min(line_end).0 - line_start.0;
-            let mut x1 = x0 + layout.x_of(b);
-            if s.end() > line_end {
+            let a = s.start().max(row_start);
+            let b = s.end().min(row_end);
+            let mut x1 = x_at(b);
+            if s.end() > line_end && row_end == line_end {
                 x1 += f.cell_w; // the selected newline
             }
-            let r = Rect::from_min_max(
-                Pos2::new(x0 + layout.x_of(a), y),
-                Pos2::new(x1, y + f.line_h),
-            );
+            let r = Rect::from_min_max(Pos2::new(x_at(a), y), Pos2::new(x1, y + f.line_h));
             text_painter.rect_filled(r, 0.0, sel_bg);
         }
 
-        paint_line_text(&text_painter, &layout, x0, y, &f.font, f.line_h);
+        if let Some(style) = row_style {
+            let (spans, color) = style.spans(line);
+            for sp in spans {
+                let a = ByteOffset(line_start.0 + sp.start).max(row_start);
+                let b = ByteOffset(line_start.0 + sp.end).min(row_end);
+                if a < b {
+                    let r =
+                        Rect::from_min_max(Pos2::new(x_at(a), y), Pos2::new(x_at(b), y + f.line_h));
+                    text_painter.rect_filled(r, 2.0, color);
+                }
+            }
+        }
 
-        gutter_painter.text(
-            Pos2::new(f.gutter.max.x - f.cell_w, y),
-            Align2::RIGHT_TOP,
-            (line + 1).to_string(),
-            f.font.clone(),
-            if has_caret {
-                accent
+        // A wrapped row draws only its own slice of the line.
+        let row_painter = if rows.wraps() {
+            let right = if rows.is_last_in_line(row) {
+                f.content.max.x
             } else {
-                visuals.weak_text_color()
-            },
-        );
+                x_at(row_end)
+            };
+            let slice = Rect::from_min_max(
+                Pos2::new(x_at(row_start), y),
+                Pos2::new(right, y + f.line_h),
+            );
+            text_painter.with_clip_rect(slice.intersect(text_painter.clip_rect()))
+        } else {
+            text_painter.clone()
+        };
+        paint_line_text(&row_painter, &layout, rx0, y, &f.font, f.line_h);
+
+        let folded = v.folds().is_folded(line);
+        if folded && row_end == line_end {
+            paint_fold_pill(&text_painter, f, &visuals, rx0 + layout.width, y);
+        }
+
+        // The line number and fold chevron go on a line's first row.
+        if rows.text_sub(row) == Some(0) {
+            gutter_painter.text(
+                Pos2::new(f.gutter.max.x - f.fold_w, y),
+                Align2::RIGHT_TOP,
+                (line + 1).to_string(),
+                f.font.clone(),
+                if has_caret {
+                    accent
+                } else {
+                    visuals.weak_text_color()
+                },
+            );
+            if f.fold_margin
+                && (folded
+                    || show_chevrons
+                        && ochrepad_core::fold::is_header(doc, line, strategy, tab_width))
+            {
+                paint_chevron(&gutter_painter, f, &visuals, y, folded);
+            }
+        }
     }
 
-    // Carets and IME pre-edit.
-    let caret_pos = |head: ByteOffset, cache: &mut LayoutCache| {
-        let line = doc.line_of(head);
-        let layout = line_layout(editor, buffer, cache, line, f, tab_width, ui, Styling::Any);
-        let x = x0 + layout.x_of(head.0 - doc.line_start(line).0);
-        Pos2::new(x, y0 + (line as f32 - first as f32) * f.line_h)
+    // Carets and IME pre-edit. A caret off screen is placed one row above or
+    // below the shown rows (the IME still needs a position).
+    let caret_pos = |head: ByteOffset, cache: &mut LayoutCache| -> (Pos2, bool) {
+        let row = rows.row_of(head);
+        let (i, on_screen) = match shown.binary_search(&row) {
+            Ok(i) => (i as f32, true),
+            Err(_) if row < top.row => (-1.0, false),
+            Err(_) => (shown.len() as f32, false),
+        };
+        let line = row.line;
+        let layout = line_layout(editor, buffer, cache, line, f, ui, Styling::Any);
+        let x = x0 - row_x0(&rows, &layout, row, f.cell_w)
+            + layout.x_of(head.0 - doc.line_start(line).0);
+        (Pos2::new(x, y0 + i * f.line_h), on_screen)
     };
     if focused {
         let since = now - state.last_activity;
@@ -957,19 +1447,17 @@ fn paint(
         if on {
             let caret_stroke = Stroke::new(2.0, visuals.text_cursor.stroke.color);
             for s in sels {
-                let line = doc.line_of(s.head);
-                if line < first || line >= last {
-                    continue;
+                let (p, on_screen) = caret_pos(s.head, &mut state.cache);
+                if on_screen {
+                    text_painter.line_segment([p, p + Vec2::new(0.0, f.line_h)], caret_stroke);
                 }
-                let p = caret_pos(s.head, &mut state.cache);
-                text_painter.line_segment([p, p + Vec2::new(0.0, f.line_h)], caret_stroke);
             }
         }
         let to_toggle = BLINK_HALF_PERIOD - since.rem_euclid(BLINK_HALF_PERIOD);
         ui.ctx()
             .request_repaint_after(std::time::Duration::from_secs_f64(to_toggle));
 
-        let p = caret_pos(v.selections.primary().head, &mut state.cache);
+        let (p, _) = caret_pos(v.selections.primary().head, &mut state.cache);
         if let Some(pre) = &state.preedit {
             let galley = text_painter.layout_no_wrap(pre.clone(), f.font.clone(), text_color);
             let r = Rect::from_min_size(p, Vec2::new(galley.size().x, f.line_h));
@@ -990,12 +1478,104 @@ fn paint(
         });
     }
 
+    // The document map.
+    if let Some(strip) = f.map {
+        painter.rect_filled(strip, 0.0, visuals.extreme_bg_color);
+        let map = MapView::new(
+            &rows,
+            strip,
+            top.row,
+            top.offset(&rows),
+            max_offset,
+            f.rows_full,
+        );
+        // Highlighting for the map's lines, asked for per run of lines.
+        let mut map_spans: std::collections::HashMap<usize, ochrepad_syntax::LineSpans> =
+            Default::default();
+        if let Some(s) = styler {
+            let mut i = 0;
+            while i < map.rows.len() {
+                let start = map.rows[i].line;
+                let mut end = start + 1;
+                while i < map.rows.len() && map.rows[i].line <= end {
+                    end = map.rows[i].line + 1;
+                    i += 1;
+                }
+                for (line, sp) in (start..end).zip(s.line_spans(doc, start..end)) {
+                    if let Some(sp) = sp {
+                        map_spans.insert(line, sp);
+                    }
+                }
+            }
+        }
+        let hovered = ui
+            .input(|i| i.pointer.hover_pos())
+            .is_some_and(|p| strip.contains(p));
+        crate::doc_map::paint(
+            &painter,
+            strip,
+            &map,
+            &rows,
+            &mut state.map_cache,
+            buffer,
+            &|line| map_spans.get(&line).cloned(),
+            &visuals,
+            editor.settings.tab_width,
+            hovered || state.map_drag.is_some(),
+        );
+    }
+
     // Scrollbars.
-    let (v_thumb, h_thumb) = thumbs(f, scroll, x_off, h_max, state.max_width);
+    let (v_thumb, h_thumb) = thumbs(
+        f,
+        top.offset(&rows),
+        max_offset,
+        x_off,
+        h_max,
+        state.max_width,
+    );
     let thumb_color = visuals.widgets.hovered.bg_fill;
     painter.rect_filled(v_thumb.shrink(2.0), 3.0, thumb_color);
     if h_max > 0.0 {
         painter.rect_filled(h_thumb.shrink(2.0), 3.0, thumb_color);
     }
     state.cache.retain_near(first, last.max(first + 1));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn smart_matches(text: &str, anchor: usize, head: usize) -> Vec<(usize, usize)> {
+        let doc = Document::new(text);
+        let sels = SelectionSet::new(
+            vec![Selection::new(ByteOffset(anchor), ByteOffset(head))],
+            0,
+        );
+        let mut cache = None;
+        smart_searcher(&mut cache, &doc, &sels)
+            .map(|s| s.find_all(&doc, ByteOffset(0)..ByteOffset(text.len())))
+            .unwrap_or_default()
+            .into_iter()
+            .map(|m| (m.start.0, m.end.0))
+            .collect()
+    }
+
+    #[test]
+    fn smart_highlight_finds_every_exact_occurrence() {
+        // Any substring, not just whole words, and case-sensitive.
+        assert_eq!(
+            smart_matches("cat Cat concat cat", 0, 3),
+            vec![(0, 3), (11, 14), (15, 18)]
+        );
+        // A backward selection works the same; regex characters are literal.
+        assert_eq!(smart_matches("a.b axb a.b", 3, 0), vec![(0, 3), (8, 11)]);
+    }
+
+    #[test]
+    fn smart_highlight_ignores_carets_blanks_and_multi_line_selections() {
+        assert!(smart_matches("cat cat", 2, 2).is_empty());
+        assert!(smart_matches("a  b  c", 1, 3).is_empty());
+        assert!(smart_matches("cat\ncat\n", 0, 4).is_empty());
+    }
 }

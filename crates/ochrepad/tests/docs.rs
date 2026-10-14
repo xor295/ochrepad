@@ -91,12 +91,21 @@ fn name(action: &Action) -> &'static str {
         Action::MoveLinesUp => "MoveLinesUp",
         Action::MoveLinesDown => "MoveLinesDown",
         Action::JoinLines => "JoinLines",
+        Action::RemoveEmptyLines { .. } => "RemoveEmptyLines",
+        Action::RemoveDuplicateLines { .. } => "RemoveDuplicateLines",
+        Action::Fold => "Fold",
+        Action::Unfold => "Unfold",
+        Action::ToggleFold => "ToggleFold",
+        Action::FoldAll => "FoldAll",
+        Action::UnfoldAll => "UnfoldAll",
+        Action::FoldLevel(_) => "FoldLevel",
+        Action::UnfoldLevel(_) => "UnfoldLevel",
         Action::Undo => "Undo",
         Action::Redo => "Redo",
     }
 }
 
-const ALL: [&str; 32] = [
+const ALL: [&str; 41] = [
     "InsertText",
     "Paste",
     "InsertTab",
@@ -127,6 +136,15 @@ const ALL: [&str; 32] = [
     "MoveLinesUp",
     "MoveLinesDown",
     "JoinLines",
+    "RemoveEmptyLines",
+    "RemoveDuplicateLines",
+    "Fold",
+    "Unfold",
+    "ToggleFold",
+    "FoldAll",
+    "UnfoldAll",
+    "FoldLevel",
+    "UnfoldLevel",
     "Undo",
     "Redo",
 ];

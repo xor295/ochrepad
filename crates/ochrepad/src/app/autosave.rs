@@ -49,6 +49,9 @@ pub struct Session {
     pub layout: Option<DockState<usize>>,
     /// Index into `tabs`.
     pub active: Option<usize>,
+    /// The open folder.
+    #[serde(default)]
+    pub workspace: Option<super::workspace::SessionWorkspace>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -67,21 +70,26 @@ pub struct SessionTab {
     pub head: usize,
     pub first_line: usize,
     pub x_offset: f32,
+    /// Folded header lines.
+    #[serde(default)]
+    pub folds: Vec<usize>,
 }
 
-enum PendingJob {
+pub(super) enum PendingJob {
     Save {
         buffer: BufferId,
         revision: u64,
         path: PathBuf,
     },
+    /// A file operation for the file tree.
+    Tree(super::workspace::TreeJob),
     Other,
 }
 
 #[derive(Default)]
 pub(super) struct Persist {
-    worker: Worker,
-    pending: HashMap<u64, PendingJob>,
+    pub(super) worker: Worker,
+    pub(super) pending: HashMap<u64, PendingJob>,
     pub settings: AutosaveSettings,
     backup_dir: Option<PathBuf>,
     session_file: Option<PathBuf>,
@@ -180,6 +188,7 @@ impl OchrepadApp {
                         }
                     }
                 }
+                Some(PendingJob::Tree(job)) => self.tree_job_done(job, d.result),
                 Some(PendingJob::Other) | None => {
                     if let Err(e) = d.result {
                         self.message = Some(format!("Could not write a backup:\n{e}"));
@@ -371,6 +380,7 @@ impl OchrepadApp {
                 head: sel.head.0,
                 first_line: v.scroll.first_line,
                 x_offset: v.scroll.x_offset,
+                folds: v.folds().headers().collect(),
             });
         }
         session.layout = Some(self.dock.filter_map_tabs(|t| match t {
@@ -378,6 +388,7 @@ impl OchrepadApp {
             Tab::Preview(_) | Tab::Compare(_) => None,
         }));
         session.active = tab_index.get(&self.active).copied();
+        session.workspace = self.session_workspace();
         session
     }
 
@@ -419,6 +430,9 @@ impl OchrepadApp {
                 return;
             }
         };
+        if let Some(w) = &session.workspace {
+            self.restore_workspace(w);
+        }
         let mut problems = Vec::new();
         let mut buffers: Vec<Option<BufferId>> = Vec::new();
         for sb in &session.buffers {
@@ -480,6 +494,10 @@ impl OchrepadApp {
                 let _ = self
                     .editor
                     .apply(view, Action::SetSelections(SelectionSet::single(sel)));
+                // Only lines that still start a region fold again.
+                for &header in &tab.folds {
+                    self.editor.fold_at(view, header);
+                }
                 if let Some(v) = self.editor.view_mut(view) {
                     v.scroll.first_line = tab.first_line;
                     v.scroll.x_offset = tab.x_offset;

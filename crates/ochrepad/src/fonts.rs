@@ -1,6 +1,9 @@
-//! Font setup. egui's built-in fonts have no CJK glyphs, so a CJK font is
-//! loaded from the system font directory and appended as a fallback. The
-//! menus and panels use the system's UI font where there is a known one.
+//! Font setup. egui's built-in fonts have no CJK glyphs and few symbols
+//! (no ✓ or ✗), so a CJK font and then a symbol font are loaded from the
+//! system font directory and appended as fallbacks. egui picks a font per
+//! character, so the fallbacks only draw characters the fonts before them
+//! lack, and row height comes from the first font only. The menus and panels
+//! use the system's UI font where there is a known one.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -35,6 +38,27 @@ fn cjk_candidates() -> Vec<PathBuf> {
         }
     }
     out
+}
+
+/// A font with broad symbol coverage (dingbats, arrows, math), tried after
+/// the CJK font.
+fn symbol_candidates() -> Vec<PathBuf> {
+    if cfg!(windows) {
+        let root = std::env::var_os("SystemRoot")
+            .map_or_else(|| PathBuf::from(r"C:\Windows"), PathBuf::from);
+        vec![root.join("Fonts").join("seguisym.ttf")]
+    } else {
+        [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+            "/usr/share/fonts/dejavu/DejaVuSansMono.ttf",
+            "/usr/share/fonts/TTF/DejaVuSansMono.ttf",
+            "/usr/share/fonts/truetype/noto/NotoSansSymbols2-Regular.ttf",
+            "/usr/share/fonts/noto/NotoSansSymbols2-Regular.ttf",
+        ]
+        .into_iter()
+        .map(PathBuf::from)
+        .collect()
+    }
 }
 
 /// The system UI font (static fonts only), used ahead of egui's built-in
@@ -151,6 +175,23 @@ pub fn install_with(ctx: &egui::Context, monospace: Option<&std::path::Path>) ->
         }
         path
     });
+    // Skip the symbol font if it is the editor font already.
+    if let Some(bytes) = symbol_candidates()
+        .into_iter()
+        .filter(|p| monospace != Some(p.as_path()))
+        .find_map(|p| std::fs::read(p).ok())
+    {
+        defs.font_data.insert(
+            "system-symbols".to_owned(),
+            Arc::new(FontData::from_owned(bytes)),
+        );
+        for family in [FontFamily::Monospace, FontFamily::Proportional] {
+            defs.families
+                .entry(family)
+                .or_default()
+                .push("system-symbols".to_owned());
+        }
+    }
     ctx.set_fonts(defs);
     path
 }

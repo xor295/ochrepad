@@ -36,6 +36,16 @@ pub struct AppSettings {
     pub write_through: bool,
     /// Files larger than this are not highlighted.
     pub highlight_limit_mb: usize,
+    /// Fold chevrons in the gutter.
+    pub fold_margin: bool,
+    /// Wrap long lines at the pane's width.
+    pub word_wrap: bool,
+    /// The zoomed-out map beside the text.
+    pub document_map: bool,
+    /// The sidebar with the open folder's files.
+    pub show_sidebar: bool,
+    pub sidebar_width: f32,
+    pub recent_folders: Vec<PathBuf>,
     pub recent_files: Vec<PathBuf>,
 }
 
@@ -52,6 +62,12 @@ impl Default for AppSettings {
             autosave_secs: 7.0,
             write_through: false,
             highlight_limit_mb: 10,
+            fold_margin: true,
+            word_wrap: false,
+            document_map: true,
+            show_sidebar: true,
+            sidebar_width: 240.0,
+            recent_folders: Vec::new(),
             recent_files: Vec::new(),
         }
     }
