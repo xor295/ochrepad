@@ -2,6 +2,7 @@
 //! and undo. No egui and no filesystem access (PLAN 3.1, 7).
 
 pub mod action;
+mod autoclose;
 pub mod brackets;
 pub mod buffer;
 pub mod changeset;

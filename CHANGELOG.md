@@ -76,6 +76,12 @@ people downloading the release.
   in File Manager and Reload from Disk. The same copies are in Edit > Copy
   to Clipboard.
 - View > Full Screen (F11) and Always on Top.
+- Optional closing of brackets and quotes as you type (Preferences, off by
+  default as in Notepad++): typing `(`, `[`, `{`, `"` or `'` inserts the
+  partner, typing it again steps over it, and Backspace deletes an empty
+  pair.
+- A document's indentation, detected or chosen in the status bar, comes
+  back with the session.
 - A read-only viewer for large files: files over 256 MB (a setting) open
   without being read into memory, so a log of several gigabytes shows its
   first screen at once. The line index builds in the background while you

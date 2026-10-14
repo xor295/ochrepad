@@ -459,3 +459,28 @@ fn undo_history_can_be_turned_off_or_cleared() {
     h.state_mut().flush_disk();
     assert_eq!(histories(&d), 0);
 }
+
+#[test]
+fn a_documents_indentation_comes_back_with_the_session() {
+    let d = dirs();
+    let file = d.files.join("a.js");
+    write(&file, "a {\n  b;\n}\n");
+    {
+        let mut h = app(&d);
+        h.state_mut().open_path(&file);
+        h.run();
+        // Detected as two spaces; chosen as tabs of width 8.
+        let b = h.state().buffer_id();
+        let buf = h.state_mut().editor.buffer_mut(b).unwrap();
+        assert!(buf.indent.use_spaces && buf.indent.width == 2);
+        buf.indent = ochrepad_core::Indent {
+            use_spaces: false,
+            width: 8,
+        };
+        h.state_mut().request_exit();
+        h.run();
+    }
+    let h = app(&d);
+    let indent = h.state().buffer().indent;
+    assert!(!indent.use_spaces && indent.width == 8, "{indent:?}");
+}

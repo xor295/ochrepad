@@ -99,6 +99,7 @@ impl OchrepadApp {
         let s = self.settings.clone();
         self.editor.settings.tab_width = s.tab_width;
         self.editor.settings.use_spaces = s.use_spaces;
+        self.editor.settings.auto_close = s.auto_close;
         // Documents whose indentation was detected or chosen keep it.
         let indent = self.editor.settings.indent();
         for b in self.editor.buffers_mut().filter(|b| !b.indent_set) {

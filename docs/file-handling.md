@@ -58,8 +58,8 @@ change them for the current document only.
 - *Indent Using Spaces* / *Indent Using Tabs*, and *Width 2, 4 or 8*: how
   this document is indented from now on, and how wide its tabs are shown.
   Nothing in the text changes. A choice made here, or detected on opening,
-  is kept when you change the preferences; documents that have neither
-  follow the preferences.
+  is kept when you change the preferences and when ochrepad restarts;
+  documents that have neither follow the preferences.
 - *Convert Indentation to Spaces* / *to Tabs*: rewrites the leading
   whitespace of every line, keeping its width, and indents that way from now
   on. Only leading whitespace changes, and it is one undo step. Converting

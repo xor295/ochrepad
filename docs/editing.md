@@ -92,3 +92,20 @@ Closing tabs with unsaved changes asks about each, as closing one does.
 **View > Full Screen** (**F11**) fills the screen with the window; F11 again
 goes back. **View > Always on Top** keeps the window above other programs'
 windows, and is remembered.
+
+## Closing brackets and quotes
+
+**Settings > Preferences > Brackets and quotes: Close them as you type**
+(off by default, as in Notepad++) makes typing an opening `(`, `[`, `{`,
+`"` or `'` insert its partner after the caret:
+
+- The partner goes in only where it helps: before a space, the end of the
+  line or a closing bracket. Typing `(` in front of a word types just `(`.
+- A quote right after a letter or digit is an apostrophe (`don't`), so it
+  gets no partner.
+- Typing the closing character where it already follows the caret steps
+  over it instead of typing a second one.
+- **Backspace** between an empty pair, as in `(|)`, deletes both.
+- With a selection, typing replaces it as usual. With several carets, each
+  gets its pair, or none of them does.
+- The pair and what you type inside it undo together, like typing.

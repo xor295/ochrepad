@@ -615,6 +615,36 @@ proptest! {
 proptest! {
     #![proptest_config(ProptestConfig { cases: 500, ..ProptestConfig::default() })]
 
+    /// With auto-closing on, brackets, quotes and Backspace typed among
+    /// random actions keep every invariant, and undoing still gets back to
+    /// the start.
+    #[test]
+    fn auto_closing_keeps_undo_working(
+        initial in text(),
+        actions in prop::collection::vec(
+            prop_oneof![
+                3 => prop::sample::select(vec!["(", ")", "[", "]", "{", "}", "\"", "'"])
+                    .prop_map(|s| Action::InsertText(s.to_owned())),
+                1 => Just(Action::DeleteBackward),
+                4 => action(),
+            ],
+            0..30,
+        ),
+        layout in layout(),
+    ) {
+        let mut t = setup_wrapped(&initial, layout);
+        t.ed.settings.auto_close = true;
+        for a in actions {
+            let _ = t.ed.apply(t.view, a);
+            check(&t)?;
+        }
+        while t.buffer().history().can_undo() {
+            t.apply(Action::Undo);
+            check(&t)?;
+        }
+        prop_assert_eq!(t.text(), initial);
+    }
+
     /// Text appended outside the history (follow mode) between random
     /// actions keeps every invariant, and undoing everything leaves the
     /// original text with the appended text after it.

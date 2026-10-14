@@ -71,6 +71,10 @@ pub struct SessionBuffer {
     /// A backup snapshot holding unsaved text.
     pub snapshot: Option<String>,
     pub language: Option<String>,
+    /// The document's indentation, when it was detected or chosen (the
+    /// status bar menu): it comes back as it was.
+    #[serde(default)]
+    pub indent: Option<ochrepad_core::Indent>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -388,6 +392,7 @@ impl OchrepadApp {
                         path: b.meta.path.clone(),
                         snapshot,
                         language: b.language.clone(),
+                        indent: b.indent_set.then_some(b.indent),
                     });
                     buffer_index.insert(id, session.buffers.len() - 1);
                     session.buffers.len() - 1
@@ -530,6 +535,15 @@ impl OchrepadApp {
             if let Some(b) = buffer {
                 self.attach_highlighting(b);
                 self.record_disk_stamp(b);
+                if let Some(indent) = sb.indent
+                    && let Some(buf) = self.editor.buffer_mut(b)
+                {
+                    buf.indent = ochrepad_core::Indent {
+                        use_spaces: indent.use_spaces,
+                        width: indent.width.clamp(1, 16),
+                    };
+                    buf.indent_set = true;
+                }
                 if let Some(language) = &sb.language {
                     let dark = self.dark;
                     if let Some(buf) = self.editor.buffer_mut(b) {

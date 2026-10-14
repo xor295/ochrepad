@@ -62,6 +62,9 @@ pub struct Settings {
     pub tab_width: usize,
     /// The Tab key inserts spaces instead of a tab character.
     pub use_spaces: bool,
+    /// Typing an opening bracket or quote inserts its partner (Notepad++'s
+    /// Auto-Insert; see `autoclose`).
+    pub auto_close: bool,
 }
 
 impl Settings {
@@ -79,6 +82,7 @@ impl Default for Settings {
         Self {
             tab_width: 4,
             use_spaces: false,
+            auto_close: false,
         }
     }
 }
@@ -345,6 +349,11 @@ impl Editor {
                 buffer.meta.line_ending,
             ),
             _ => {
+                if self.settings.auto_close
+                    && let Some(r) = crate::autoclose::resolve(action, &buffer.doc, sels)
+                {
+                    return Ok(Ok(r));
+                }
                 let rows = DisplayMap::new(buffer, v);
                 Ok(resolve(action, &buffer.doc, sels, buffer.indent, &rows))
             }

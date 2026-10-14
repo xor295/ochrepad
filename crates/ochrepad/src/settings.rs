@@ -40,6 +40,8 @@ pub struct AppSettings {
     pub tab_width: usize,
     /// The Tab key inserts spaces.
     pub use_spaces: bool,
+    /// Typing an opening bracket or quote inserts its partner.
+    pub auto_close: bool,
     pub theme: ThemeChoice,
     /// `None` follows light/dark mode.
     pub syntax_theme: Option<String>,
@@ -97,6 +99,7 @@ impl Default for AppSettings {
             font_size: 14.0,
             tab_width: 4,
             use_spaces: false,
+            auto_close: false,
             theme: ThemeChoice::System,
             syntax_theme: None,
             backups: true,
@@ -229,6 +232,14 @@ impl AppSettings {
                     ui.radio_value(&mut self.use_spaces, false, "Tabs");
                     ui.radio_value(&mut self.use_spaces, true, "Spaces");
                 });
+                ui.end_row();
+
+                ui.label("Brackets and quotes");
+                ui.checkbox(&mut self.auto_close, "Close them as you type")
+                    .on_hover_text(
+                        "Typing ( [ { \" or ' inserts the closing one after the caret; \
+                         typing it again steps over it",
+                    );
                 ui.end_row();
 
                 ui.label("Theme");
