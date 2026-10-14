@@ -1,5 +1,12 @@
 # Plan: ochrepad v0.3.0
 
+**Status: done** (2026-10-14). P1–P8 as planned, then closing brackets as
+you type; P9 prepared the release. Beyond the plan, the same
+release has bookmarks (marked "not now" in section 1), change history,
+Replace in Files, the Function and Document Lists, sessions and more of
+Notepad++'s editing commands (see `CHANGELOG.md`). The command palette
+was not built. `CLAUDE.md` is the current guide.
+
 Written 2026-10-13, after 0.2.0. `CLAUDE.md` is the current guide; read its
 architecture rules before starting. This plan adds the everyday editing
 features ochrepad still lacks next to Notepad++, and two things that set it

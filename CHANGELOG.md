@@ -10,6 +10,8 @@ people downloading the release.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-14
+
 ### Added
 
 - A read-only viewer for large files: files over 256 MB (a setting) open
@@ -333,6 +335,7 @@ The first release, for Windows and Linux.
   highlighting size limit; an editable keymap; recent files; drag and drop.
 - A warm light and dark theme with ochre accents.
 
-[Unreleased]: https://github.com/xor295/ochrepad/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/xor295/ochrepad/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/xor295/ochrepad/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/xor295/ochrepad/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/xor295/ochrepad/releases/tag/v0.1.0

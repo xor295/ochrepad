@@ -1,6 +1,6 @@
 # ochrepad
 
-A Notepad++-style text editor in Rust on egui/eframe 0.36. 0.1.0 covered the original plan (`docs/design/PLAN_v0.1.0.md`, M0–M13); 0.2.0 added folding, word wrap, the document map, Find All and Find in Files, the folder workspace and an editable compare view (`docs/design/PLAN_v0.2.0.md`, N1–N10). 0.3.0 (`docs/design/PLAN_v0.3.0.md`, P1–P9; unreleased) adds editing basics, per-document indentation/EOL/encoding, zoom and Show Symbol, text tools, undo across sessions, log tools and the viewer for huge files. The plans are kept for their rationale; this file is the current guide. Work now is maintenance, polish and new features.
+A Notepad++-style text editor in Rust on egui/eframe 0.36. 0.1.0 covered the original plan (`docs/design/PLAN_v0.1.0.md`, M0–M13); 0.2.0 added folding, word wrap, the document map, Find All and Find in Files, the folder workspace and an editable compare view (`docs/design/PLAN_v0.2.0.md`, N1–N10). 0.3.0 (`docs/design/PLAN_v0.3.0.md`, P1–P9) added editing basics, per-document indentation/EOL/encoding, zoom and Show Symbol, text tools, undo across sessions, log tools and the viewer for huge files, and beyond the plan bookmarks, change history, Replace in Files, the Function and Document Lists, sessions and many of Notepad++'s editing commands. The plans are kept for their rationale; this file is the current guide. Work now is maintenance, polish and new features.
 
 ## Commands
 
