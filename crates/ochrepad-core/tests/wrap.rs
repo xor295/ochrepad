@@ -97,3 +97,59 @@ fn add_cursor_below_uses_rows() {
     let heads: Vec<usize> = t.sels().ranges().iter().map(|s| s.head.0).collect();
     assert_eq!(heads, vec![1, 11]);
 }
+
+#[test]
+fn padding_rows_are_blank_and_carets_skip_them() {
+    // Line 1 has two blank rows above it, and the last line one below.
+    let mut t = setup("ab\ncd\nef");
+    t.ed.view_mut(t.view).unwrap().padding = Some(std::sync::Arc::new(ochrepad_core::Padding {
+        before: vec![0, 2, 0],
+        after_last: 1,
+    }));
+    let view = t.ed.view(t.view).unwrap();
+    let rows = ochrepad_core::DisplayMap::new(t.buffer(), view, 4);
+    let all: Vec<_> = rows.rows_from(rows.first_row(), 99).collect();
+    assert_eq!(all.len(), 6);
+    let blank: Vec<bool> = all.iter().map(|&r| rows.is_filler(r)).collect();
+    assert_eq!(blank, vec![false, true, true, false, false, true]);
+    assert_eq!(rows.row_of(ByteOffset(4)), ochrepad_core::RowPos::new(1, 2));
+
+    // Down from line 0 skips the blank rows; Down from the last line stays.
+    t.set_sels(vec![(1, 1)]);
+    t.mv(Motion::Down);
+    assert_eq!(head(&t), 4);
+    t.mv(Motion::Down).mv(Motion::Down);
+    assert_eq!(head(&t), 7);
+    t.mv(Motion::Up).mv(Motion::Up);
+    assert_eq!(head(&t), 1);
+}
+
+#[test]
+fn read_only_buffers_refuse_edits_but_not_selections() {
+    let mut t = setup("abc|");
+    let b = t.ed.view(t.view).unwrap().buffer();
+    t.ed.buffer_mut(b).unwrap().read_only = true;
+    let r = t.ed.apply(t.view, Action::InsertText("x".into()));
+    assert_eq!(r, Err(ochrepad_core::ActionError::ReadOnly));
+    assert_eq!(
+        t.ed.apply(t.view, Action::Undo),
+        Err(ochrepad_core::ActionError::ReadOnly)
+    );
+    t.mv(Motion::Left);
+    assert_eq!(head(&t), 2);
+    assert_eq!(t.text(), "abc");
+}
+
+#[test]
+fn aux_views_follow_edits_but_are_not_listed() {
+    let mut t = setup("abc|");
+    let b = t.ed.view(t.view).unwrap().buffer();
+    let aux = t.ed.add_aux_view(b).unwrap();
+    assert_eq!(t.ed.views_of(b).count(), 1);
+    // A new view's caret is at the start.
+    t.ed.apply(aux, Action::InsertText("!".into())).unwrap();
+    assert_eq!(t.text(), "!abc");
+    assert_eq!(head(&t), 4, "the tab's caret moved with the text");
+    t.ed.remove_buffer(b);
+    assert!(t.ed.view(aux).is_none());
+}

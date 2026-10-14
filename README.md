@@ -41,7 +41,8 @@ A fast, native text editor in the spirit of Notepad++, written in Rust with
   open a second view of the same file; edits show in both.
 - **Compare**: a side-by-side diff of two files (or a file against its saved
   version) with aligned lines, changed words highlighted, and F8/Shift+F8 to
-  jump between changes.
+  jump between changes. Both sides are editable, with syntax highlighting,
+  and the diff updates as you type.
 - **Markdown preview** beside the editor, updating as you type, with images
   (PNG, JPEG, WebP, SVG) loaded from the document's folder.
 - **Backups and session restore**: unsaved work is backed up every few seconds

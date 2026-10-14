@@ -164,6 +164,8 @@ pub enum ActionError {
     UnknownBuffer(BufferId),
     InvalidPattern(String),
     NotFound,
+    /// The buffer is read-only.
+    ReadOnly,
 }
 
 impl fmt::Display for ActionError {
@@ -173,6 +175,7 @@ impl fmt::Display for ActionError {
             ActionError::UnknownBuffer(b) => write!(f, "no buffer with id {}", b.0),
             ActionError::InvalidPattern(e) => write!(f, "invalid search pattern: {e}"),
             ActionError::NotFound => f.write_str("no match found"),
+            ActionError::ReadOnly => f.write_str("the document is read-only"),
         }
     }
 }

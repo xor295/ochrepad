@@ -21,7 +21,7 @@ pub mod view;
 pub use action::{Action, ActionError, Direction, Motion};
 pub use buffer::{Buffer, BufferId, FileMeta, LineEdit, LineEnding};
 pub use changeset::{Bias, ChangeSet, Edit};
-pub use display::{DisplayMap, RowPos};
+pub use display::{DisplayMap, Padding, RowPos};
 pub use editor::{Clock, Editor, ManualClock, Settings, SystemClock};
 pub use fold::{FoldSet, FoldStrategy};
 pub use history::{EditKind, Transaction};

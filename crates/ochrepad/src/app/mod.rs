@@ -578,7 +578,7 @@ impl OchrepadApp {
                 if let Some(path) = self.dock.find_tab(&Tab::Compare(id)) {
                     self.dock.remove_tab(path);
                 }
-                self.compares.map.remove(&id);
+                self.compares.remove(id, &mut self.editor);
             }
             self.editor.remove_buffer(buffer);
             self.discard_approved.remove(&buffer);
@@ -935,14 +935,14 @@ impl OchrepadApp {
                 .focused_compare()
                 .and_then(|id| self.compares.get_mut(id))
         {
-            c.previous_change();
+            c.previous_change(&mut self.editor);
         }
         if pressed(ui, &NEXT_DIFF)
             && let Some(c) = self
                 .focused_compare()
                 .and_then(|id| self.compares.get_mut(id))
         {
-            c.next_change();
+            c.next_change(&mut self.editor);
         }
         if pressed(ui, &PREVIEW) {
             self.open_preview();
@@ -1311,7 +1311,16 @@ impl OchrepadApp {
     }
 
     fn open_compare(&mut self, left: CompareSide, right: CompareSide) -> CompareId {
-        let compare = Compare::new(&self.editor, left, right);
+        let original = left.buffer();
+        let compare = Compare::new(&mut self.editor, left, right);
+        // A saved copy is highlighted like the file it is a copy of.
+        if let Some(copy) = compare.owned_buffer() {
+            let language = self.highlighting.language(original).to_owned();
+            let dark = self.dark;
+            if let Some(b) = self.editor.buffer_mut(copy) {
+                self.highlighting.set_language(b, &language, dark);
+            }
+        }
         let id = self.compares.add(compare);
         self.dock.push_to_focused_leaf(Tab::Compare(id));
         id
@@ -1365,7 +1374,7 @@ impl OchrepadApp {
             .clicked()
             && let Some(c) = focused.and_then(|id| self.compares.get_mut(id))
         {
-            c.next_change();
+            c.next_change(&mut self.editor);
         }
         if ui
             .add_enabled(
@@ -1375,7 +1384,7 @@ impl OchrepadApp {
             .clicked()
             && let Some(c) = focused.and_then(|id| self.compares.get_mut(id))
         {
-            c.previous_change();
+            c.previous_change(&mut self.editor);
         }
     }
 
@@ -1733,7 +1742,16 @@ impl TabViewer for Tabs<'_> {
                 let (editor, untitled) = (&*self.editor, self.untitled);
                 let name = |b| buffer_name(editor, untitled, b);
                 if let Some(c) = self.compares.get_mut(id) {
-                    c.show(ui, editor, &name, id);
+                    let labels = [c.left.label(&name), c.right.label(&name)];
+                    c.show(
+                        ui,
+                        self.editor,
+                        self.highlighting,
+                        self.keymap,
+                        labels,
+                        self.font_size,
+                        self.find_highlight,
+                    );
                 }
                 return;
             }
@@ -1772,6 +1790,7 @@ impl TabViewer for Tabs<'_> {
             Decorations {
                 styler: styler.as_mut().map(|s| s as &mut dyn LineStyler),
                 find_highlight: self.find_highlight,
+                row_style: None,
             },
         );
     }
@@ -1808,7 +1827,7 @@ impl TabViewer for Tabs<'_> {
             }
             Tab::Preview(_) => OnCloseResponse::Close,
             Tab::Compare(id) => {
-                self.compares.map.remove(id);
+                self.compares.remove(*id, self.editor);
                 OnCloseResponse::Close
             }
         }

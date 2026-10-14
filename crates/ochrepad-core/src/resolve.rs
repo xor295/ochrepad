@@ -441,7 +441,16 @@ fn move_selection(
 fn vertical(rows: &DisplayMap, sel: &Selection, delta: isize) -> (ByteOffset, Option<VisualCol>) {
     let row = rows.row_of(sel.head);
     let goal = sel.goal.unwrap_or_else(|| rows.col_in_row(sel.head));
-    let target = rows.advance(row, delta);
+    let mut target = rows.advance(row, delta);
+    // Padding rows hold no text: keep going the same way, or stay put.
+    while rows.is_filler(target) {
+        let (next, moved) = rows.step(target, delta.signum());
+        if moved == 0 {
+            target = row;
+            break;
+        }
+        target = next;
+    }
     if target == row {
         return (sel.head, Some(goal));
     }

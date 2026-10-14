@@ -1,11 +1,12 @@
 //! `View`: a window onto a buffer with its own selections and scroll position.
 
 use std::cell::RefCell;
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
 use crate::buffer::BufferId;
-use crate::display::WrapCache;
+use crate::display::{Padding, WrapCache};
 use crate::fold::FoldSet;
 use crate::selection::SelectionSet;
 
@@ -38,6 +39,12 @@ pub struct View {
     /// widget sets it from the pane's width.
     pub wrap_cols: Option<usize>,
     pub(crate) wrap_cache: RefCell<WrapCache>,
+    /// Blank rows between lines, aligning this view with another (one side
+    /// of a compare view). With padding, folds and wrap do not apply.
+    pub padding: Option<Arc<Padding>>,
+    /// Not a tab of its own (a compare view's side): left out of
+    /// [`crate::Editor::views_of`].
+    aux: bool,
 }
 
 impl View {
@@ -50,7 +57,17 @@ impl View {
             folds: FoldSet::default(),
             wrap_cols: None,
             wrap_cache: RefCell::default(),
+            padding: None,
+            aux: false,
         }
+    }
+
+    pub fn is_aux(&self) -> bool {
+        self.aux
+    }
+
+    pub(crate) fn set_aux(&mut self) {
+        self.aux = true;
     }
 
     pub fn id(&self) -> ViewId {

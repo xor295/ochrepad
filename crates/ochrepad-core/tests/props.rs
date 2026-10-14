@@ -179,8 +179,10 @@ fn check(t: &util::T) -> Result<(), TestCaseError> {
         );
     }
     let rows = ochrepad_core::DisplayMap::new(t.buffer(), view, 4);
+    // Folds do not apply to a padded (compare) view.
+    let padded = view.padding.is_some();
     let visible: Vec<usize> = (0..doc.line_count())
-        .filter(|&l| !folds.is_hidden(l))
+        .filter(|&l| padded || !folds.is_hidden(l))
         .collect();
     prop_assert_eq!(rows.visible_line_count(), visible.len());
     let all: Vec<_> = rows.rows_from(rows.first_row(), usize::MAX).collect();
@@ -190,13 +192,18 @@ fn check(t: &util::T) -> Result<(), TestCaseError> {
     // A line's rows cover it exactly, and each row's start maps back to it.
     for (i, &r) in all.iter().enumerate() {
         let range = rows.row_range(r);
-        prop_assert_eq!(rows.row_of(range.start), r);
+        let blank = rows.is_filler(r);
+        if blank {
+            prop_assert!(range.is_empty());
+        } else {
+            prop_assert_eq!(rows.row_of(range.start), r);
+        }
         if r.sub == 0 {
             prop_assert_eq!(range.start, doc.line_start(r.line));
         } else {
             prop_assert_eq!(rows.row_range(all[i - 1]).end, range.start);
         }
-        if rows.is_last_in_line(r) {
+        if !blank && rows.is_last_in_line(r) {
             prop_assert_eq!(range.end, doc.line_end(r.line));
         }
         prop_assert!(rows.row_end(r) >= range.start && rows.row_end(r) <= range.end);
@@ -204,10 +211,25 @@ fn check(t: &util::T) -> Result<(), TestCaseError> {
     Ok(())
 }
 
-/// A document with a random wrap width (or none) on its view.
-fn setup_wrapped(initial: &str, wrap: Option<usize>) -> util::T {
+/// How a random view lays out its rows: a wrap width, and padding (blank
+/// rows before lines, as in a compare view).
+type Layout = (Option<usize>, Option<(Vec<usize>, usize)>);
+
+fn layout() -> impl Strategy<Value = Layout> {
+    (
+        prop::option::of(10usize..16),
+        prop::option::weighted(0.3, (prop::collection::vec(0usize..3, 0..8), 0usize..3)),
+    )
+}
+
+/// A document whose view has the random `layout`.
+fn setup_wrapped(initial: &str, (wrap, padding): Layout) -> util::T {
     let mut t = util::setup(initial);
-    t.ed.view_mut(t.view).unwrap().wrap_cols = wrap;
+    let v = t.ed.view_mut(t.view).unwrap();
+    v.wrap_cols = wrap;
+    v.padding = padding.map(|(before, after_last)| {
+        std::sync::Arc::new(ochrepad_core::Padding { before, after_last })
+    });
     t
 }
 
@@ -221,9 +243,9 @@ proptest! {
     fn undo_all_restores_original(
         initial in text(),
         actions in prop::collection::vec(action(), 0..40),
-        wrap in prop::option::of(10usize..16),
+        layout in layout(),
     ) {
-        let mut t = setup_wrapped(&initial, wrap);
+        let mut t = setup_wrapped(&initial, layout);
         let mut first_edit_sels: Option<SelectionSet> = None;
         for a in actions {
             let before = t.sels();
@@ -255,9 +277,9 @@ proptest! {
     fn undo_then_redo_is_identity(
         initial in text(),
         actions in prop::collection::vec(action(), 1..40),
-        wrap in prop::option::of(10usize..16),
+        layout in layout(),
     ) {
-        let mut t = setup_wrapped(&initial, wrap);
+        let mut t = setup_wrapped(&initial, layout);
         let mut last_was_edit = false;
         for a in actions {
             let rev = t.buffer().revision();
@@ -285,9 +307,9 @@ proptest! {
     fn line_edits_track_line_count(
         initial in text(),
         actions in prop::collection::vec(action(), 0..40),
-        wrap in prop::option::of(10usize..16),
+        layout in layout(),
     ) {
-        let mut t = setup_wrapped(&initial, wrap);
+        let mut t = setup_wrapped(&initial, layout);
         let id = t.buffer().id();
         for a in actions {
             let before = t.buffer().doc().line_count() as isize;

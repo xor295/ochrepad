@@ -162,8 +162,22 @@ impl Editor {
         self.views.values()
     }
 
+    /// The views of `buffer` that are tabs (not auxiliary ones).
     pub fn views_of(&self, buffer: BufferId) -> impl Iterator<Item = &View> {
-        self.views.values().filter(move |v| v.buffer() == buffer)
+        self.views
+            .values()
+            .filter(move |v| v.buffer() == buffer && !v.is_aux())
+    }
+
+    /// A view that is not a tab of its own (one side of a compare view). It
+    /// follows edits like any view, is left out of
+    /// [`views_of`](Self::views_of), and goes when its buffer is removed.
+    pub fn add_aux_view(&mut self, buffer: BufferId) -> Result<ViewId, ActionError> {
+        let id = self.add_view(buffer)?;
+        if let Some(v) = self.views.get_mut(&id) {
+            v.set_aux();
+        }
+        Ok(id)
     }
 
     pub fn start_recording(&mut self) {
@@ -229,7 +243,9 @@ impl Editor {
     /// highlighter, bumps the revision and records the action if recording.
     pub fn apply(&mut self, view: ViewId, action: Action) -> Result<(), ActionError> {
         let (buffer_id, _) = self.lookup(view)?;
+        let read_only = self.buffers.get(&buffer_id).is_some_and(|b| b.read_only);
         match &action {
+            Action::Undo | Action::Redo if read_only => return Err(ActionError::ReadOnly),
             Action::Undo => self.undo(view, buffer_id),
             Action::Redo => self.redo(view, buffer_id),
             Action::Fold
@@ -306,6 +322,9 @@ impl Editor {
                     b.history.break_coalescing();
                 }
                 self.set_selections(view, sels);
+            }
+            Resolved::Edit { .. } if self.buffers.get(&buffer_id).is_some_and(|b| b.read_only) => {
+                return Err(ActionError::ReadOnly);
             }
             Resolved::Edit {
                 changes,

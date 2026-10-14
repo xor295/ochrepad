@@ -56,6 +56,10 @@ people downloading the release.
 - The find panel is more compact: Find All is one menu, Replace and In
   Files are toggles, and × closes it. The tab bar is a little taller.
 - The gutter is one column wider, for the fold margin.
+- The compare view is editable: each side is a full editor (typing, undo,
+  multiple carets, syntax highlighting), the two sides scroll together, and
+  the differences update a moment after you stop typing. A side showing the
+  saved file stays read-only.
 
 ### Fixed
 

@@ -4,6 +4,10 @@
 //! would mean wrapping the whole file. Lines hidden by a fold have no rows;
 //! with word wrap on, a line has one row per wrapped piece, otherwise one.
 //!
+//! A compare view's side has [`Padding`]: blank rows before some lines (and
+//! after the last), opposite lines only the other side has. They count as
+//! rows of the line they precede; carets never stand on them.
+//!
 //! The editor widget scrolls, paints and hit-tests through a [`DisplayMap`],
 //! and vertical motions resolve through one, so a macro's `Up` moves one
 //! row in whatever view plays it.
@@ -60,6 +64,17 @@ struct WrapEntry {
 /// Lines kept in a [`WrapCache`] before it starts over.
 const WRAP_CACHE_LINES: usize = 4096;
 
+/// Blank rows that align a view with another: `before[line]` rows above
+/// each line (missing entries are 0), `after_last` rows after the last.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Padding {
+    pub before: Vec<usize>,
+    pub after_last: usize,
+}
+
+/// Folds do not apply to a padded view.
+static NO_FOLDS: std::sync::LazyLock<FoldSet> = std::sync::LazyLock::new(FoldSet::default);
+
 /// A view's rows over its document.
 #[derive(Clone, Copy)]
 pub struct DisplayMap<'a> {
@@ -68,17 +83,24 @@ pub struct DisplayMap<'a> {
     folds: &'a FoldSet,
     wrap: Option<usize>,
     cache: &'a std::cell::RefCell<WrapCache>,
+    padding: Option<&'a Padding>,
     tab_width: usize,
 }
 
 impl<'a> DisplayMap<'a> {
     pub fn new(buffer: &'a Buffer, view: &'a View, tab_width: usize) -> Self {
+        let padding = view.padding.as_deref();
         Self {
             doc: buffer.doc(),
             revision: buffer.revision(),
-            folds: &view.folds,
-            wrap: view.wrap_cols,
+            folds: if padding.is_some() {
+                &NO_FOLDS
+            } else {
+                &view.folds
+            },
+            wrap: view.wrap_cols.filter(|_| padding.is_none()),
             cache: &view.wrap_cache,
+            padding,
             tab_width,
         }
     }
@@ -127,8 +149,37 @@ impl<'a> DisplayMap<'a> {
         if self.folds.is_hidden(line) {
             0
         } else {
-            self.wrapped(line).map_or(1, |w| w.starts.len())
+            self.pad_before(line) + self.text_rows(line) + self.pad_after(line)
         }
+    }
+
+    /// Rows of `line`'s text (not counting padding).
+    fn text_rows(&self, line: usize) -> usize {
+        self.wrapped(line).map_or(1, |w| w.starts.len())
+    }
+
+    fn pad_before(&self, line: usize) -> usize {
+        self.padding
+            .map_or(0, |p| p.before.get(line).copied().unwrap_or(0))
+    }
+
+    fn pad_after(&self, line: usize) -> usize {
+        match self.padding {
+            Some(p) if line + 1 == self.doc.line_count() => p.after_last,
+            _ => 0,
+        }
+    }
+
+    /// Which row of its line's text `row` is, or `None` for a blank
+    /// (padding) row.
+    pub fn text_sub(&self, row: RowPos) -> Option<usize> {
+        let sub = row.sub.checked_sub(self.pad_before(row.line))?;
+        (sub < self.text_rows(row.line)).then_some(sub)
+    }
+
+    /// Whether `row` is a blank padding row.
+    pub fn is_filler(&self, row: RowPos) -> bool {
+        self.text_sub(row).is_none()
     }
 
     /// Lines that are not hidden. Sizes the scrollbar.
@@ -182,7 +233,7 @@ impl<'a> DisplayMap<'a> {
     /// The row `n` rows after `row` (before it for negative `n`), stopping at
     /// the first and last rows, and how many rows it actually moved.
     pub fn step(&self, row: RowPos, n: isize) -> (RowPos, isize) {
-        if !self.wraps() {
+        if !self.wraps() && self.padding.is_none() {
             // One row per visible line: count in visible lines.
             let from = self.visible_index(self.shown_line(row.line)) as isize;
             let last = self.visible_line_count() as isize - 1;
@@ -225,19 +276,30 @@ impl<'a> DisplayMap<'a> {
     pub fn row_range(&self, row: RowPos) -> Range<ByteOffset> {
         let start = self.doc.line_start(row.line);
         let end = self.doc.line_end(row.line);
+        let Some(sub) = self.text_sub(row) else {
+            // Padding: empty, before or after the line.
+            let at = if row.sub < self.pad_before(row.line) {
+                start
+            } else {
+                end
+            };
+            return at..at;
+        };
         match self.wrapped(row.line) {
             None => start..end,
             Some(w) => {
                 let at = |i: usize| ByteOffset(start.0 + w.starts[i]);
-                let sub = row.sub.min(w.starts.len() - 1);
+                let sub = sub.min(w.starts.len() - 1);
                 at(sub)..w.starts.get(sub + 1).map_or(end, |_| at(sub + 1))
             }
         }
     }
 
-    /// Whether `row` is its line's last row.
+    /// Whether `row` is the last row of its line's text (padding rows count
+    /// as last).
     pub fn is_last_in_line(&self, row: RowPos) -> bool {
-        row.sub + 1 >= self.rows_in_line(row.line)
+        self.text_sub(row)
+            .is_none_or(|s| s + 1 >= self.text_rows(row.line))
     }
 
     /// The last caret position on `row`. A position at a wrap point shows
@@ -255,9 +317,9 @@ impl<'a> DisplayMap<'a> {
     /// The line's visual column where `row` starts, and the cells the row
     /// is indented by on screen (continuation rows only).
     pub fn row_cols(&self, row: RowPos) -> (usize, usize) {
-        match self.wrapped(row.line) {
-            Some(w) if row.sub > 0 => {
-                let sub = row.sub.min(w.starts.len() - 1);
+        match (self.wrapped(row.line), self.text_sub(row)) {
+            (Some(w), Some(sub)) if sub > 0 => {
+                let sub = sub.min(w.starts.len() - 1);
                 (w.start_cols[sub], w.indent)
             }
             _ => (0, 0),
@@ -266,10 +328,7 @@ impl<'a> DisplayMap<'a> {
 
     /// Cells the text of `row` is indented by (continuation rows only).
     pub fn row_indent(&self, row: RowPos) -> usize {
-        match self.wrapped(row.line) {
-            Some(w) if row.sub > 0 => w.indent,
-            _ => 0,
-        }
+        self.row_cols(row).1
     }
 
     /// The row showing `pos`; for a position hidden by a fold, the fold's
@@ -280,13 +339,14 @@ impl<'a> DisplayMap<'a> {
         if shown != line {
             return RowPos::new(shown, self.rows_in_line(shown) - 1);
         }
-        match self.wrapped(line) {
-            None => RowPos::new(line, 0),
+        let sub = match self.wrapped(line) {
+            None => 0,
             Some(w) => {
                 let off = pos.0 - self.doc.line_start(line).0;
-                RowPos::new(line, w.starts.partition_point(|&s| s <= off) - 1)
+                w.starts.partition_point(|&s| s <= off) - 1
             }
-        }
+        };
+        RowPos::new(line, self.pad_before(line) + sub)
     }
 
     /// The on-screen column of `pos` within its row, counting a
@@ -294,19 +354,21 @@ impl<'a> DisplayMap<'a> {
     /// each other.
     pub fn col_in_row(&self, pos: ByteOffset) -> VisualCol {
         let col = byte_to_visual_col(self.doc, pos, self.tab_width).0;
-        let row = self.row_of(pos);
-        match self.wrapped(row.line) {
-            Some(w) if row.sub > 0 => VisualCol(w.indent + col - w.start_cols[row.sub]),
-            _ => VisualCol(col),
-        }
+        let (start_col, indent) = self.row_cols(self.row_of(pos));
+        VisualCol(indent + col - start_col)
     }
 
     /// The position at on-screen column `col` of `row`, or the row's end if
     /// it is shorter.
     pub fn byte_at_col(&self, row: RowPos, col: VisualCol) -> ByteOffset {
-        let target = match self.wrapped(row.line) {
-            Some(w) if row.sub > 0 => w.start_cols[row.sub] + col.0.saturating_sub(w.indent),
-            _ => col.0,
+        if self.is_filler(row) {
+            return self.row_range(row).start;
+        }
+        let (start_col, indent) = self.row_cols(row);
+        let target = if start_col > 0 || indent > 0 {
+            start_col + col.0.saturating_sub(indent)
+        } else {
+            col.0
         };
         let at = visual_col_to_byte(self.doc, row.line, VisualCol(target), self.tab_width);
         at.clamp(self.row_range(row).start, self.row_end(row))

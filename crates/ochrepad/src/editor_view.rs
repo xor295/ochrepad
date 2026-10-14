@@ -203,6 +203,14 @@ enum Op {
     Cut,
 }
 
+/// Per-row colours from outside the editor: a compare view's diff.
+pub trait RowStyle {
+    /// The background of `row` (`blank` for a padding row).
+    fn background(&self, row: RowPos, blank: bool) -> Option<egui::Color32>;
+    /// Byte ranges (within the line) to tint on `line`, and their colour.
+    fn spans(&self, line: usize) -> (Vec<std::ops::Range<usize>>, egui::Color32);
+}
+
 /// Optional extras drawn over the text.
 #[derive(Default)]
 pub struct Decorations<'a> {
@@ -210,6 +218,8 @@ pub struct Decorations<'a> {
     pub styler: Option<&'a mut dyn LineStyler>,
     /// Highlights every match of the find panel's pattern.
     pub find_highlight: Option<&'a ochrepad_core::Searcher>,
+    /// Row backgrounds and spans (the compare view).
+    pub row_style: Option<&'a dyn RowStyle>,
 }
 
 /// Shows the editor for `view` filling the available space. `label` names the
@@ -825,6 +835,7 @@ pub fn editor_view(
         show_chevrons,
         decorations.styler,
         decorations.find_highlight,
+        decorations.row_style,
     );
     response
 }
@@ -1210,6 +1221,7 @@ fn paint(
     show_chevrons: bool,
     styler: Option<&mut dyn LineStyler>,
     find_highlight: Option<&ochrepad_core::Searcher>,
+    row_style: Option<&dyn RowStyle>,
 ) {
     let Some(v) = editor.view(view) else { return };
     let doc = doc_of(editor, buffer);
@@ -1293,6 +1305,14 @@ fn paint(
             Pos2::new(f.content.min.x, y),
             Vec2::new(f.content.width(), f.line_h),
         );
+        let blank = rows.is_filler(row);
+        if let Some(bg) = row_style.and_then(|s| s.background(row, blank)) {
+            text_painter.rect_filled(rect, 0.0, bg);
+        }
+        if blank {
+            // A padding row: no text, no number.
+            continue;
+        }
 
         // Selections overlapping this row (they are sorted).
         let from = sels.partition_point(|s| s.end() < row_start);
@@ -1348,6 +1368,19 @@ fn paint(
             text_painter.rect_filled(r, 0.0, sel_bg);
         }
 
+        if let Some(style) = row_style {
+            let (spans, color) = style.spans(line);
+            for sp in spans {
+                let a = ByteOffset(line_start.0 + sp.start).max(row_start);
+                let b = ByteOffset(line_start.0 + sp.end).min(row_end);
+                if a < b {
+                    let r =
+                        Rect::from_min_max(Pos2::new(x_at(a), y), Pos2::new(x_at(b), y + f.line_h));
+                    text_painter.rect_filled(r, 2.0, color);
+                }
+            }
+        }
+
         // A wrapped row draws only its own slice of the line.
         let row_painter = if rows.wraps() {
             let right = if rows.is_last_in_line(row) {
@@ -1371,7 +1404,7 @@ fn paint(
         }
 
         // The line number and fold chevron go on a line's first row.
-        if row.sub == 0 {
+        if rows.text_sub(row) == Some(0) {
             gutter_painter.text(
                 Pos2::new(f.gutter.max.x - f.fold_w, y),
                 Align2::RIGHT_TOP,
