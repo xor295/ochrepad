@@ -147,6 +147,8 @@ Motions for `MoveCursor`:
 | `{"Action": "Unindent"}` | Removes one level of indentation from the selected lines, or the caret's line (Shift+Tab). |
 | `{"Action": {"ConvertIndentation": {"to_spaces": true}}}` | Rewrites every line's leading whitespace as spaces (or with `false`, tabs), keeping its width, and indents the document that way from now on. One undo step. Also in the status bar's indentation menu. |
 | `{"Action": "ToggleLineComment"}` | Comments the selected lines, or the caret's line, at their common indent, or uncomments them if they all are (Ctrl+/, or Notepad++'s Ctrl+Q). For a language with only block comments, wraps the lines in one. |
+| `{"Action": "CommentLines"}` | Notepad++'s Single Line Comment (Ctrl+K): comments the lines even if they already are, adding a level. For a language with only block comments, wraps the lines unless they already are wrapped. |
+| `{"Action": "UncommentLines"}` | Notepad++'s Single Line Uncomment (Ctrl+Shift+K): takes one line comment off each line that has one and leaves the others, or unwraps the lines' block comment. |
 | `{"Action": "ToggleBlockComment"}` | Wraps each selection, or the caret's line, in a block comment, or unwraps it (Ctrl+Shift+/ or Ctrl+Shift+Q). |
 | `{"Action": "GoToMatchingBracket"}` | Moves the caret to the bracket matching the one beside it (Ctrl+B). |
 | `{"Action": "SelectToMatchingBracket"}` | Selects from the bracket beside the caret to its match, both included (Ctrl+Alt+B). |

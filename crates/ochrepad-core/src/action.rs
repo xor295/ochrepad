@@ -225,6 +225,15 @@ pub enum Action {
     /// line comment, or uncomment them if they all are. Languages with only
     /// block comments get a block comment around the lines.
     ToggleLineComment,
+    /// Comment the selected lines (or the caret's line) even if they
+    /// already are, as Notepad++'s Single Line Comment. Languages with only
+    /// block comments get a block comment around the lines unless they are
+    /// in one.
+    CommentLines,
+    /// Remove one line comment from each selected line that has one (or
+    /// the block comment around the lines), as Notepad++'s Single Line
+    /// Uncomment. Other lines are left alone.
+    UncommentLines,
     /// Wrap each selection (or the caret's line) in a block comment, or
     /// unwrap it.
     ToggleBlockComment,

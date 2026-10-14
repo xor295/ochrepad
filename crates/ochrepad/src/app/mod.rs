@@ -1564,6 +1564,8 @@ impl OchrepadApp {
         ui.separator();
         for (label, shortcut, action) in [
             ("Toggle Comment", "Ctrl+/", Action::ToggleLineComment),
+            ("Comment Lines", "Ctrl+K", Action::CommentLines),
+            ("Uncomment Lines", "Ctrl+Shift+K", Action::UncommentLines),
             (
                 "Toggle Block Comment",
                 "Ctrl+Shift+/",

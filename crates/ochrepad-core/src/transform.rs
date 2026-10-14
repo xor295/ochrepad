@@ -561,9 +561,26 @@ fn indent_len(text: &str) -> usize {
     text.len() - text.trim_start_matches([' ', '\t']).len()
 }
 
+/// What a line comment command does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CommentOp {
+    /// Comment the lines, or uncomment them if they all are.
+    Toggle,
+    /// Comment the lines, even those that already are.
+    Add,
+    /// Uncomment the lines that are.
+    Remove,
+}
+
 /// Comments the touched lines with `marker` at their common indent, or
-/// uncomments them if every non-blank one is commented.
-pub(crate) fn toggle_line_comment(doc: &Document, sels: &SelectionSet, marker: &str) -> Resolved {
+/// uncomments them (`op`; `Toggle` uncomments if every non-blank one is
+/// commented).
+pub(crate) fn line_comment(
+    doc: &Document,
+    sels: &SelectionSet,
+    marker: &str,
+    op: CommentOp,
+) -> Resolved {
     let lines: Vec<(usize, String)> = touched_lines(doc, sels)
         .into_iter()
         .map(|l| (l, doc.line_text(l)))
@@ -572,12 +589,16 @@ pub(crate) fn toggle_line_comment(doc: &Document, sels: &SelectionSet, marker: &
     if lines.is_empty() {
         return Resolved::Selections(sels.clone());
     }
-    let commented = lines
-        .iter()
-        .all(|(_, t)| t[indent_len(t)..].starts_with(marker));
-    let edits = if commented {
+    let commented = |t: &str| t[indent_len(t)..].starts_with(marker);
+    let remove = match op {
+        CommentOp::Toggle => lines.iter().all(|(_, t)| commented(t)),
+        CommentOp::Add => false,
+        CommentOp::Remove => true,
+    };
+    let edits = if remove {
         lines
             .iter()
+            .filter(|(_, t)| commented(t))
             .map(|(l, t)| {
                 let at = doc.line_start(*l).0 + indent_len(t);
                 let rest = &t[indent_len(t) + marker.len()..];
@@ -624,10 +645,7 @@ pub(crate) fn toggle_block_comment(
         let text = doc.slice(range.clone());
         let lead = text.len() - text.trim_start().len();
         let inner = text.trim();
-        if inner.len() >= open.len() + close.len()
-            && inner.starts_with(open)
-            && inner.ends_with(close)
-        {
+        if in_block_comment(&text, open, close) {
             // Unwrap, with one space inside each marker if there is one.
             let start = range.start.0 + lead;
             let end = start + inner.len();
@@ -646,15 +664,22 @@ pub(crate) fn toggle_block_comment(
     edit_result(changes, after, sels)
 }
 
+/// Whether `text`, blanks aside, is one block comment.
+fn in_block_comment(text: &str, open: &str, close: &str) -> bool {
+    let inner = text.trim();
+    inner.len() >= open.len() + close.len() && inner.starts_with(open) && inner.ends_with(close)
+}
+
 /// Line comments with the line marker, or a block comment around the lines'
 /// text for a language with only block comments.
-pub(crate) fn toggle_comment_lines(
+pub(crate) fn comment_lines(
     doc: &Document,
     sels: &SelectionSet,
     syntax: &crate::buffer::CommentSyntax,
+    op: CommentOp,
 ) -> Option<Resolved> {
     if let Some(marker) = &syntax.line {
-        return Some(toggle_line_comment(doc, sels, marker));
+        return Some(line_comment(doc, sels, marker, op));
     }
     let (open, close) = syntax.block.as_ref()?;
     // The text of the touched lines, as one selection per run of lines.
@@ -662,6 +687,15 @@ pub(crate) fn toggle_comment_lines(
     let (first, last) = (*lines.first()?, *lines.last()?);
     let text_start = |l: usize| ByteOffset(doc.line_start(l).0 + indent_len(&doc.line_text(l)));
     let whole = SelectionSet::single(Selection::new(text_start(first), doc.line_end(last)));
+    let wrapped = in_block_comment(&doc.slice(whole.primary().range()), open, close);
+    let wanted = match op {
+        CommentOp::Toggle => true,
+        CommentOp::Add => !wrapped,
+        CommentOp::Remove => wrapped,
+    };
+    if !wanted {
+        return Some(Resolved::Selections(sels.clone()));
+    }
     match toggle_block_comment(doc, &whole, open, close) {
         Resolved::Edit { changes, kind, .. } => {
             let after = map_selections_around(sels, &changes);

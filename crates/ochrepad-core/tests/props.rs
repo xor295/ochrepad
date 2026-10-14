@@ -168,6 +168,8 @@ fn action() -> impl Strategy<Value = Action> {
             Just(Action::Unindent),
             any::<bool>().prop_map(|to_spaces| Action::ConvertIndentation { to_spaces }),
             Just(Action::ToggleLineComment),
+            Just(Action::CommentLines),
+            Just(Action::UncommentLines),
             Just(Action::ToggleBlockComment),
             Just(Action::GoToMatchingBracket),
             Just(Action::SelectToMatchingBracket),

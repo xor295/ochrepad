@@ -357,15 +357,24 @@ impl Editor {
             | Action::Replace { .. }
             | Action::ReplaceAll { .. }
             | Action::SelectAllMatches(_) => resolve_search(action, &buffer.doc, sels),
-            Action::ToggleLineComment | Action::ToggleBlockComment => {
+            Action::ToggleLineComment
+            | Action::CommentLines
+            | Action::UncommentLines
+            | Action::ToggleBlockComment => {
+                use crate::transform::CommentOp;
                 let syntax = buffer.comments.as_ref();
+                let op = match action {
+                    Action::CommentLines => CommentOp::Add,
+                    Action::UncommentLines => CommentOp::Remove,
+                    _ => CommentOp::Toggle,
+                };
                 let resolved = match (action, syntax) {
-                    (Action::ToggleLineComment, Some(c)) => {
-                        crate::transform::toggle_comment_lines(&buffer.doc, sels, c)
+                    (Action::ToggleBlockComment, Some(c)) => {
+                        c.block.as_ref().map(|(open, close)| {
+                            crate::transform::toggle_block_comment(&buffer.doc, sels, open, close)
+                        })
                     }
-                    (_, Some(c)) => c.block.as_ref().map(|(open, close)| {
-                        crate::transform::toggle_block_comment(&buffer.doc, sels, open, close)
-                    }),
+                    (_, Some(c)) => crate::transform::comment_lines(&buffer.doc, sels, c, op),
                     _ => None,
                 };
                 resolved.ok_or(ActionError::NoCommentSyntax)

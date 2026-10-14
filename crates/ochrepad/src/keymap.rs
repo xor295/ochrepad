@@ -212,6 +212,8 @@ impl Default for Keymap {
             (Chord::new(Slash).cmd(), act(Action::ToggleLineComment)),
             // Notepad++'s keys for the same.
             (Chord::new(Q).cmd(), act(Action::ToggleLineComment)),
+            (Chord::new(K).cmd(), act(Action::CommentLines)),
+            (Chord::new(K).cmd().shift(), act(Action::UncommentLines)),
             (Chord::new(Q).cmd().shift(), act(Action::ToggleBlockComment)),
             (
                 Chord::new(Slash).cmd().shift(),

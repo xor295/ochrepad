@@ -270,6 +270,8 @@ pub(crate) fn resolve(
         | Action::FoldLevel(_)
         | Action::UnfoldLevel(_)
         | Action::ToggleLineComment
+        | Action::CommentLines
+        | Action::UncommentLines
         | Action::ToggleBlockComment
         | Action::FormatJson { .. }
         | Action::MinifyJson
