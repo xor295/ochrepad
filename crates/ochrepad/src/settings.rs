@@ -339,10 +339,10 @@ impl AppSettings {
             .spacing([8.0, 4.0])
             .show(ui, |ui| {
                 for (i, r) in self.highlight_rules.iter_mut().enumerate() {
-                    let field = ui.add(
-                        egui::TextEdit::singleline(&mut r.pattern)
-                            .desired_width(220.0)
-                            .hint_text("text or pattern"),
+                    // Sized explicitly: a grid cell would squeeze it.
+                    let field = ui.add_sized(
+                        [240.0, ui.spacing().interact_size.y],
+                        egui::TextEdit::singleline(&mut r.pattern).hint_text("text or pattern"),
                     );
                     if let Some((_, e)) = errors.iter().find(|(j, _)| *j == i) {
                         field.on_hover_text(e);
