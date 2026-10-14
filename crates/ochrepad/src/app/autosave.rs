@@ -103,6 +103,11 @@ pub(super) enum PendingJob {
     },
     /// A file operation for the file tree.
     Tree(super::workspace::TreeJob),
+    /// A file Replace in Files rewrote, and how many matches it replaced.
+    ReplaceInFiles {
+        path: PathBuf,
+        matches: usize,
+    },
     Other,
 }
 
@@ -221,6 +226,9 @@ impl OchrepadApp {
                     }
                 }
                 Some(PendingJob::Tree(job)) => self.tree_job_done(job, d.result),
+                Some(PendingJob::ReplaceInFiles { path, matches }) => {
+                    self.replace_in_files_saved(&path, matches, d.result);
+                }
                 Some(PendingJob::Other) | None => {
                     if let Err(e) = d.result {
                         self.message = Some(format!("Could not write a backup:\n{e}"));

@@ -23,7 +23,8 @@ A fast, native text editor in the spirit of Notepad++, written in Rust with
   (one caret per match) and Replace All as a single undo step. Find All
   lists the matches in one or every open document in a results panel, and
   Replace All can also work on every open document. Find in Files
-  (Ctrl+Shift+F) searches a folder on disk, honouring `.gitignore`. Words
+  (Ctrl+Shift+F) searches a folder on disk, honouring `.gitignore`, and
+  Replace in Files rewrites the matches there (after asking). Words
   can be styled in five colours to keep them in sight. See
   [docs/find-and-replace.md](docs/find-and-replace.md) for the regex dialect.
 - **Bookmarks**: Ctrl+F2 marks a line, F2 and Shift+F2 jump between marks,

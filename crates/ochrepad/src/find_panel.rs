@@ -20,6 +20,9 @@ pub enum FindRequest {
     ReplaceAllInAll,
     /// Find in Files with the folder and filters in the panel.
     FindInFiles,
+    /// Replace in Files: the same files, with the replacement (after
+    /// counting and confirming).
+    ReplaceInFiles,
     /// Find Next/Previous in a viewer (see [`FindTarget::Viewer`]).
     Next { backward: bool },
     /// Count the matches in a viewer.
@@ -405,6 +408,17 @@ impl FindPanel {
                     .clicked()
                 {
                     requests.push(FindRequest::FindInFiles);
+                }
+                if self.show_replace
+                    && !in_viewer
+                    && ui
+                        .add_enabled(valid, egui::Button::new("Replace in Files"))
+                        .on_hover_text(
+                            "Replace every match in these files (after counting them and asking)",
+                        )
+                        .clicked()
+                {
+                    requests.push(FindRequest::ReplaceInFiles);
                 }
             });
         }

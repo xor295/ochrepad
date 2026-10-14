@@ -74,8 +74,20 @@ opens it.
   skipped and counted in the results heading.
 - A file that is open in a tab is searched as it is in the editor, unsaved
   changes included, not as it is on disk.
-- **In selection** does not apply. Find in Files only finds; there is no
-  replace for files that are not open.
+- **In selection** does not apply.
+
+**Replace in Files** (with the replace row shown too) replaces every match
+in the same files. It first counts them, then asks: "Replace 42 matches in
+7 files?", saying how many are saved straight away and how many are open.
+
+- Files open in a tab get a Replace All each, as an undo step, and are left
+  unsaved, as Replace All in All Open Documents does.
+- The other files are saved at once, each in its own encoding, byte order
+  mark and line endings, written to a temporary file and moved into place so
+  a file is never half written. This can't be undone.
+- Binary files and files over 50 MB are left alone. A file that can't be
+  saved (a replacement its encoding has no characters for, say) is listed
+  afterwards and left as it was.
 
 **Replace All in All Open Documents** (in replace mode) first counts the
 matches and asks before replacing. Each document gets its own undo step,

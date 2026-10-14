@@ -26,6 +26,7 @@ mod edit_tools;
 mod external;
 mod history_store;
 mod prefs;
+mod replace_in_files;
 mod search;
 mod summary;
 mod tools;
@@ -166,6 +167,11 @@ pub struct OchrepadApp {
     pub token_styles: crate::token_styles::TokenStyles,
     /// The View > Summary dialog, while it is open.
     summary: Option<summary::SummaryDialog>,
+    /// Replace in Files, while it counts, asks or writes.
+    replace_in_files: replace_in_files::Stage,
+    /// Saves Replace in Files made that the worker finished: whether it
+    /// worked, the matches, the error.
+    replace_saves: Vec<(bool, usize, Option<String>)>,
     /// The log highlight rules from the settings, compiled.
     log_rules: crate::log_rules::LogRules,
     /// The Search Results panel.
@@ -244,6 +250,8 @@ impl OchrepadApp {
             function_list: Default::default(),
             token_styles: Default::default(),
             summary: None,
+            replace_in_files: Default::default(),
+            replace_saves: Vec::new(),
             closed_files: Vec::new(),
             log_rules: Default::default(),
             results: Default::default(),
@@ -887,6 +895,7 @@ impl OchrepadApp {
                     }
                     FindRequest::ReplaceAllInAll => self.plan_replace_all_in_all(),
                     FindRequest::FindInFiles => self.find_in_files(),
+                    FindRequest::ReplaceInFiles => self.plan_replace_in_files(),
                 }
             }
         }
@@ -1066,6 +1075,7 @@ impl OchrepadApp {
         self.open_as_editable_dialog(ui);
         self.hash_dialog(ui);
         self.summary_dialog(ui);
+        self.replace_in_files_frame(ui);
         self.edit_tools_frame(ui);
         self.external_dialog(ui);
         self.preferences_window(ui);

@@ -29,6 +29,9 @@ people downloading the release.
 - Edit > Multi-select Next and Multi-select All put selections on the
   other occurrences of the selected text (or the word at the caret), with
   Notepad++'s case and whole-word choices.
+- Replace in Files: the find panel replaces every match in a folder's files,
+  after counting them and asking. Open documents get an undo step; the
+  other files are saved in their own encoding and line endings.
 - Search > Style All Occurrences of Token highlights a word everywhere in
   one of five colours (also on the right-click menu), with Clear Style and
   Jump Up/Down to go from one occurrence to the next.
