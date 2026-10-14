@@ -24,8 +24,20 @@ pub enum CaseMode {
     Lower,
     /// First letter of each word upper case, the rest lower case.
     Title,
+    /// First letter of each word upper case, the rest as it was
+    /// (Notepad++'s Proper Case (blend)).
+    TitleBlend,
+    /// First letter of each sentence upper case, the rest lower case.
+    Sentence,
+    /// First letter of each sentence upper case, the rest as it was.
+    SentenceBlend,
     /// Swap the case of every letter.
     Invert,
+    /// Each letter upper or lower case at random (Notepad++'s ranDOm
+    /// CasE); the seed decides, so a macro replays it.
+    Random {
+        seed: u64,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -60,15 +72,18 @@ pub fn convert_case(text: &str, mode: CaseMode) -> String {
                 }
             })
             .collect(),
-        CaseMode::Title => {
+        CaseMode::Title | CaseMode::TitleBlend => {
+            let blend = mode == CaseMode::TitleBlend;
             let mut out = String::with_capacity(text.len());
             let mut in_word = false;
             for c in text.chars() {
                 if c.is_alphanumeric() {
-                    if in_word {
-                        out.extend(c.to_lowercase());
-                    } else {
+                    if !in_word {
                         out.extend(c.to_uppercase());
+                    } else if blend {
+                        out.push(c);
+                    } else {
+                        out.extend(c.to_lowercase());
                     }
                     in_word = true;
                 } else {
@@ -78,6 +93,62 @@ pub fn convert_case(text: &str, mode: CaseMode) -> String {
                 }
             }
             out
+        }
+        CaseMode::Sentence | CaseMode::SentenceBlend => {
+            // As Notepad++: a sentence starts the text, follows a `.`, `!`
+            // or `?` with no letter right after it (the first dot of
+            // "e.g." does not end one), and follows a blank line.
+            let blend = mode == CaseMode::SentenceBlend;
+            let chars: Vec<char> = text.chars().collect();
+            let mut out = String::with_capacity(text.len());
+            let (mut starts, mut after_break) = (true, false);
+            for (i, &c) in chars.iter().enumerate() {
+                if c.is_alphabetic() {
+                    if starts {
+                        out.extend(c.to_uppercase());
+                    } else if blend {
+                        out.push(c);
+                    } else {
+                        out.extend(c.to_lowercase());
+                    }
+                    starts = false;
+                    after_break = false;
+                    continue;
+                }
+                out.push(c);
+                match c {
+                    '.' | '!' | '?' => {
+                        starts |= !chars.get(i + 1).is_some_and(|n| n.is_alphabetic());
+                    }
+                    '\n' => {
+                        starts |= after_break;
+                        after_break = true;
+                    }
+                    _ => after_break = false,
+                }
+            }
+            out
+        }
+        CaseMode::Random { seed } => {
+            // xorshift64*, as Randomize Line Order.
+            let mut state = seed | 1;
+            let mut upper = || {
+                state ^= state >> 12;
+                state ^= state << 25;
+                state ^= state >> 27;
+                state.wrapping_mul(0x2545_F491_4F6C_DD1D) >> 63 == 1
+            };
+            text.chars()
+                .flat_map(|c| -> Box<dyn Iterator<Item = char>> {
+                    if !c.is_alphabetic() {
+                        Box::new(std::iter::once(c))
+                    } else if upper() {
+                        Box::new(c.to_uppercase())
+                    } else {
+                        Box::new(c.to_lowercase())
+                    }
+                })
+                .collect()
         }
     }
 }
@@ -1120,6 +1191,40 @@ mod tests {
             convert_case(s, CaseMode::Invert),
             "HELLO world, DON'T STRASSE"
         );
+        assert_eq!(
+            convert_case("hello WORLD, mcDonald", CaseMode::TitleBlend),
+            "Hello WORLD, McDonald"
+        );
+    }
+
+    #[test]
+    fn sentence_case_starts_after_an_end_mark_or_a_blank_line() {
+        let s = "HELLO there. e.g. THIS one! and? yes\nno\n\nNEW para";
+        // As in Notepad++, only the first dot of "e.g." is inside a
+        // sentence.
+        assert_eq!(
+            convert_case(s, CaseMode::Sentence),
+            "Hello there. E.g. This one! And? Yes\nno\n\nNew para"
+        );
+        assert_eq!(
+            convert_case(s, CaseMode::SentenceBlend),
+            "HELLO there. E.g. THIS one! And? Yes\nno\n\nNEW para"
+        );
+        assert_eq!(convert_case("", CaseMode::Sentence), "");
+        assert_eq!(
+            convert_case("3 apples. ok", CaseMode::Sentence),
+            "3 Apples. Ok"
+        );
+    }
+
+    #[test]
+    fn random_case_changes_only_letters_and_follows_the_seed() {
+        let s = "abcdefghijklmnop 123 straße!";
+        let a = convert_case(s, CaseMode::Random { seed: 7 });
+        assert_eq!(a, convert_case(s, CaseMode::Random { seed: 7 }));
+        assert_ne!(a, convert_case(s, CaseMode::Random { seed: 8 }));
+        assert_eq!(a.to_lowercase().replace("ss", "ß"), s);
+        assert!(a.chars().any(char::is_uppercase) && a.chars().any(char::is_lowercase));
     }
 
     #[test]

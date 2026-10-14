@@ -35,6 +35,9 @@ people downloading the release.
   Notepad++: `*.js; !*.min.js; !node_modules`.
 - The tab menu can save, Save As, rename and set Read-Only for its tab, as
   in Notepad++.
+- Edit > Convert Case has Notepad++'s Title Case (blend) (Alt+Shift+U),
+  Sentence case (Ctrl+Alt+U), Sentence case (blend) (Ctrl+Alt+Shift+U)
+  and ranDOm cASE.
 - Overtype: Insert switches to typing over the text, as in Notepad++. The
   status bar shows OVR and the caret becomes a bar under the character it
   replaces; typing never runs past the end of a line.
@@ -155,6 +158,11 @@ people downloading the release.
   in File Manager and Reload from Disk. The same copies are in Edit > Copy
   to Clipboard.
 - View > Full Screen (F11) and Always on Top.
+
+### Changed
+
+- iNVERT cASE moved from Ctrl+Alt+U to Ctrl+Alt+I, its Notepad++ key;
+  Ctrl+Alt+U is Sentence case, as there.
 
 ### Fixed
 

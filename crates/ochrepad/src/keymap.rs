@@ -190,7 +190,19 @@ impl Default for Keymap {
                 act(Action::ConvertCase(CaseMode::Title)),
             ),
             (
+                Chord::new(U).alt().shift(),
+                act(Action::ConvertCase(CaseMode::TitleBlend)),
+            ),
+            (
                 Chord::new(U).cmd().alt(),
+                act(Action::ConvertCase(CaseMode::Sentence)),
+            ),
+            (
+                Chord::new(U).cmd().alt().shift(),
+                act(Action::ConvertCase(CaseMode::SentenceBlend)),
+            ),
+            (
+                Chord::new(I).cmd().alt(),
                 act(Action::ConvertCase(CaseMode::Invert)),
             ),
             (Chord::new(D).cmd(), act(Action::DuplicateLine)),

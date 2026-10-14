@@ -64,7 +64,7 @@ A fast, native text editor in the spirit of Notepad++, written in Rust with
 - **Backups and session restore**: unsaved work is backed up every few seconds
   and comes back, with your tabs and layout, the next time you start. Optional
   automatic saving of named files ([more](docs/backups-and-session.md)).
-- **Text tools**: UPPER/lower/Title/iNVERT case, sort lines (ascending,
+- **Text tools**: UPPER/lower/Title/Sentence/iNVERT/random case, sort lines (ascending,
   descending, case-insensitive, numeric, by length, by a column selection)
   or put them in a random order, duplicate,
   move, join lines, trim trailing whitespace, and remove empty or duplicate
@@ -173,7 +173,8 @@ Windows and Linux. macOS is not supported.
 | Fold, unfold the block at the caret | Ctrl+Alt+F, Ctrl+Alt+Shift+F |
 | Fold all, unfold all, fold a level | Alt+0, Alt+Shift+0, Alt+1 … Alt+8 |
 | UPPERCASE, lowercase | Ctrl+Shift+U, Ctrl+U |
-| Title Case, iNVERT cASE | Alt+U, Ctrl+Alt+U |
+| Title Case, Sentence case (blend: with Shift) | Alt+U, Ctrl+Alt+U |
+| iNVERT cASE | Ctrl+Alt+I |
 | Record/stop macro, play macro | Ctrl+Shift+R, Ctrl+Shift+P |
 | Markdown preview | Ctrl+Shift+M |
 | Full screen | F11 |

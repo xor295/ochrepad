@@ -25,6 +25,22 @@ the column ([more](column-selection.md)).
 With several carets, each line is done once. A selection over several
 lines inserts above its first line or below its last one.
 
+## Convert case
+
+**Edit > Convert Case** changes the selected text, or the caret's line
+when nothing is selected, with Notepad++'s keys:
+
+| Command | Keys | Does |
+|---|---|---|
+| UPPERCASE | Ctrl+Shift+U | Every letter upper case. |
+| lowercase | Ctrl+U | Every letter lower case. |
+| Title Case | Alt+U | The first letter of each word upper case, the rest lower case. |
+| Title Case (blend) | Alt+Shift+U | The first letter of each word upper case; the rest stays as it is (`mcDonald` becomes `McDonald`). |
+| Sentence case | Ctrl+Alt+U | The first letter of each sentence upper case, the rest lower case. A sentence starts after `.`, `!` or `?` followed by a space or the end of a line, and after a blank line. |
+| Sentence case (blend) | Ctrl+Alt+Shift+U | The same, leaving the rest as it is. |
+| iNVERT cASE | Ctrl+Alt+I | Every letter's case swapped. |
+| ranDOm cASE | | Each letter upper or lower case at random. |
+
 ## Blank operations
 
 **Edit > Blank Operations** works on the selected lines, or on every line

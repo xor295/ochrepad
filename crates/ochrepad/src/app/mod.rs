@@ -1642,11 +1642,23 @@ impl OchrepadApp {
         }
         ui.separator();
         ui.menu_button("Convert Case", |ui| {
+            // Any seed for random case: the time will do.
+            let seed = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(1, |d| d.as_nanos() as u64);
             for (label, shortcut, mode) in [
                 ("UPPERCASE", "Ctrl+Shift+U", CaseMode::Upper),
                 ("lowercase", "Ctrl+U", CaseMode::Lower),
                 ("Title Case", "Alt+U", CaseMode::Title),
-                ("iNVERT cASE", "Ctrl+Alt+U", CaseMode::Invert),
+                ("Title Case (blend)", "Alt+Shift+U", CaseMode::TitleBlend),
+                ("Sentence case", "Ctrl+Alt+U", CaseMode::Sentence),
+                (
+                    "Sentence case (blend)",
+                    "Ctrl+Alt+Shift+U",
+                    CaseMode::SentenceBlend,
+                ),
+                ("iNVERT cASE", "Ctrl+Alt+I", CaseMode::Invert),
+                ("ranDOm cASE", "", CaseMode::Random { seed }),
             ] {
                 if item(ui, label, shortcut) {
                     self.apply(Action::ConvertCase(mode));

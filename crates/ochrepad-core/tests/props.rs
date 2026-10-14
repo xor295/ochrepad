@@ -103,7 +103,11 @@ fn action() -> impl Strategy<Value = Action> {
             ochrepad_core::CaseMode::Upper,
             ochrepad_core::CaseMode::Lower,
             ochrepad_core::CaseMode::Title,
+            ochrepad_core::CaseMode::TitleBlend,
+            ochrepad_core::CaseMode::Sentence,
+            ochrepad_core::CaseMode::SentenceBlend,
             ochrepad_core::CaseMode::Invert,
+            ochrepad_core::CaseMode::Random { seed: 3 },
         ])
         .prop_map(Action::ConvertCase),
         1 => any::<[bool; 5]>().prop_map(|b| Action::SortLines(ochrepad_core::SortOptions {
