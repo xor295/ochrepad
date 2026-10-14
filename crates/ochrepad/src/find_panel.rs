@@ -6,6 +6,10 @@ use egui::text::{CCursor, CCursorRange};
 use egui::{Id, Key, RichText, TextEdit, Ui};
 use ochrepad_core::{Action, ActionError, Editor, SearchOptions, SearchQuery, Searcher, ViewId};
 
+/// The longest search text, and the longest selection taken as one: a
+/// one-line field lays its whole text out each frame.
+pub const MAX_PATTERN: usize = 10_000;
+
 /// What the panel asks the app to do after drawing.
 #[derive(Clone, Debug, PartialEq)]
 pub enum FindRequest {
@@ -20,6 +24,22 @@ pub enum FindRequest {
     ReplaceAllInAll,
     /// Find in Files with the folder and filters in the panel.
     FindInFiles,
+    /// Replace in Files: the same files, with the replacement (after
+    /// counting and confirming).
+    ReplaceInFiles,
+    /// Find Next/Previous in a viewer (see [`FindTarget::Viewer`]).
+    Next { backward: bool },
+    /// Count the matches in a viewer.
+    Count,
+}
+
+/// What the panel searches.
+pub enum FindTarget<'a> {
+    Editor(&'a mut Editor, ViewId),
+    /// A read-only viewer of a large file: Find Next/Previous and Count
+    /// are requests the app runs in the background, and there is nothing
+    /// to select or replace.
+    Viewer,
 }
 
 pub struct FindPanel {
@@ -31,6 +51,8 @@ pub struct FindPanel {
     pub filters: String,
     pub subfolders: bool,
     pub include_ignored: bool,
+    /// Replace in Files is running (its button waits).
+    pub replacing: bool,
     pub pattern: String,
     pub replacement: String,
     pub options: SearchOptions,
@@ -50,6 +72,7 @@ impl Default for FindPanel {
             filters: String::new(),
             subfolders: true,
             include_ignored: false,
+            replacing: false,
             pattern: String::new(),
             replacement: String::new(),
             // Notepad++ wraps by default.
@@ -106,13 +129,17 @@ impl FindPanel {
         self.message.as_ref().map(|(m, _)| m.as_str())
     }
 
+    pub fn clear_message(&mut self) {
+        self.message = None;
+    }
+
     /// Shows `text` under the fields (an error in red).
     pub fn set_message(&mut self, text: impl Into<String>, is_error: bool) {
         self.message = Some((text.into(), is_error));
     }
 
     /// Opens the panel (Ctrl+F / Ctrl+H), taking a one-line selection as
-    /// the pattern.
+    /// the pattern (one of at most [`MAX_PATTERN`] bytes).
     pub fn open(&mut self, editor: &Editor, view: ViewId, replace: bool) {
         self.open = true;
         self.show_replace = replace;
@@ -122,7 +149,7 @@ impl FindPanel {
             && let Some(b) = editor.buffer(v.buffer())
         {
             let sel = v.selections.primary();
-            if !sel.is_empty() {
+            if !sel.is_empty() && sel.end().0 - sel.start().0 <= MAX_PATTERN {
                 let text = b.doc().slice(sel.range());
                 if !text.contains('\n') {
                     self.pattern = text;
@@ -201,12 +228,14 @@ impl FindPanel {
         r
     }
 
-    pub fn ui(&mut self, ui: &mut Ui, editor: &mut Editor, view: ViewId) -> Vec<FindRequest> {
+    pub fn ui(&mut self, ui: &mut Ui, mut target: FindTarget<'_>) -> Vec<FindRequest> {
         let mut requests = Vec::new();
+        let in_viewer = matches!(target, FindTarget::Viewer);
         let field_width = (ui.available_width() * 0.4).clamp(120.0, 360.0);
         ui.horizontal_wrapped(|ui| {
             ui.label("Find:");
             let mut output = TextEdit::singleline(&mut self.pattern)
+                .char_limit(MAX_PATTERN)
                 .id(field_id())
                 .desired_width(field_width)
                 .hint_text("text or regex")
@@ -236,38 +265,78 @@ impl FindPanel {
                     )
                 });
                 if enter {
-                    self.find(editor, view, shift);
-                    requests.push(FindRequest::Reveal);
+                    match &mut target {
+                        FindTarget::Editor(editor, view) => {
+                            self.find(editor, *view, shift);
+                            requests.push(FindRequest::Reveal);
+                        }
+                        FindTarget::Viewer => requests.push(FindRequest::Next { backward: shift }),
+                    }
                     field.request_focus();
                 } else if esc {
                     requests.push(FindRequest::Close);
                 }
             }
-            if ui.button("Find Previous").clicked() {
-                self.find(editor, view, true);
-                requests.push(FindRequest::Reveal);
-            }
-            if ui.button("Find Next").clicked() {
-                self.find(editor, view, false);
-                requests.push(FindRequest::Reveal);
+            for (label, backward) in [("Find Previous", true), ("Find Next", false)] {
+                if ui.button(label).clicked() {
+                    match &mut target {
+                        FindTarget::Editor(editor, view) => {
+                            self.find(editor, *view, backward);
+                            requests.push(FindRequest::Reveal);
+                        }
+                        FindTarget::Viewer => requests.push(FindRequest::Next { backward }),
+                    }
+                }
             }
             if ui.button("Count").clicked() {
-                self.message = self
-                    .count(editor, view)
-                    .map(|n| (format!("{n} matches"), false));
+                match &mut target {
+                    FindTarget::Editor(editor, view) => {
+                        self.message = self
+                            .count(editor, *view)
+                            .map(|n| (format!("{n} matches"), false));
+                    }
+                    FindTarget::Viewer => requests.push(FindRequest::Count),
+                }
             }
-            if ui.button("Select All").clicked() {
-                let n = self.count(editor, view);
+            if let FindTarget::Editor(editor, view) = &mut target
+                && ui.button("Select All").clicked()
+            {
+                let n = self.count(editor, *view);
                 if self
-                    .run(editor, view, Action::SelectAllMatches(self.query()))
+                    .run(editor, *view, Action::SelectAllMatches(self.query()))
                     .is_ok()
                 {
                     self.message = n.map(|n| (format!("{n} matches selected"), false));
                     requests.push(FindRequest::Reveal);
                 }
             }
+            if let FindTarget::Editor(editor, view) = &mut target
+                && ui
+                    .button("Bookmark")
+                    .on_hover_text(
+                        "Bookmark every line with a match; F2 and Shift+F2 go from one to the next",
+                    )
+                    .clicked()
+            {
+                let marks = |editor: &ochrepad_core::Editor| {
+                    editor
+                        .view(*view)
+                        .and_then(|v| editor.buffer(v.buffer()))
+                        .map_or(0, |b| b.bookmarks().len())
+                };
+                let before = marks(editor);
+                if self
+                    .run(editor, *view, Action::BookmarkMatches(self.query()))
+                    .is_ok()
+                {
+                    let added = marks(editor) - before;
+                    self.message = Some((format!("{added} lines bookmarked"), false));
+                }
+            }
+            // A widget of its own, not in a child `Ui`: a child at the point
+            // where the row wraps takes the whole height of the panel.
             let valid = matches!(self.searcher(), Some(Ok(_)));
-            ui.add_enabled_ui(valid, |ui| {
+            if valid {
                 ui.menu_button("Find All", |ui| {
                     if ui.button("In Current Document").clicked() {
                         requests.push(FindRequest::FindAll {
@@ -286,13 +355,16 @@ impl FindPanel {
                 })
                 .response
                 .on_hover_text("List every match in the Search Results panel");
-            });
+            } else {
+                ui.add_enabled(false, egui::Button::new("Find All"));
+            }
             ui.separator();
             // The extra rows, as toggles.
-            if ui
-                .selectable_label(self.show_replace, "Replace…")
-                .on_hover_text("Ctrl+H")
-                .clicked()
+            if !in_viewer
+                && ui
+                    .selectable_label(self.show_replace, "Replace…")
+                    .on_hover_text("Ctrl+H")
+                    .clicked()
             {
                 self.show_replace = !self.show_replace;
             }
@@ -332,7 +404,7 @@ impl FindPanel {
                     TextEdit::singleline(&mut self.filters)
                         .id(Id::new("ochrepad-files-filters"))
                         .desired_width(120.0)
-                        .hint_text("*.rs; *.toml"),
+                        .hint_text("*.rs; *.toml; !target"),
                 );
                 ui.checkbox(&mut self.subfolders, "Subfolders");
                 ui.checkbox(&mut self.include_ignored, "Ignored files")
@@ -345,13 +417,29 @@ impl FindPanel {
                 {
                     requests.push(FindRequest::FindInFiles);
                 }
+                if self.show_replace
+                    && !in_viewer
+                    && ui
+                        .add_enabled(
+                            valid && !self.replacing,
+                            egui::Button::new("Replace in Files"),
+                        )
+                        .on_hover_text(
+                            "Replace every match in these files (after counting them and asking)",
+                        )
+                        .clicked()
+                {
+                    requests.push(FindRequest::ReplaceInFiles);
+                }
             });
         }
-        if self.show_replace {
+        if let (true, FindTarget::Editor(editor, view)) = (self.show_replace, &mut target) {
+            let (editor, view) = (&mut **editor, *view);
             ui.horizontal_wrapped(|ui| {
                 ui.label("Replace:");
                 ui.add(
                     TextEdit::singleline(&mut self.replacement)
+                        .char_limit(MAX_PATTERN)
                         .id(Id::new("ochrepad-replace-field"))
                         .desired_width(field_width)
                         .hint_text(if self.options.regex {

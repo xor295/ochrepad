@@ -52,6 +52,17 @@ pub struct Session {
     /// The open folder.
     #[serde(default)]
     pub workspace: Option<super::workspace::SessionWorkspace>,
+    /// Large files open read-only, in tab order. In `layout` they come after
+    /// the editor tabs: index `tabs.len() + i` is `viewers[i]`.
+    #[serde(default)]
+    pub viewers: Vec<SessionViewer>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SessionViewer {
+    pub path: PathBuf,
+    /// The first line on screen.
+    pub top_line: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -60,6 +71,13 @@ pub struct SessionBuffer {
     /// A backup snapshot holding unsaved text.
     pub snapshot: Option<String>,
     pub language: Option<String>,
+    /// The document's indentation, when it was detected or chosen (the
+    /// status bar menu): it comes back as it was.
+    #[serde(default)]
+    pub indent: Option<ochrepad_core::Indent>,
+    /// The bookmarked lines.
+    #[serde(default)]
+    pub bookmarks: Vec<usize>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -80,9 +98,31 @@ pub(super) enum PendingJob {
         buffer: BufferId,
         revision: u64,
         path: PathBuf,
+        /// The text written (the change history compares with it).
+        doc: ochrepad_core::Document,
     },
     /// A file operation for the file tree.
     Tree(super::workspace::TreeJob),
+    /// A file Replace in Files rewrote, and how many matches it replaced.
+    ReplaceInFiles {
+        path: PathBuf,
+        matches: usize,
+    },
+    /// File > Save a Copy As.
+    Copy(PathBuf),
+    /// A page File > Export > HTML… made, and whether it has the
+    /// highlighting's colours.
+    Export {
+        path: PathBuf,
+        colored: bool,
+    },
+    /// File > Save Session…: how many files the session lists, and how
+    /// many documents were left out for having no file.
+    Session {
+        path: PathBuf,
+        files: usize,
+        unnamed: usize,
+    },
     Other,
 }
 
@@ -93,7 +133,11 @@ pub(super) struct Persist {
     pub settings: AutosaveSettings,
     backup_dir: Option<PathBuf>,
     session_file: Option<PathBuf>,
-    snapshot_ids: HashMap<BufferId, String>,
+    pub(super) snapshot_ids: HashMap<BufferId, String>,
+    /// Where undo histories are kept (`history_store.rs`).
+    pub(super) history_dir: Option<PathBuf>,
+    /// The revision and file of each document's last history write.
+    pub(super) history_written: HashMap<BufferId, (u64, PathBuf)>,
     /// Revision of the last snapshot written for each buffer.
     snapshotted: HashMap<BufferId, u64>,
     pub saving: HashSet<BufferId>,
@@ -115,7 +159,9 @@ impl OchrepadApp {
         self.persist.settings.snapshots = self.settings.backups;
         self.persist.session_file = Some(config_dir.join("session.json"));
         self.persist.backup_dir = Some(data_dir.join("backup"));
+        self.persist.history_dir = Some(data_dir.join("history"));
         self.restore_session();
+        self.prune_histories();
     }
 
     pub(super) fn snapshots_active(&self) -> bool {
@@ -139,6 +185,7 @@ impl OchrepadApp {
             meta: b.meta.clone(),
         };
         let revision = b.revision();
+        let doc = b.doc().clone();
         let tag = self.persist.worker.submit(job);
         self.persist.pending.insert(
             tag,
@@ -146,6 +193,7 @@ impl OchrepadApp {
                 buffer,
                 revision,
                 path,
+                doc,
             },
         );
         self.persist.saving.insert(buffer);
@@ -175,10 +223,14 @@ impl OchrepadApp {
                     buffer,
                     revision,
                     path,
+                    doc,
                 }) => {
                     self.persist.saving.remove(&buffer);
                     match d.result {
-                        Ok(()) => self.save_finished(buffer, revision, path),
+                        Ok(()) => {
+                            self.changes.saved(buffer, doc, revision);
+                            self.save_finished(buffer, revision, path);
+                        }
                         Err(e) => {
                             self.message = Some(format!("Could not save {}:\n{e}", path.display()));
                             // A close or exit waiting on this save stops.
@@ -189,6 +241,18 @@ impl OchrepadApp {
                     }
                 }
                 Some(PendingJob::Tree(job)) => self.tree_job_done(job, d.result),
+                Some(PendingJob::ReplaceInFiles { path, matches }) => {
+                    self.replace_in_files_saved(&path, matches, d.result);
+                }
+                Some(PendingJob::Copy(path)) => self.copy_saved(&path, d.result),
+                Some(PendingJob::Export { path, colored }) => {
+                    self.exported(&path, colored, d.result);
+                }
+                Some(PendingJob::Session {
+                    path,
+                    files,
+                    unnamed,
+                }) => self.session_saved(&path, files, unnamed, d.result),
                 Some(PendingJob::Other) | None => {
                     if let Err(e) = d.result {
                         self.message = Some(format!("Could not write a backup:\n{e}"));
@@ -216,6 +280,7 @@ impl OchrepadApp {
         }
         if clean {
             self.delete_snapshot(buffer);
+            self.write_history(buffer);
         }
         self.record_disk_stamp(buffer);
         if self.is_keymap_file(&path) {
@@ -229,20 +294,22 @@ impl OchrepadApp {
         self.persist.pending.insert(tag, PendingJob::Other);
     }
 
-    /// Removes `buffer`'s backup snapshot, if it has one.
+    /// Removes `buffer`'s backup snapshot, if it has one, and the undo
+    /// history kept with it.
     pub(super) fn delete_snapshot(&mut self, buffer: BufferId) {
         if self.persist.snapshotted.remove(&buffer).is_none() {
             return;
         }
         let (Some(dir), Some(id)) = (
-            &self.persist.backup_dir,
-            self.persist.snapshot_ids.get(&buffer),
+            self.persist.backup_dir.clone(),
+            self.persist.snapshot_ids.get(&buffer).cloned(),
         ) else {
             return;
         };
-        let (txt, json) = snapshot_paths(dir, id);
+        let (txt, json) = snapshot_paths(&dir, &id);
         let tag = self.persist.worker.submit(Job::Delete(vec![txt, json]));
         self.persist.pending.insert(tag, PendingJob::Other);
+        self.delete_backup_history(&id);
     }
 
     fn snapshot_id(&mut self, buffer: BufferId) -> String {
@@ -294,6 +361,7 @@ impl OchrepadApp {
             let tag = self.persist.worker.submit(job);
             self.persist.pending.insert(tag, PendingJob::Other);
             self.persist.snapshotted.insert(id, revision);
+            self.write_history(id);
         }
     }
 
@@ -367,6 +435,8 @@ impl OchrepadApp {
                         path: b.meta.path.clone(),
                         snapshot,
                         language: b.language.clone(),
+                        indent: b.indent_set.then_some(b.indent),
+                        bookmarks: b.bookmarks().lines().to_vec(),
                     });
                     buffer_index.insert(id, session.buffers.len() - 1);
                     session.buffers.len() - 1
@@ -383,8 +453,22 @@ impl OchrepadApp {
                 folds: v.folds().headers().collect(),
             });
         }
+        let mut viewer_index = HashMap::new();
+        for (_, tab) in self.dock.iter_all_tabs() {
+            if let Tab::Viewer(id) = tab
+                && let Some(v) = self.viewers.get(*id)
+            {
+                viewer_index.insert(*id, session.viewers.len());
+                session.viewers.push(SessionViewer {
+                    path: v.file.path().to_path_buf(),
+                    top_line: v.state.top_line(),
+                });
+            }
+        }
+        let editors = session.tabs.len();
         session.layout = Some(self.dock.filter_map_tabs(|t| match t {
             Tab::Editor(v) => tab_index.get(v).copied(),
+            Tab::Viewer(id) => viewer_index.get(id).map(|i| editors + i),
             Tab::Preview(_) | Tab::Compare(_) => None,
         }));
         session.active = tab_index.get(&self.active).copied();
@@ -408,10 +492,25 @@ impl OchrepadApp {
         self.persist.pending.insert(tag, PendingJob::Other);
     }
 
+    /// After a crash (a panic while drawing): backs up unsaved work and
+    /// writes the session, as on exit, so it comes back on the next start.
+    /// Returns whether anything could be kept (backups are on).
+    pub fn emergency_backup(&mut self) -> bool {
+        if !self.snapshots_active() {
+            return false;
+        }
+        self.snapshot_dirty();
+        self.write_all_histories();
+        self.write_session();
+        self.flush_disk();
+        true
+    }
+
     /// Exit with snapshots on: back up everything, write the session, wait
     /// for the disk, and close without asking.
     pub(super) fn exit_with_snapshots(&mut self) {
         self.snapshot_dirty();
+        self.write_all_histories();
         self.write_session();
         self.flush_disk();
         self.close_confirmed = true;
@@ -448,6 +547,9 @@ impl OchrepadApp {
             };
             let buffer = if let Some((id, (text, info))) = from_snapshot {
                 let b = self.editor.add_buffer(&text, info.meta);
+                self.detect_indent(b);
+                // The history first: it sets the revision the backup is at.
+                self.restore_backup_history(b, &id);
                 if let Some(buf) = self.editor.buffer_mut(b) {
                     buf.mark_modified();
                     let revision = buf.revision();
@@ -460,7 +562,12 @@ impl OchrepadApp {
                 Some(b)
             } else if let Some(path) = &sb.path {
                 match fileio::load(path) {
-                    Ok(d) => Some(self.editor.add_buffer(&d.text, d.meta)),
+                    Ok(d) => {
+                        let b = self.editor.add_buffer(&d.text, d.meta);
+                        self.detect_indent(b);
+                        self.restore_file_history(b, path);
+                        Some(b)
+                    }
                     Err(e) => {
                         problems.push(format!("{}: {e}", path.display()));
                         None
@@ -472,6 +579,18 @@ impl OchrepadApp {
             if let Some(b) = buffer {
                 self.attach_highlighting(b);
                 self.record_disk_stamp(b);
+                if let Some(buf) = self.editor.buffer_mut(b) {
+                    buf.set_bookmarks(sb.bookmarks.iter().copied());
+                }
+                if let Some(indent) = sb.indent
+                    && let Some(buf) = self.editor.buffer_mut(b)
+                {
+                    buf.indent = ochrepad_core::Indent {
+                        use_spaces: indent.use_spaces,
+                        width: indent.width.clamp(1, 16),
+                    };
+                    buf.indent_set = true;
+                }
                 if let Some(language) = &sb.language {
                     let dark = self.dark;
                     if let Some(buf) = self.editor.buffer_mut(b) {
@@ -506,7 +625,32 @@ impl OchrepadApp {
             })
             .collect();
         let restored: Vec<ViewId> = views.iter().flatten().copied().collect();
+        let viewer_tabs: Vec<Option<crate::viewer::ViewerId>> = session
+            .viewers
+            .iter()
+            .map(
+                |sv| match ochrepad_fileio::bigfile::BigFile::open(&sv.path) {
+                    Ok(file) => {
+                        let id = self.viewers.add(file);
+                        if let Some(v) = self.viewers.get_mut(id) {
+                            v.state.scroll_to_line(sv.top_line);
+                        }
+                        Some(id)
+                    }
+                    Err(e) => {
+                        problems.push(format!("{}: {e}", sv.path.display()));
+                        None
+                    }
+                },
+            )
+            .collect();
+        let restored_viewers: Vec<crate::viewer::ViewerId> =
+            viewer_tabs.iter().flatten().copied().collect();
         if restored.is_empty() {
+            // Only viewers: beside the startup tab.
+            for id in &restored_viewers {
+                self.dock.push_to_focused_leaf(Tab::Viewer(*id));
+            }
             if !problems.is_empty() {
                 self.message = Some(format!(
                     "Some files from the last session could not be opened:\n{}",
@@ -515,11 +659,26 @@ impl OchrepadApp {
             }
             return;
         }
+        let editors = views.len();
         let dock = session
             .layout
-            .map(|l| l.filter_map_tabs(|i| views.get(*i).copied().flatten().map(Tab::Editor)))
-            .filter(|d| d.iter_all_tabs().count() == restored.len())
-            .unwrap_or_else(|| DockState::new(restored.iter().copied().map(Tab::Editor).collect()));
+            .map(|l| {
+                l.filter_map_tabs(|i| match i.checked_sub(editors) {
+                    None => views.get(*i).copied().flatten().map(Tab::Editor),
+                    Some(v) => viewer_tabs.get(v).copied().flatten().map(Tab::Viewer),
+                })
+            })
+            .filter(|d| d.iter_all_tabs().count() == restored.len() + restored_viewers.len())
+            .unwrap_or_else(|| {
+                DockState::new(
+                    restored
+                        .iter()
+                        .copied()
+                        .map(Tab::Editor)
+                        .chain(restored_viewers.iter().copied().map(Tab::Viewer))
+                        .collect(),
+                )
+            });
 
         // Replace the empty startup tab(s).
         let startup: Vec<ViewId> = self.tabs();

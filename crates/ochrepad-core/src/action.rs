@@ -5,10 +5,12 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use crate::buffer::BufferId;
+use crate::buffer::{BufferId, Indent};
+use crate::column_edit::ColumnInsert;
 use crate::position::VisualCol;
 use crate::search::SearchQuery;
 use crate::selection::SelectionSet;
+use crate::text_tools::{Codec, InvalidJson};
 use crate::transform::{CaseMode, SortOptions};
 use crate::view::ViewId;
 
@@ -114,11 +116,29 @@ pub enum Action {
     },
     /// One selection per match.
     SelectAllMatches(SearchQuery),
+    /// Multi-select Next: add the next occurrence of the primary
+    /// selection's text (after it, going round from the end) as a new
+    /// primary selection. With a caret, select the word at it first.
+    MultiSelectNext {
+        match_case: bool,
+        whole_word: bool,
+    },
+    /// Multi-select All: a selection on every occurrence of the primary
+    /// selection's text (or of the word at the caret).
+    MultiSelectAll {
+        match_case: bool,
+        whole_word: bool,
+    },
     /// Convert each selection (or the caret's line) to a case.
     ConvertCase(CaseMode),
     /// Sort the selected lines, the rectangle's lines keyed by the text in
     /// the rectangle, or the whole document when nothing is selected.
     SortLines(SortOptions),
+    /// Put the lines Sort Lines would sort in a random order (Randomize
+    /// Line Order); the seed decides the order, so a macro replays it.
+    ShuffleLines {
+        seed: u64,
+    },
     /// Remove trailing spaces and tabs from the selected lines (all lines
     /// when nothing is selected).
     TrimTrailingWhitespace,
@@ -128,6 +148,12 @@ pub enum Action {
     MoveLinesDown,
     /// Join the selected lines (or the caret's line and the next).
     JoinLines,
+    /// Split each selected line (or the caret's line) wider than `width`
+    /// columns at the blanks between words, as Notepad++'s Split Lines;
+    /// the new lines start with the line's indentation.
+    SplitLines {
+        width: usize,
+    },
     /// Remove empty lines from the selected lines (all lines when nothing
     /// is selected); with `include_whitespace`, also lines of only spaces
     /// and tabs.
@@ -140,6 +166,40 @@ pub enum Action {
     RemoveDuplicateLines {
         consecutive_only: bool,
     },
+    /// Delete the lines the selections touch (the caret's line), with their
+    /// line breaks: Notepad++'s Line Delete (Ctrl+Shift+L).
+    DeleteLine,
+    /// Swap each caret's line with the line above it (Ctrl+T); the caret
+    /// goes to the start of its line, as in Notepad++.
+    TransposeLines,
+    /// Insert a line above each caret's line (a selection's first line),
+    /// indented like it, and move the caret there (Ctrl+Alt+Enter).
+    InsertLineAbove,
+    /// Insert a line below each caret's line (a selection's last line),
+    /// indented like it, and move the caret there (Ctrl+Alt+Shift+Enter).
+    InsertLineBelow,
+    /// Reverse the order of the selected lines (every line when nothing is
+    /// selected).
+    ReverseLines,
+    /// Remove leading spaces and tabs from the selected lines (all lines
+    /// when nothing is selected).
+    TrimLeadingWhitespace,
+    /// Remove leading and trailing spaces and tabs from the selected lines
+    /// (all lines when nothing is selected).
+    TrimLeadingAndTrailingWhitespace,
+    /// Replace the line breaks between the selected lines (all lines) with
+    /// spaces, keeping the blanks around them.
+    EolToSpace,
+    /// Replace every tab on the selected lines (all lines) with spaces to
+    /// the same tab stop.
+    TabsToSpaces,
+    /// Replace spaces with tabs on the selected lines (all lines) wherever
+    /// the columns stay the same: the indentation, and runs of two or more
+    /// spaces reaching a tab stop.
+    SpacesToTabs,
+    /// The Column Editor: insert text or a number sequence at one column
+    /// on many lines (see [`ColumnInsert`]).
+    ColumnInsert(ColumnInsert),
     /// Fold the region holding the caret: the caret's line if it starts a
     /// region, else the innermost region around it. Fold actions change the
     /// view only (no undo step) and are not recorded in macros.
@@ -154,6 +214,85 @@ pub enum Action {
     /// (1 is outermost), the heading level in Markdown.
     FoldLevel(usize),
     UnfoldLevel(usize),
+    /// Move the caret to a line and visual column, both counted from 1 as
+    /// in the status bar (column 1 is the line start).
+    GoToLine {
+        line: usize,
+        column: usize,
+    },
+    /// Indent the selected lines, or the caret's line, by one level (Tab
+    /// does this only when a selection spans lines).
+    Indent,
+    /// Shift+Tab: remove one level of indentation from the selected lines,
+    /// or the caret's line. (Tab with a selection over several lines
+    /// indents them.)
+    Unindent,
+    /// Comment the selected lines (or the caret's line) with the language's
+    /// line comment, or uncomment them if they all are. Languages with only
+    /// block comments get a block comment around the lines.
+    ToggleLineComment,
+    /// Comment the selected lines (or the caret's line) even if they
+    /// already are, as Notepad++'s Single Line Comment. Languages with only
+    /// block comments get a block comment around the lines unless they are
+    /// in one.
+    CommentLines,
+    /// Remove one line comment from each selected line that has one (or
+    /// the block comment around the lines), as Notepad++'s Single Line
+    /// Uncomment. Other lines are left alone.
+    UncommentLines,
+    /// Wrap each selection (or the caret's line) in a block comment, or
+    /// unwrap it.
+    ToggleBlockComment,
+    /// Rewrite every line's leading whitespace as spaces or as tabs, keeping
+    /// its width, and indent with that from now on.
+    ConvertIndentation {
+        to_spaces: bool,
+    },
+    /// Move the caret to the bracket matching the one beside it.
+    GoToMatchingBracket,
+    /// Select from the bracket beside the caret to its match, both included.
+    SelectToMatchingBracket,
+    /// Pretty-print the JSON in each selection, or the whole document when
+    /// nothing is selected: one member or element per line, indented with
+    /// `indent` (the document's indentation when `None`). Key order,
+    /// numbers and strings are kept exactly. Fails on invalid JSON.
+    FormatJson {
+        #[serde(default)]
+        indent: Option<Indent>,
+    },
+    /// Remove the whitespace between the JSON tokens of each selection (or
+    /// the whole document).
+    MinifyJson,
+    /// Encode each selection, or the whole document when nothing is
+    /// selected, as UTF-8 with the document's line endings.
+    Encode(Codec),
+    /// Decode each selection (or the whole document). Fails when it is not
+    /// valid or the bytes are not UTF-8 text.
+    Decode(Codec),
+    /// Bookmark each caret's line, or remove the bookmarks if every one of
+    /// those lines has one (Ctrl+F2). Bookmarks belong to the document;
+    /// changing them is not an undo step.
+    ToggleBookmark,
+    /// Move the caret to the start of the next bookmarked line, wrapping
+    /// around to the first (F2).
+    NextBookmark,
+    /// Move the caret to the start of the previous bookmarked line,
+    /// wrapping around to the last (Shift+F2).
+    PrevBookmark,
+    /// Remove every bookmark.
+    ClearBookmarks,
+    /// Bookmark every line without a bookmark, and remove the others.
+    InverseBookmarks,
+    /// Bookmark every line holding the start of a match (in the selections
+    /// with "in selection"), keeping the bookmarks already there.
+    BookmarkMatches(SearchQuery),
+    /// Delete the bookmarked lines with their line breaks.
+    RemoveBookmarkedLines,
+    /// Delete every line without a bookmark.
+    RemoveUnbookmarkedLines,
+    /// Replace the text of each bookmarked line (not its line break) with
+    /// this text: Paste to (Replace) Bookmarked Lines.
+    ReplaceBookmarkedLines(String),
     Undo,
     Redo,
 }
@@ -166,6 +305,14 @@ pub enum ActionError {
     NotFound,
     /// The buffer is read-only.
     ReadOnly,
+    /// The language has no comment markers ochrepad knows.
+    NoCommentSyntax,
+    /// The JSON is not valid (boxed to keep errors small).
+    InvalidJson(Box<InvalidJson>),
+    /// The text cannot be decoded; the message says why.
+    Decode(String),
+    /// A bookmark command found no bookmarks.
+    NoBookmarks,
 }
 
 impl fmt::Display for ActionError {
@@ -176,6 +323,16 @@ impl fmt::Display for ActionError {
             ActionError::InvalidPattern(e) => write!(f, "invalid search pattern: {e}"),
             ActionError::NotFound => f.write_str("no match found"),
             ActionError::ReadOnly => f.write_str("the document is read-only"),
+            ActionError::NoCommentSyntax => {
+                f.write_str("no comment markers are known for this language")
+            }
+            ActionError::InvalidJson(e) => write!(
+                f,
+                "invalid JSON on line {}, column {}: {}",
+                e.line, e.column, e.message
+            ),
+            ActionError::Decode(message) => f.write_str(message),
+            ActionError::NoBookmarks => f.write_str("there are no bookmarks"),
         }
     }
 }

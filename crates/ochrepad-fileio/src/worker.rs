@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread::JoinHandle;
 
-use ochrepad_core::{Document, FileMeta};
+use ochrepad_core::{Document, FileMeta, SavedHistory};
 use serde::{Deserialize, Serialize};
 
 use crate::{save, write_atomic};
@@ -18,6 +18,36 @@ pub struct SnapshotInfo {
     /// "new 3" for buffers that were never saved.
     pub untitled: Option<String>,
     pub language: Option<String>,
+}
+
+/// A document's undo history kept between sessions (PLAN_v0.3.0 P5), with
+/// the hash of the text it ends at: it is used only on that exact text.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct HistoryFile {
+    /// The file the history is for (`None` for an unsaved document's
+    /// backup), to tell apart two paths whose names hash the same.
+    pub path: Option<PathBuf>,
+    /// [`ochrepad_core::sha256_hex`] of the text.
+    pub text_sha256: String,
+    pub history: SavedHistory,
+}
+
+/// History files larger than this are not read (they are written at about
+/// 2 MB of text, plus JSON).
+pub const MAX_HISTORY_FILE: u64 = 16 * 1024 * 1024;
+
+/// Reads a history file; `Ok(None)` if there is none.
+pub fn read_history(file: &Path) -> Result<Option<HistoryFile>, String> {
+    let bytes = match crate::read_file_up_to(file, MAX_HISTORY_FILE) {
+        Ok(b) => b,
+        Err(crate::LoadError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(None);
+        }
+        Err(e) => return Err(format!("{}: {e}", file.display())),
+    };
+    serde_json::from_slice(&bytes)
+        .map(Some)
+        .map_err(|e| format!("{}: {e}", file.display()))
 }
 
 pub enum Job {
@@ -38,6 +68,16 @@ pub enum Job {
     Delete(Vec<PathBuf>),
     /// Write bytes atomically, creating the directory.
     Write { path: PathBuf, bytes: Vec<u8> },
+    /// Write `history` as a [`HistoryFile`] at `file`, hashing `doc` (the
+    /// text it ends at) here rather than on the UI thread.
+    History {
+        file: PathBuf,
+        path: Option<PathBuf>,
+        doc: Document,
+        history: SavedHistory,
+    },
+    /// Delete all but the `keep` most recently changed files in `dir`.
+    Prune { dir: PathBuf, keep: usize },
     /// Create an empty file; fails if anything is already at `path`.
     CreateFile(PathBuf),
     /// Create a folder; fails if anything is already at `path`.
@@ -45,6 +85,15 @@ pub enum Job {
     /// Rename a file or folder; fails if something else is at `to` (a
     /// change of letter case alone is fine).
     Rename { from: PathBuf, to: PathBuf },
+    /// Write `bytes` over the file at `path` as a user's file, only if it
+    /// is still as it was read (its length and modification time): Replace
+    /// in Files never writes text made from a file that changed since.
+    Replace {
+        path: PathBuf,
+        bytes: Vec<u8>,
+        len: u64,
+        modified: Option<std::time::SystemTime>,
+    },
 }
 
 /// A finished job: the tag `submit` returned, and the outcome.
@@ -71,8 +120,18 @@ pub fn snapshot_paths(dir: &Path, id: &str) -> (PathBuf, PathBuf) {
     )
 }
 
+/// Whether `id` can name a snapshot: the app makes them from hex digits and
+/// `-`. Anything else (such as `../x` in a tampered session file) would
+/// reach outside the backup folder.
+pub fn is_snapshot_id(id: &str) -> bool {
+    !id.is_empty() && id.len() <= 64 && id.chars().all(|c| c.is_ascii_hexdigit() || c == '-')
+}
+
 /// Reads a snapshot written by [`Job::Snapshot`].
 pub fn read_snapshot(dir: &Path, id: &str) -> Result<(String, SnapshotInfo), String> {
+    if !is_snapshot_id(id) {
+        return Err(format!("{id:?} is not a backup name"));
+    }
     let (text_path, info_path) = snapshot_paths(dir, id);
     let info = crate::load_json::<SnapshotInfo>(&info_path)?
         .ok_or_else(|| format!("{} is missing", info_path.display()))?;
@@ -83,6 +142,18 @@ pub fn read_snapshot(dir: &Path, id: &str) -> Result<(String, SnapshotInfo), Str
 
 fn run(job: Job) -> Result<(), String> {
     match job {
+        Job::Replace {
+            path,
+            bytes,
+            len,
+            modified,
+        } => {
+            let meta = std::fs::metadata(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+            if meta.len() != len || meta.modified().ok() != modified {
+                return Err(format!("{}: it changed since it was read", path.display()));
+            }
+            crate::write_user_file(&path, &bytes).map_err(|e| format!("{}: {e}", path.display()))
+        }
         Job::Save { path, doc, meta } => {
             save(&path, &doc.to_string(), &meta).map_err(|e| e.to_string())
         }
@@ -108,6 +179,41 @@ fn run(job: Job) -> Result<(), String> {
                 std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
             }
             write_atomic(&path, &bytes).map_err(|e| format!("{}: {e}", path.display()))
+        }
+        Job::History {
+            file,
+            path,
+            doc,
+            history,
+        } => {
+            if let Some(dir) = file.parent() {
+                std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+            }
+            let record = HistoryFile {
+                path,
+                text_sha256: ochrepad_core::sha256_hex(&doc),
+                history,
+            };
+            let bytes = serde_json::to_vec(&record).map_err(|e| e.to_string())?;
+            write_atomic(&file, &bytes).map_err(|e| format!("{}: {e}", file.display()))
+        }
+        Job::Prune { dir, keep } => {
+            let Ok(entries) = std::fs::read_dir(&dir) else {
+                return Ok(());
+            };
+            let mut files: Vec<(std::time::SystemTime, PathBuf)> = entries
+                .flatten()
+                .filter_map(|e| {
+                    let m = e.metadata().ok()?;
+                    let modified = m.modified().ok()?;
+                    m.is_file().then(|| (modified, e.path()))
+                })
+                .collect();
+            files.sort_by_key(|f| std::cmp::Reverse(f.0));
+            for (_, p) in files.into_iter().skip(keep) {
+                let _ = std::fs::remove_file(p);
+            }
+            Ok(())
         }
         Job::CreateFile(path) => std::fs::OpenOptions::new()
             .write(true)

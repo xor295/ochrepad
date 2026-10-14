@@ -91,16 +91,27 @@ impl OchrepadApp {
         }
         if self.applied_settings.is_none() {
             crate::theme::install(ui.ctx());
+            // Ctrl+plus/minus/0 zoom the editors' text (View > Zoom), not the
+            // whole window as egui would.
+            ui.ctx().options_mut(|o| o.zoom_with_keyboard = false);
         }
         self.applied_settings = Some(self.settings.clone());
         let s = self.settings.clone();
         self.editor.settings.tab_width = s.tab_width;
         self.editor.settings.use_spaces = s.use_spaces;
+        self.editor.settings.auto_close = s.auto_close;
+        self.editor.settings.smart_indent = s.smart_indent;
+        // Documents whose indentation was detected or chosen keep it.
+        let indent = self.editor.settings.indent();
+        for b in self.editor.buffers_mut().filter(|b| !b.indent_set) {
+            b.indent = indent;
+        }
         let a = self.autosave_settings();
         a.snapshots = s.backups;
         a.interval_secs = s.autosave_secs;
         a.write_through = s.write_through;
         self.highlighting.theme_override = s.syntax_theme.clone();
+        self.log_rules = crate::log_rules::LogRules::new(&s.highlight_rules, &s.log_files);
         self.highlighting.size_limit = s.highlight_limit_mb * 1024 * 1024;
         if self.applied_theme != Some(s.theme) {
             self.applied_theme = Some(s.theme);
@@ -141,7 +152,8 @@ impl OchrepadApp {
             .resizable(false)
             .collapsible(false)
             .show(ui.ctx(), |ui| {
-                self.settings.ui(ui, &self.font_choices, &themes);
+                self.settings
+                    .ui(ui, &self.font_choices, &themes, &self.log_rules.errors);
             });
         self.show_preferences = open;
     }

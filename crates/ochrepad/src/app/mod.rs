@@ -12,9 +12,7 @@ use egui::{
 };
 use egui_dock::{AllowedSplits, DockArea, DockState, Node, NodePath, Split, TabIndex, TabViewer};
 use ochrepad_core::position::byte_to_visual_col;
-use ochrepad_core::{
-    Action, Buffer, BufferId, CaseMode, Editor, FileMeta, LineEnding, SortOptions, ViewId,
-};
+use ochrepad_core::{Action, Buffer, BufferId, CaseMode, Editor, FileMeta, SortOptions, ViewId};
 use ochrepad_fileio as fileio;
 
 use egui_dock::tab_viewer::OnCloseResponse;
@@ -23,21 +21,37 @@ use crate::editor_view::{
     Decorations, EditorViewState, LineStyler, copy_selection, editor_id, editor_view,
 };
 mod autosave;
+mod document;
+mod edit_tools;
 mod external;
+mod file_extras;
+mod history_store;
 mod prefs;
+mod replace_in_files;
 mod search;
+mod sessions;
+mod summary;
+mod tools;
+mod viewers;
 mod workspace;
 
-pub use autosave::{AutosaveSettings, Session, SessionBuffer, SessionTab};
+pub use autosave::{AutosaveSettings, Session, SessionBuffer, SessionTab, SessionViewer};
 pub use external::DiskChange;
+pub use sessions::{ParsedSession, SessionEntry, SessionFile, parse_session};
 
 use crate::compare::{Compare, CompareId, CompareSide, Compares};
-use crate::find_panel::{FindPanel, FindRequest};
+use crate::find_panel::{FindPanel, FindRequest, FindTarget};
 use crate::highlight::Highlighting;
 use crate::keymap::Keymap;
 use crate::macro_ui::{MacroSource, Macros};
 use crate::preview::Previews;
 use crate::settings::{AppSettings, ThemeChoice};
+
+/// How many closed files Restore Recent Closed File remembers.
+const MAX_CLOSED_FILES: usize = 20;
+
+/// What a command that would change a file says when a viewer has the focus.
+pub(crate) const READ_ONLY: &str = "This file is open read-only (View > Open as Editable)";
 
 const NEW: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::N);
 const OPEN: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::O);
@@ -48,12 +62,23 @@ const CLOSE: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::W
 const FIND: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::F);
 const REPLACE: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::H);
 const FIND_NEXT: KeyboardShortcut = KeyboardShortcut::new(Modifiers::NONE, Key::F3);
+const SELECT_FIND_NEXT: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::F3);
+const SELECT_FIND_PREV: KeyboardShortcut =
+    KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::F3);
+const RESTORE_CLOSED: KeyboardShortcut =
+    KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::T);
 const FIND_PREV: KeyboardShortcut = KeyboardShortcut::new(Modifiers::SHIFT, Key::F3);
 const RECORD_MACRO: KeyboardShortcut =
     KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::R);
 const PLAY_MACRO: KeyboardShortcut =
     KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::P);
 const NEXT_TAB: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::Tab);
+const NEXT_TAB_PAGE: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::PageDown);
+const PREV_TAB_PAGE: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::PageUp);
+const MOVE_TAB_FORWARD: KeyboardShortcut =
+    KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::PageDown);
+const MOVE_TAB_BACKWARD: KeyboardShortcut =
+    KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::PageUp);
 const PREV_TAB: KeyboardShortcut =
     KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::Tab);
 
@@ -65,11 +90,24 @@ pub enum Tab {
     Preview(BufferId),
     /// A side-by-side comparison.
     Compare(CompareId),
+    /// A file too large to edit, read-only (`crate::viewer`).
+    Viewer(crate::viewer::ViewerId),
 }
 
 const NEXT_DIFF: KeyboardShortcut = KeyboardShortcut::new(Modifiers::NONE, Key::F8);
 const PREV_DIFF: KeyboardShortcut = KeyboardShortcut::new(Modifiers::SHIFT, Key::F8);
 
+const GO_TO_LINE: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::G);
+/// Ctrl+Shift+L is Notepad++'s Delete Line.
+const FILTER_LINES: KeyboardShortcut =
+    KeyboardShortcut::new(Modifiers::ALT.plus(Modifiers::SHIFT), Key::L);
+const ZOOM_IN: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::Plus);
+const ZOOM_IN_EQUALS: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::Equals);
+const ZOOM_OUT: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::Minus);
+const ZOOM_RESET: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::Num0);
+/// Word's shortcut for showing formatting marks.
+const SHOW_ALL_CHARACTERS: KeyboardShortcut =
+    KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::Num8);
 const FIND_IN_FILES: KeyboardShortcut =
     KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::F);
 const SIDEBAR: KeyboardShortcut =
@@ -82,6 +120,16 @@ enum TabCommand {
     Close(ViewId),
     CloseOthers(ViewId),
     CloneToOtherView(ViewId),
+    /// A link clicked in a Markdown preview.
+    Link(crate::preview::LinkClick),
+    /// A file command from a tab's context menu.
+    File(edit_tools::TabFileCommand, ViewId),
+    CloseViewer(crate::viewer::ViewerId),
+    OpenAsEditable(crate::viewer::ViewerId),
+    /// A preview or comparison closed by a middle click.
+    CloseTab(Tab),
+    /// A command from an editor's right-click menu.
+    Menu(ViewId, crate::editor_menu::MenuCommand),
 }
 
 pub struct OchrepadApp {
@@ -89,9 +137,16 @@ pub struct OchrepadApp {
     pub dock: DockState<Tab>,
     pub previews: Previews,
     pub compares: Compares,
+    /// Files too large to edit, open read-only.
+    pub viewers: crate::viewer::Viewers,
+    /// The viewer whose Open as Editable question is showing.
+    confirm_editable: Option<crate::viewer::ViewerId>,
     view_states: HashMap<ViewId, EditorViewState>,
     /// Names of buffers that have never been saved ("new 1", "new 2", …).
     untitled: HashMap<BufferId, String>,
+    /// Files closed this session, the latest last (Restore Recent Closed
+    /// File).
+    closed_files: Vec<PathBuf>,
     next_untitled: usize,
     active: ViewId,
     focus_request: Option<ViewId>,
@@ -111,6 +166,29 @@ pub struct OchrepadApp {
     title: String,
     pub highlighting: Highlighting,
     pub find: FindPanel,
+    /// Each tab's filter (Search > Filter Lines).
+    pub filter: crate::filter_bar::FilterBar,
+    /// The lines changed since each file was saved (the gutter's marks).
+    pub changes: crate::change_history::ChangeHistory,
+    /// View > Function List.
+    pub function_list: crate::function_list::FunctionList,
+    /// View > Document List.
+    document_list: crate::document_list::DocumentList,
+    /// Search > Style All Occurrences of Token.
+    pub token_styles: crate::token_styles::TokenStyles,
+    /// The View > Summary dialog, while it is open.
+    summary: Option<summary::SummaryDialog>,
+    /// The File > Rename… prompt, while it is open.
+    rename: Option<file_extras::RenameDialog>,
+    /// Pages File > Export > HTML… is still making.
+    exports: Vec<crate::export::Export>,
+    /// Replace in Files, while it counts, asks or writes.
+    replace_in_files: replace_in_files::Stage,
+    /// Saves Replace in Files made that the worker finished: whether it
+    /// worked, the matches, the error.
+    replace_saves: Vec<(bool, usize, Option<String>)>,
+    /// The log highlight rules from the settings, compiled.
+    log_rules: crate::log_rules::LogRules,
     /// The Search Results panel.
     pub results: crate::search_results::SearchResults,
     replace_all_plan: Option<search::ReplaceAllPlan>,
@@ -119,6 +197,15 @@ pub struct OchrepadApp {
     new_entry: Option<workspace::NewEntry>,
     /// The time at the start of this frame.
     now: f64,
+    /// A short note in the status bar (an action that could not run), and
+    /// when it goes away.
+    status_note: Option<(String, f64)>,
+    /// The Go to Line dialog's field, while it is open.
+    go_to_line: Option<String>,
+    /// The hash dialog (Text Tools > Hashes), while it is open.
+    hashes: Option<tools::HashDialog>,
+    /// The Column Editor and the other Notepad++ editing extras.
+    edit_tools: edit_tools::EditTools,
     pub macros: Macros,
     persist: autosave::Persist,
     external: external::External,
@@ -154,6 +241,8 @@ impl OchrepadApp {
             dock: DockState::new(vec![Tab::Editor(view)]),
             previews: Previews::default(),
             compares: Compares::default(),
+            viewers: Default::default(),
+            confirm_editable: None,
             view_states: HashMap::new(),
             untitled: HashMap::from([(buffer, "new 1".to_owned())]),
             next_untitled: 2,
@@ -171,11 +260,27 @@ impl OchrepadApp {
             title: String::new(),
             highlighting: Highlighting::new(Arc::new(ochrepad_syntax::Registry::load())),
             find: FindPanel::default(),
+            filter: Default::default(),
+            changes: Default::default(),
+            function_list: Default::default(),
+            document_list: Default::default(),
+            token_styles: Default::default(),
+            summary: None,
+            rename: None,
+            exports: Vec::new(),
+            replace_in_files: Default::default(),
+            replace_saves: Vec::new(),
+            closed_files: Vec::new(),
+            log_rules: Default::default(),
             results: Default::default(),
             replace_all_plan: None,
             tree: None,
             new_entry: None,
             now: 0.0,
+            status_note: None,
+            go_to_line: None,
+            hashes: None,
+            edit_tools: Default::default(),
             macros: Macros::default(),
             persist: autosave::Persist::default(),
             external: external::External::default(),
@@ -243,7 +348,7 @@ impl OchrepadApp {
             .iter_all_tabs()
             .filter_map(|(_, t)| match t {
                 Tab::Editor(v) => Some(*v),
-                Tab::Preview(_) | Tab::Compare(_) => None,
+                Tab::Preview(_) | Tab::Compare(_) | Tab::Viewer(_) => None,
             })
             .collect()
     }
@@ -315,6 +420,14 @@ impl OchrepadApp {
     /// Opens `path` in a new tab, or switches to it if it is already open.
     /// An untouched "new" tab is replaced, as in Notepad++.
     pub fn open_path(&mut self, path: &Path) {
+        if let Err(e) = self.open_tab(path) {
+            self.message = Some(format!("Could not open {}:\n{e}", path.display()));
+        }
+    }
+
+    /// [`Self::open_path`], returning the tab that shows the file, or why
+    /// it could not be opened.
+    fn open_tab(&mut self, path: &Path) -> Result<Tab, String> {
         let wanted = canonical(path);
         let existing = self
             .editor
@@ -325,15 +438,18 @@ impl OchrepadApp {
             .and_then(|b| self.editor.views_of(b).next().map(|v| v.id()));
         if let Some(view) = existing_view {
             self.activate(view);
-            return;
+            return Ok(Tab::Editor(view));
         }
-        let decoded = match fileio::load(path) {
-            Ok(d) => d,
-            Err(e) => {
-                self.message = Some(format!("Could not open {}:\n{e}", path.display()));
-                return;
-            }
-        };
+        if self.opens_in_viewer(path) {
+            return self.open_viewer_tab(path).map(Tab::Viewer);
+        }
+        self.open_in_editor(path).map(Tab::Editor)
+    }
+
+    /// Opens `path` in a new editor tab, however large it is (up to what
+    /// `fileio` loads): `open_path` without the viewer.
+    fn open_in_editor(&mut self, path: &Path) -> Result<ViewId, String> {
+        let decoded = fileio::load(path).map_err(|e| e.to_string())?;
         let replace = {
             let b = self.buffer();
             b.meta.path.is_none()
@@ -344,12 +460,15 @@ impl OchrepadApp {
         .then_some(self.active);
         let buffer = self.editor.add_buffer(&decoded.text, decoded.meta);
         self.attach_highlighting(buffer);
+        self.detect_indent(buffer);
+        self.restore_file_history(buffer, path);
         self.record_disk_stamp(buffer);
         self.settings.add_recent(canonical(path));
-        self.add_tab(buffer);
+        let view = self.add_tab(buffer);
         if let Some(old) = replace {
             self.close_now(old);
         }
+        Ok(view)
     }
 
     pub fn open_dialog(&mut self) {
@@ -470,6 +589,14 @@ impl OchrepadApp {
     /// Starts the exit sequence: asks about each dirty buffer in tab order;
     /// cancelling any prompt cancels the exit. Tabs stay open throughout.
     pub fn request_exit(&mut self) {
+        if self.writing_in_files() {
+            self.message = Some(
+                "Replace in Files is still saving files.\n\
+                 Wait for it to finish, or press Stop, then exit."
+                    .to_owned(),
+            );
+            return;
+        }
         if self.snapshots_active() {
             self.exit_with_snapshots();
             return;
@@ -518,6 +645,7 @@ impl OchrepadApp {
             self.ask_about(buffer);
             return;
         }
+        self.write_all_histories();
         self.write_session();
         self.flush_disk();
         self.close_confirmed = true;
@@ -554,10 +682,40 @@ impl OchrepadApp {
         }
     }
 
+    /// The tab the filter bar is for: the focused viewer, or the active
+    /// editor.
+    /// The document revision an editor's filter was last made for (tests).
+    pub fn filter_applied_at(&self, view: ViewId) -> Option<u64> {
+        self.filter.applied_revision(view)
+    }
+
+    fn filter_target(&mut self) -> crate::filter_bar::FilterTarget {
+        match self.focused_viewer() {
+            Some(id) => id.into(),
+            None => self.active.into(),
+        }
+    }
+
+    /// Search > Filter Lines (Alt+Shift+L) on the focused tab.
+    pub fn open_filter(&mut self) {
+        let target = self.filter_target();
+        self.filter
+            .open(&self.editor, &self.viewers, target, self.now);
+    }
+
     /// Removes a tab and its view, and the buffer if this was its last view.
     fn close_now(&mut self, view: ViewId) {
         if let Some(path) = self.dock.find_tab(&Tab::Editor(view)) {
             self.dock.remove_tab(path);
+        }
+        if self.filter.is_open(view) {
+            self.filter
+                .close(&mut self.editor, &mut self.viewers, view.into());
+        }
+        if let Some(b) = self.editor.view(view).map(|v| v.buffer())
+            && self.editor.views_of(b).count() == 1
+        {
+            self.set_following(b, false);
         }
         let buffer = self.editor.view(view).map(|v| v.buffer());
         self.editor.remove_view(view);
@@ -568,6 +726,11 @@ impl OchrepadApp {
         if let Some(buffer) = buffer
             && self.editor.views_of(buffer).next().is_none()
         {
+            // Its undo history is kept if the text is what is on disk.
+            if self.editor.buffer(buffer).is_some_and(|b| !b.is_dirty()) {
+                self.write_history(buffer);
+            }
+            self.persist.history_written.remove(&buffer);
             // Closed without saving: its backup goes too, and its preview.
             self.delete_snapshot(buffer);
             if let Some(path) = self.dock.find_tab(&Tab::Preview(buffer)) {
@@ -580,6 +743,14 @@ impl OchrepadApp {
                 }
                 self.compares.remove(id, &mut self.editor);
             }
+            if let Some(path) = self.editor.buffer(buffer).and_then(|b| b.meta.path.clone())
+                && !self.exiting
+            {
+                self.closed_files.retain(|p| *p != path);
+                self.closed_files.push(path);
+                let extra = self.closed_files.len().saturating_sub(MAX_CLOSED_FILES);
+                self.closed_files.drain(..extra);
+            }
             self.editor.remove_buffer(buffer);
             self.discard_approved.remove(&buffer);
             self.highlighting.detach(buffer);
@@ -591,7 +762,7 @@ impl OchrepadApp {
                 .find_active_focused()
                 .and_then(|(_, t)| match t {
                     Tab::Editor(v) => Some(*v),
-                    Tab::Preview(_) | Tab::Compare(_) => None,
+                    Tab::Preview(_) | Tab::Compare(_) | Tab::Viewer(_) => None,
                 })
                 .or_else(|| self.tabs().first().copied());
             if let Some(next) = next {
@@ -601,7 +772,10 @@ impl OchrepadApp {
     }
 
     fn cycle_tab(&mut self, forward: bool) {
-        let Some(path) = self.dock.find_tab(&Tab::Editor(self.active)) else {
+        let current = self
+            .focused_viewer()
+            .map_or(Tab::Editor(self.active), Tab::Viewer);
+        let Some(path) = self.dock.find_tab(&current) else {
             return;
         };
         let node = NodePath {
@@ -626,13 +800,43 @@ impl OchrepadApp {
             tab: TabIndex(next),
             ..path
         });
-        if let Tab::Editor(view) = tab {
-            self.activate(view);
+        match tab {
+            Tab::Editor(view) => self.activate(view),
+            Tab::Viewer(id) => self.activate_viewer(id),
+            Tab::Preview(_) | Tab::Compare(_) => {}
+        }
+    }
+
+    /// Moves the active tab one place along its tab bar (Notepad++'s Move
+    /// Tab Forward and Backward); at either end it stays.
+    pub fn move_tab(&mut self, forward: bool) {
+        let current = self
+            .focused_viewer()
+            .map_or(Tab::Editor(self.active), Tab::Viewer);
+        let Some(path) = self.dock.find_tab(&current) else {
+            return;
+        };
+        let node = NodePath {
+            surface: path.surface,
+            node: path.node,
+        };
+        let Ok(leaf) = self.dock.leaf_mut(node) else {
+            return;
+        };
+        let i = path.tab.0;
+        let j = if forward { i + 1 } else { i.wrapping_sub(1) };
+        if j < leaf.tabs.len() {
+            leaf.tabs.swap(i, j);
+            leaf.active = TabIndex(j);
         }
     }
 
     /// Plays a macro on the active view; failures are shown in a dialog.
     pub fn play_macro(&mut self, source: MacroSource, repeat: ochrepad_core::Repeat) {
+        if self.focused_viewer().is_some() {
+            self.note_text(READ_ONLY);
+            return;
+        }
         match self
             .macros
             .play(&mut self.editor, self.active, source, repeat)
@@ -654,7 +858,9 @@ impl OchrepadApp {
     }
 
     fn apply(&mut self, action: Action) {
-        let _ = self.editor.apply(self.active, action);
+        if let Err(e) = self.editor.apply(self.active, action) {
+            self.note(&e);
+        }
         let state = self.view_state_mut();
         state.reveal_caret();
         state.request_focus();
@@ -667,6 +873,7 @@ impl OchrepadApp {
         self.now = ui.input(|i| i.time);
         self.apply_settings(ui);
         self.poll_disk(ui);
+        self.poll_exports(ui);
         self.watch_files(ui);
         self.drag_and_drop(ui);
         self.shortcuts(ui);
@@ -693,12 +900,21 @@ impl OchrepadApp {
             .frame(bar(ui, 2))
             .show(ui, |ui| self.status_bar(ui));
         if self.find.open {
+            self.find.replacing = self.replacing_in_files();
+            let viewer = self.focused_viewer();
+            let target = match viewer {
+                Some(_) => FindTarget::Viewer,
+                None => FindTarget::Editor(&mut self.editor, self.active),
+            };
             let requests = Panel::bottom("find")
-                .show(ui, |ui| self.find.ui(ui, &mut self.editor, self.active))
+                .show(ui, |ui| self.find.ui(ui, target))
                 .inner;
-            // Escape closes the panel unless the editor has the keyboard
-            // (there it collapses selections).
-            let editor_focused = ui.memory(|m| m.has_focus(editor_id(self.active)));
+            // Escape closes the panel unless the editor (or viewer) has the
+            // keyboard (there it collapses selections).
+            let editor_focused = ui.memory(|m| {
+                m.has_focus(editor_id(self.active))
+                    || viewer.is_some_and(|id| m.has_focus(crate::viewer::viewer_widget_id(id)))
+            });
             let mut requests = requests;
             if !editor_focused && ui.input(|i| i.key_pressed(Key::Escape)) {
                 requests.push(FindRequest::Close);
@@ -707,14 +923,68 @@ impl OchrepadApp {
                 match r {
                     FindRequest::Close => {
                         self.find.open = false;
-                        self.view_state_mut().request_focus();
+                        match viewer.and_then(|id| self.viewers.get_mut(id)) {
+                            Some(v) => v.state.request_focus(),
+                            None => self.view_state_mut().request_focus(),
+                        }
                     }
                     FindRequest::Reveal => self.view_state_mut().reveal_caret(),
+                    FindRequest::FindAll {
+                        all_documents: false,
+                    } if viewer.is_some() => {
+                        if let Some(id) = viewer {
+                            self.viewer_find_all(id);
+                        }
+                    }
                     FindRequest::FindAll { all_documents } => self.find_all(all_documents),
+                    FindRequest::Next { backward } => {
+                        if let Some(id) = viewer {
+                            self.viewer_find(id, backward);
+                        }
+                    }
+                    FindRequest::Count => {
+                        if let Some(id) = viewer {
+                            self.viewer_count(id);
+                        }
+                    }
                     FindRequest::ReplaceAllInAll => self.plan_replace_all_in_all(),
                     FindRequest::FindInFiles => self.find_in_files(),
+                    FindRequest::ReplaceInFiles => self.plan_replace_in_files(),
                 }
             }
+        }
+        let target = self.filter_target();
+        if self.filter.is_open(target) {
+            let requests = Panel::bottom("filter")
+                .show(ui, |ui| {
+                    self.filter
+                        .ui(ui, &self.editor, &self.viewers, target, self.now)
+                })
+                .inner;
+            for r in requests {
+                match r {
+                    crate::filter_bar::FilterRequest::Close => {
+                        self.filter
+                            .close(&mut self.editor, &mut self.viewers, target);
+                        match target {
+                            crate::filter_bar::FilterTarget::Editor(_) => {
+                                self.view_state_mut().request_focus();
+                            }
+                            crate::filter_bar::FilterTarget::Viewer(id) => {
+                                self.activate_viewer(id);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let following = &self.external.follow;
+        if self
+            .filter
+            .tick(&mut self.editor, &mut self.viewers, following, self.now)
+        {
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(50));
         }
         if self.results.poll() {
             ui.ctx().request_repaint();
@@ -732,6 +1002,8 @@ impl OchrepadApp {
         }
 
         self.sidebar(ui);
+        self.function_list_panel(ui);
+        self.document_list_panel(ui);
 
         self.dark = ui.visuals().dark_mode;
         if self
@@ -741,6 +1013,15 @@ impl OchrepadApp {
             ui.ctx().request_repaint();
         }
         self.visible.clear();
+        let editor = &self.editor;
+        self.token_styles.retain(|b| editor.buffer(b).is_some());
+        let limit = self.settings.highlight_limit_mb * 1024 * 1024;
+        if !self.settings.change_history {
+            self.changes.clear();
+        } else if self.changes.tick(&self.editor, self.now, limit) {
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(50));
+        }
 
         let mut commands = Vec::new();
         let mut tab_rects = Vec::new();
@@ -748,10 +1029,16 @@ impl OchrepadApp {
             let style = crate::theme::dock_style(ui.style());
             let find_highlight = self.find.highlighter();
             let mut tabs = Tabs {
-                font_size: self.settings.font_size,
+                look: self.settings.look(),
+                log_rules: &self.log_rules,
+                tab_width: self.settings.tab_width,
+                viewers: &mut self.viewers,
                 fold_margin: self.settings.fold_margin,
                 word_wrap: self.settings.word_wrap,
                 document_map: self.settings.document_map,
+                changes: self.settings.change_history.then_some(&self.changes),
+                token_styles: &self.token_styles,
+                workspace_root: self.tree.as_ref().map(|t| t.root()),
                 compares: &mut self.compares,
                 previews: &mut self.previews,
                 find_highlight,
@@ -773,9 +1060,24 @@ impl OchrepadApp {
                 .allowed_splits(AllowedSplits::All)
                 .show_leaf_close_all_buttons(false)
                 .show_leaf_collapse_buttons(false)
+                // The tabs' right-click menu is ours (`on_tab_button`):
+                // egui_dock's adds a second Close after it.
+                .tab_context_menus(false)
                 .show_inside(ui, &mut tabs);
         });
         self.paint_tab_accents(ui, &tab_rects);
+        let zoom = crate::editor_view::take_zoom_steps(ui.ctx());
+        if zoom != 0 {
+            self.zoom_by(zoom);
+        }
+        let errors: Vec<_> = self
+            .view_states
+            .values_mut()
+            .filter_map(|s| s.last_error.take())
+            .collect();
+        for e in errors {
+            self.note(&e);
+        }
         let tab_rects: Vec<egui::Rect> = tab_rects.iter().map(|(_, r, _)| *r).collect();
         self.new_tab_on_tab_bar_double_click(ui, &tab_rects);
         if let Some((_, Tab::Editor(view))) = self.dock.find_active_focused()
@@ -791,13 +1093,65 @@ impl OchrepadApp {
                 TabCommand::CloneToOtherView(v) => {
                     self.clone_view(v);
                 }
+                TabCommand::Link(crate::preview::LinkClick::Open(path)) => {
+                    if path.is_file() {
+                        self.open_path(&path);
+                    } else {
+                        self.note_text(format!("{} is not a file", path.display()));
+                    }
+                }
+                TabCommand::Link(crate::preview::LinkClick::Refused(why)) => self.note_text(why),
+                TabCommand::File(command, v) => self.tab_file_command(command, v),
+                TabCommand::CloseViewer(id) => self.close_viewer(id),
+                TabCommand::OpenAsEditable(id) => self.ask_open_as_editable(id),
+                TabCommand::Menu(view, command) => {
+                    self.activate(view);
+                    match command {
+                        crate::editor_menu::MenuCommand::StyleToken(style) => {
+                            self.style_token(style)
+                        }
+                        crate::editor_menu::MenuCommand::ClearStyle(style) => {
+                            let buffer = self.buffer_id();
+                            self.token_styles.clear(buffer, style);
+                        }
+                        crate::editor_menu::MenuCommand::OpenFile(path, place) => {
+                            self.open_path(&path);
+                            // Only in the file itself: a large one opens in
+                            // the viewer, and one that can't be read leaves
+                            // the document clicked in active.
+                            let wanted = Some(canonical(&path));
+                            let opened = self.buffer().meta.path.as_deref().map(canonical);
+                            if let Some((line, column)) = place
+                                && opened == wanted
+                            {
+                                self.apply(Action::GoToLine { line, column });
+                            }
+                        }
+                    }
+                }
+                TabCommand::CloseTab(tab) => {
+                    if let Some(path) = self.dock.find_tab(&tab) {
+                        self.dock.remove_tab(path);
+                    }
+                    if let Tab::Compare(id) = tab {
+                        self.compares.remove(id, &mut self.editor);
+                    }
+                }
             }
         }
+        self.viewer_events();
 
         self.autosave_tick(ui);
         self.dialogs(ui);
         self.replace_all_dialog(ui);
         self.new_entry_dialog(ui);
+        self.go_to_line_dialog(ui);
+        self.open_as_editable_dialog(ui);
+        self.hash_dialog(ui);
+        self.summary_dialog(ui);
+        self.rename_dialog(ui);
+        self.replace_in_files_frame(ui);
+        self.edit_tools_frame(ui);
         self.external_dialog(ui);
         self.preferences_window(ui);
         if let Some((source, repeat)) = self.macros.dialogs(ui) {
@@ -808,23 +1162,34 @@ impl OchrepadApp {
         // field while the find panel is open, otherwise to the editor.
         let idle = self.message.is_none()
             && self.confirming.is_none()
+            && self.confirm_editable.is_none()
             && !self.macros.dialog_open()
+            && !self.edit_tools.dialog_open()
             && ui.memory(|m| m.focused().is_none());
         if idle && self.find.open {
             self.find.focus_field();
         } else if idle {
-            self.focus_request = Some(self.active);
+            match self
+                .focused_viewer()
+                .and_then(|id| self.viewers.get_mut(id))
+            {
+                Some(v) => v.state.request_focus(),
+                None => self.focus_request = Some(self.active),
+            }
         }
         if self.close_confirmed && !self.close_sent {
             self.close_sent = true;
             ui.ctx().send_viewport_cmd(ViewportCommand::Close);
         }
 
-        let title = format!(
-            "{}{} - ochrepad",
-            if self.buffer().is_dirty() { "*" } else { "" },
-            self.file_name()
-        );
+        let title = match self.focused_viewer() {
+            Some(id) => format!("{} (read-only) - ochrepad", self.viewer_name(id)),
+            None => format!(
+                "{}{} - ochrepad",
+                if self.buffer().is_dirty() { "*" } else { "" },
+                self.file_name()
+            ),
+        };
         if title != self.title {
             ui.ctx()
                 .send_viewport_cmd(ViewportCommand::Title(title.clone()));
@@ -895,29 +1260,71 @@ impl OchrepadApp {
         if pressed(ui, &OPEN) {
             self.open_dialog();
         }
+        let viewer = self.focused_viewer();
         if pressed(ui, &SAVE_AS) {
-            self.save_as();
+            if viewer.is_some() {
+                self.note_text(READ_ONLY);
+            } else {
+                self.save_as();
+            }
         }
         if pressed(ui, &SAVE) {
-            self.save();
+            if viewer.is_some() {
+                self.note_text(READ_ONLY);
+            } else {
+                self.save();
+            }
+        }
+        if pressed(ui, &GO_TO_LINE) {
+            self.go_to_line = Some(String::new());
+        }
+        if pressed(ui, &FILTER_LINES) {
+            self.open_filter();
+        }
+        if pressed(ui, &ZOOM_IN) || pressed(ui, &ZOOM_IN_EQUALS) {
+            self.zoom_by(1);
+        }
+        if pressed(ui, &ZOOM_OUT) {
+            self.zoom_by(-1);
+        }
+        if pressed(ui, &ZOOM_RESET) {
+            self.settings.zoom = 100;
+        }
+        if pressed(ui, &SHOW_ALL_CHARACTERS) {
+            let on = !self.settings.show_all_characters();
+            self.settings.set_show_all_characters(on);
         }
         // Before Ctrl+F, which would also match Ctrl+Shift+F.
         if pressed(ui, &FIND_IN_FILES) {
             self.open_find_in_files(None);
         }
-        if pressed(ui, &FIND) {
-            self.find.open(&self.editor, self.active, false);
+        for (shortcut, replace) in [(&FIND, false), (&REPLACE, true)] {
+            if pressed(ui, shortcut) {
+                match viewer {
+                    Some(id) => self.open_find_on_viewer(id),
+                    None => self.find.open(&self.editor, self.active, replace),
+                }
+            }
         }
-        if pressed(ui, &REPLACE) {
-            self.find.open(&self.editor, self.active, true);
+        // Before Ctrl+F3, which would also match Ctrl+Shift+F3.
+        for (shortcut, backward) in [(&SELECT_FIND_PREV, true), (&SELECT_FIND_NEXT, false)] {
+            if pressed(ui, shortcut) && viewer.is_none() {
+                self.select_and_find(backward);
+            }
         }
-        if pressed(ui, &FIND_PREV) && !self.find.pattern.is_empty() {
-            self.find.find(&mut self.editor, self.active, true);
-            self.view_state_mut().reveal_caret();
+        if pressed(ui, &RESTORE_CLOSED) {
+            self.restore_closed_file();
         }
-        if pressed(ui, &FIND_NEXT) && !self.find.pattern.is_empty() {
-            self.find.find(&mut self.editor, self.active, false);
-            self.view_state_mut().reveal_caret();
+        for (shortcut, backward) in [(&FIND_PREV, true), (&FIND_NEXT, false)] {
+            if pressed(ui, shortcut) && !self.find.pattern.is_empty() {
+                match viewer {
+                    Some(id) => self.viewer_find(id, backward),
+                    None => {
+                        self.find.find(&mut self.editor, self.active, backward);
+                        self.view_state_mut().reveal_caret();
+                    }
+                }
+            }
         }
         if pressed(ui, &RECORD_MACRO) {
             self.macros.toggle_recording(&mut self.editor);
@@ -930,19 +1337,21 @@ impl OchrepadApp {
         {
             self.play_macro(source, ochrepad_core::Repeat::Times(1));
         }
-        if pressed(ui, &PREV_DIFF)
-            && let Some(c) = self
+        // F8 and Shift+F8: a comparison's next or previous difference, or
+        // in an editor the next or previous change since the file was saved.
+        for (shortcut, backward) in [(&PREV_DIFF, true), (&NEXT_DIFF, false)] {
+            if !pressed(ui, shortcut) {
+                continue;
+            }
+            match self
                 .focused_compare()
                 .and_then(|id| self.compares.get_mut(id))
-        {
-            c.previous_change(&mut self.editor);
-        }
-        if pressed(ui, &NEXT_DIFF)
-            && let Some(c) = self
-                .focused_compare()
-                .and_then(|id| self.compares.get_mut(id))
-        {
-            c.next_change(&mut self.editor);
+            {
+                Some(c) if backward => c.previous_change(&mut self.editor),
+                Some(c) => c.next_change(&mut self.editor),
+                None if viewer.is_none() => self.go_to_change(backward),
+                None => {}
+            }
         }
         if pressed(ui, &PREVIEW) {
             self.open_preview();
@@ -951,7 +1360,10 @@ impl OchrepadApp {
             self.settings.show_sidebar = !self.settings.show_sidebar;
         }
         if pressed(ui, &CLOSE) {
-            self.close_view(self.active);
+            match viewer {
+                Some(id) => self.close_viewer(id),
+                None => self.close_view(self.active),
+            }
         }
         if pressed(ui, &PREV_TAB) {
             self.cycle_tab(false);
@@ -959,6 +1371,21 @@ impl OchrepadApp {
         if pressed(ui, &NEXT_TAB) {
             self.cycle_tab(true);
         }
+        // Before Ctrl+PageUp/PageDown, which an extra Shift would match too.
+        if pressed(ui, &MOVE_TAB_BACKWARD) {
+            self.move_tab(false);
+        }
+        if pressed(ui, &MOVE_TAB_FORWARD) {
+            self.move_tab(true);
+        }
+        // Notepad++'s and browsers' other keys for the same.
+        if pressed(ui, &PREV_TAB_PAGE) {
+            self.cycle_tab(false);
+        }
+        if pressed(ui, &NEXT_TAB_PAGE) {
+            self.cycle_tab(true);
+        }
+        self.edit_tools_shortcuts(ui);
     }
 
     fn menu_bar(&mut self, ui: &mut Ui) {
@@ -1019,6 +1446,15 @@ impl OchrepadApp {
             self.open_dialog();
         }
         self.recent_files_menu(ui);
+        if ui
+            .add_enabled(
+                !self.closed_files.is_empty(),
+                Button::new("Restore Recent Closed File").shortcut_text("Ctrl+Shift+T"),
+            )
+            .clicked()
+        {
+            self.restore_closed_file();
+        }
         if ui.button("Open Folder…").clicked() {
             self.open_folder_dialog();
         }
@@ -1039,17 +1475,82 @@ impl OchrepadApp {
             self.close_folder();
         }
         ui.separator();
-        if item(ui, "Save", "Ctrl+S") {
+        if ui
+            .button("Load Session…")
+            .on_hover_text("Open the files a session file lists, beside the open ones")
+            .clicked()
+        {
+            self.load_session();
+        }
+        if ui
+            .button("Save Session…")
+            .on_hover_text(
+                "Save the list of open files, with where you were in each and the \
+                 open folder, to open them all again later",
+            )
+            .clicked()
+        {
+            self.save_session();
+        }
+        ui.separator();
+        // A viewer's file is read-only; the editor behind it is not in view.
+        let viewer = self.focused_viewer();
+        let editing = viewer.is_none();
+        let save = |ui: &mut Ui, label: &str, shortcut: &str| {
+            ui.add_enabled(editing, Button::new(label).shortcut_text(shortcut))
+                .on_disabled_hover_text(READ_ONLY)
+                .clicked()
+        };
+        if save(ui, "Save", "Ctrl+S") {
             self.save();
         }
-        if item(ui, "Save As…", "Ctrl+Shift+S") {
+        if save(ui, "Save As…", "Ctrl+Shift+S") {
             self.save_as();
+        }
+        if ui
+            .add_enabled(editing, Button::new("Save a Copy As…"))
+            .on_hover_text("Write the document to another file; its tab keeps its own")
+            .clicked()
+        {
+            self.save_copy_as();
+        }
+        ui.add_enabled_ui(editing, |ui| {
+            ui.menu_button("Export", |ui| {
+                if ui
+                    .button("HTML…")
+                    .on_hover_text(
+                        "Write the document as a web page, in the syntax theme's colours",
+                    )
+                    .clicked()
+                {
+                    self.export_html();
+                }
+            });
+        });
+        if ui.add_enabled(editing, Button::new("Save All")).clicked() {
+            self.save_all();
+        }
+        let named = editing && self.buffer().meta.path.is_some();
+        if ui
+            .add_enabled(named, Button::new("Reload from Disk"))
+            .clicked()
+        {
+            self.tab_file_command(edit_tools::TabFileCommand::Reload, self.active);
+        }
+        if ui.add_enabled(named, Button::new("Rename…")).clicked() {
+            self.open_rename();
         }
         ui.separator();
         if item(ui, "Close", "Ctrl+W") {
-            self.close_view(self.active);
+            match viewer {
+                Some(id) => self.close_viewer(id),
+                None => self.close_view(self.active),
+            }
         }
-        if ui.button("Close All but Active").clicked() {
+        if ui
+            .add_enabled(editing, Button::new("Close All but Active"))
+            .clicked()
+        {
             self.close_others(self.active);
         }
         if ui.button("Close All").clicked() {
@@ -1065,11 +1566,29 @@ impl OchrepadApp {
         let item = |ui: &mut Ui, label: &str, shortcut: &str| {
             ui.add(Button::new(label).shortcut_text(shortcut)).clicked()
         };
+        if let Some(id) = self.focused_viewer() {
+            // A viewer is read-only: copying is all that applies.
+            if item(ui, "Copy", "Ctrl+C")
+                && let Some(v) = self.viewers.get_mut(id)
+            {
+                v.state.copy(ui.ctx(), &v.file);
+            }
+            ui.separator();
+            ui.label(egui::RichText::new(READ_ONLY).weak());
+            return;
+        }
         if item(ui, "Undo", "Ctrl+Z") {
             self.apply(Action::Undo);
         }
         if item(ui, "Redo", "Ctrl+Y") {
             self.apply(Action::Redo);
+        }
+        if ui
+            .button("Clear Undo History")
+            .on_hover_text("Forget this document's undo and redo steps, also the ones kept on disk")
+            .clicked()
+        {
+            self.clear_undo_history();
         }
         ui.separator();
         if item(ui, "Cut", "Ctrl+X") && copy_selection(ui.ctx(), &self.editor, self.active) {
@@ -1085,17 +1604,119 @@ impl OchrepadApp {
             ui.ctx().send_viewport_cmd(ViewportCommand::RequestPaste);
             self.view_state_mut().request_focus();
         }
+        let history = crate::editor_view::clip_history(ui.ctx());
+        ui.add_enabled_ui(!history.is_empty(), |ui| {
+            ui.menu_button("Paste from History", |ui| {
+                for (text, rect) in history {
+                    if ui.button(clip_label(&text)).clicked() {
+                        self.apply(if rect {
+                            Action::PasteBlock(text)
+                        } else {
+                            Action::Paste(text)
+                        });
+                    }
+                }
+            })
+            .response
+            .on_hover_text("Paste something copied earlier in ochrepad");
+        });
         ui.separator();
         if item(ui, "Select All", "Ctrl+A") {
             self.apply(Action::SelectAll);
         }
+        let begun = self
+            .editor
+            .view(self.active)
+            .is_some_and(|v| v.begin_select.is_some());
+        for (label, column) in [
+            ("Begin/End Select", false),
+            ("Begin/End Select in Column Mode", true),
+        ] {
+            if ui
+                .add(Button::new(label).selected(begun))
+                .on_hover_text(if begun {
+                    "Select from where you began to the caret"
+                } else {
+                    "Mark the caret as where a selection begins; use it again to select to the caret"
+                })
+                .clicked()
+            {
+                let view = self.active;
+                let state = self.view_states.entry(view).or_default();
+                crate::editor_view::begin_end_select(&mut self.editor, view, state, column);
+                state.request_focus();
+            }
+        }
+        for (title, all) in [("Multi-select All", true), ("Multi-select Next", false)] {
+            ui.menu_button(title, |ui| {
+                for (label, match_case, whole_word) in [
+                    ("Ignore Case & Whole Word", false, false),
+                    ("Match Case Only", true, false),
+                    ("Match Whole Word Only", false, true),
+                    ("Match Case & Whole Word", true, true),
+                ] {
+                    if ui.button(label).clicked() {
+                        self.apply(if all {
+                            Action::MultiSelectAll {
+                                match_case,
+                                whole_word,
+                            }
+                        } else {
+                            Action::MultiSelectNext {
+                                match_case,
+                                whole_word,
+                            }
+                        });
+                    }
+                }
+            });
+        }
+        ui.menu_button("Copy to Clipboard", |ui| self.copy_to_clipboard_menu(ui));
+        ui.separator();
+        // As in Notepad++, the comment commands share a submenu.
+        ui.menu_button("Comment/Uncomment", |ui| {
+            for (label, shortcut, action) in [
+                ("Toggle Comment", "Ctrl+/", Action::ToggleLineComment),
+                ("Comment Lines", "Ctrl+K", Action::CommentLines),
+                ("Uncomment Lines", "Ctrl+Shift+K", Action::UncommentLines),
+                (
+                    "Toggle Block Comment",
+                    "Ctrl+Shift+/",
+                    Action::ToggleBlockComment,
+                ),
+            ] {
+                if ui.add(Button::new(label).shortcut_text(shortcut)).clicked() {
+                    self.apply(action);
+                }
+            }
+        });
+        for (label, shortcut, action) in [
+            ("Indent", "Tab", Action::Indent),
+            ("Unindent", "Shift+Tab", Action::Unindent),
+        ] {
+            if ui.add(Button::new(label).shortcut_text(shortcut)).clicked() {
+                self.apply(action);
+            }
+        }
         ui.separator();
         ui.menu_button("Convert Case", |ui| {
+            // Any seed for random case: the time will do.
+            let seed = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(1, |d| d.as_nanos() as u64);
             for (label, shortcut, mode) in [
                 ("UPPERCASE", "Ctrl+Shift+U", CaseMode::Upper),
                 ("lowercase", "Ctrl+U", CaseMode::Lower),
                 ("Title Case", "Alt+U", CaseMode::Title),
-                ("iNVERT cASE", "Ctrl+Alt+U", CaseMode::Invert),
+                ("Title Case (blend)", "Alt+Shift+U", CaseMode::TitleBlend),
+                ("Sentence case", "Ctrl+Alt+U", CaseMode::Sentence),
+                (
+                    "Sentence case (blend)",
+                    "Ctrl+Alt+Shift+U",
+                    CaseMode::SentenceBlend,
+                ),
+                ("iNVERT cASE", "Ctrl+Alt+I", CaseMode::Invert),
+                ("ranDOm cASE", "", CaseMode::Random { seed }),
             ] {
                 if item(ui, label, shortcut) {
                     self.apply(Action::ConvertCase(mode));
@@ -1103,6 +1724,21 @@ impl OchrepadApp {
             }
         });
         ui.menu_button("Line Operations", |ui| self.line_operations_menu(ui));
+        ui.menu_button("Blank Operations", |ui| self.blank_operations_menu(ui));
+        ui.menu_button("Text Tools", |ui| self.text_tools_menu(ui));
+        ui.separator();
+        self.column_editor_item(ui);
+        ui.separator();
+        let buffer = self.buffer_id();
+        let mut read_only = self.buffer().read_only;
+        if ui
+            .checkbox(&mut read_only, "Read-Only")
+            .on_hover_text("Refuse edits to this document (the file on disk is not changed)")
+            .changed()
+            && let Some(b) = self.editor.buffer_mut(buffer)
+        {
+            b.read_only = read_only;
+        }
     }
 
     fn line_operations_menu(&mut self, ui: &mut Ui) {
@@ -1118,12 +1754,12 @@ impl OchrepadApp {
                 Action::MoveLinesDown,
             ),
             ("Join Lines", "Ctrl+J", Action::JoinLines),
-            ("Trim Trailing Space", "", Action::TrimTrailingWhitespace),
         ] {
             if item(ui, label, shortcut) {
                 self.apply(action);
             }
         }
+        self.more_line_operations(ui);
         ui.separator();
         for (label, action) in [
             (
@@ -1162,6 +1798,14 @@ impl OchrepadApp {
                 case_insensitive,
                 numeric,
                 remove_duplicates,
+                by_length: false,
+            })
+        };
+        let by_length = |descending| {
+            Action::SortLines(SortOptions {
+                descending,
+                by_length: true,
+                ..SortOptions::default()
             })
         };
         for (label, action) in [
@@ -1187,10 +1831,19 @@ impl OchrepadApp {
                 "Sort Lines and Remove Duplicates",
                 sort(false, false, false, true),
             ),
+            ("Sort Lines by Length Ascending", by_length(false)),
+            ("Sort Lines by Length Descending", by_length(true)),
         ] {
             if ui.button(label).clicked() {
                 self.apply(action);
             }
+        }
+        if ui.button("Randomize Line Order").clicked() {
+            // Any seed: the time will do.
+            let seed = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(1, |d| d.as_nanos() as u64);
+            self.apply(Action::ShuffleLines { seed });
         }
     }
 
@@ -1267,23 +1920,442 @@ impl OchrepadApp {
         let item = |ui: &mut Ui, label: &str, shortcut: &str| {
             ui.add(Button::new(label).shortcut_text(shortcut)).clicked()
         };
+        let viewer = self.focused_viewer();
         if item(ui, "Find…", "Ctrl+F") {
-            self.find.open(&self.editor, self.active, false);
+            match viewer {
+                Some(id) => self.open_find_on_viewer(id),
+                None => self.find.open(&self.editor, self.active, false),
+            }
         }
-        if item(ui, "Replace…", "Ctrl+H") {
+        if viewer.is_none() && item(ui, "Replace…", "Ctrl+H") {
             self.find.open(&self.editor, self.active, true);
         }
+        ui.separator();
+        if item(ui, "Go to Line…", "Ctrl+G") {
+            self.go_to_line = Some(String::new());
+        }
+        if item(ui, "Filter Lines…", "Alt+Shift+L") {
+            self.open_filter();
+        }
+        if viewer.is_none() && item(ui, "Go to Matching Bracket", "Ctrl+B") {
+            self.apply(Action::GoToMatchingBracket);
+        }
+        if viewer.is_none() && item(ui, "Select to Matching Bracket", "Ctrl+Alt+B") {
+            self.apply(Action::SelectToMatchingBracket);
+        }
+        ui.separator();
         if item(ui, "Find in Files…", "Ctrl+Shift+F") {
             self.open_find_in_files(None);
         }
-        if item(ui, "Find Next", "F3") && !self.find.pattern.is_empty() {
-            self.find.find(&mut self.editor, self.active, false);
-            self.view_state_mut().reveal_caret();
+        if viewer.is_none() {
+            for (label, shortcut, backward) in [
+                ("Select and Find Next", "Ctrl+F3", false),
+                ("Select and Find Previous", "Ctrl+Shift+F3", true),
+            ] {
+                if item(ui, label, shortcut) {
+                    self.select_and_find(backward);
+                }
+            }
         }
-        if item(ui, "Find Previous", "Shift+F3") && !self.find.pattern.is_empty() {
-            self.find.find(&mut self.editor, self.active, true);
-            self.view_state_mut().reveal_caret();
+        for (label, shortcut, backward) in [
+            ("Find Next", "F3", false),
+            ("Find Previous", "Shift+F3", true),
+        ] {
+            if item(ui, label, shortcut) && !self.find.pattern.is_empty() {
+                match viewer {
+                    Some(id) => self.viewer_find(id, backward),
+                    None => {
+                        self.find.find(&mut self.editor, self.active, backward);
+                        self.view_state_mut().reveal_caret();
+                    }
+                }
+            }
         }
+        if viewer.is_none() {
+            ui.separator();
+            ui.menu_button("Style All Occurrences of Token", |ui| {
+                for (i, name) in crate::token_styles::NAMES.iter().enumerate() {
+                    if ui.button(format!("Using {name} Style")).clicked() {
+                        self.style_token(i);
+                    }
+                }
+            });
+            let buffer = self.buffer_id();
+            ui.menu_button("Clear Style", |ui| {
+                for (i, name) in crate::token_styles::NAMES.iter().enumerate() {
+                    if ui
+                        .add_enabled(
+                            self.token_styles.has(buffer, i),
+                            Button::new(format!("Clear {name} Style")),
+                        )
+                        .clicked()
+                    {
+                        self.token_styles.clear(buffer, Some(i));
+                    }
+                }
+                if ui.button("Clear All Styles").clicked() {
+                    self.token_styles.clear(buffer, None);
+                }
+            });
+            for (title, backward) in [("Jump Up", true), ("Jump Down", false)] {
+                ui.menu_button(title, |ui| {
+                    for (i, name) in crate::token_styles::NAMES.iter().enumerate() {
+                        if ui
+                            .add_enabled(
+                                self.token_styles.has(buffer, i),
+                                Button::new(format!("{name} Style")),
+                            )
+                            .clicked()
+                        {
+                            self.jump_to_style(i, backward);
+                        }
+                    }
+                });
+            }
+            ui.menu_button("Copy Styled Text", |ui| {
+                for (i, name) in crate::token_styles::NAMES.iter().enumerate() {
+                    if ui
+                        .add_enabled(
+                            self.token_styles.has(buffer, i),
+                            Button::new(format!("Using {name} Style")),
+                        )
+                        .clicked()
+                    {
+                        self.copy_styled_text(ui, Some(i));
+                    }
+                }
+                if ui.button("Using All Styles").clicked() {
+                    self.copy_styled_text(ui, None);
+                }
+            });
+            ui.menu_button("Bookmark", |ui| self.bookmark_menu(ui));
+        }
+    }
+
+    /// Style All Occurrences of Token: the selection (or the word at the
+    /// caret) everywhere in the document, in `style`.
+    fn style_token(&mut self, style: usize) {
+        let buffer = self.buffer_id();
+        let Some(token) = self
+            .editor
+            .view(self.active)
+            .and_then(|v| crate::token_styles::token_at(self.buffer().doc(), &v.selections))
+        else {
+            self.note_text("Select a word or some text to style");
+            return;
+        };
+        self.token_styles.add(buffer, token, style);
+    }
+
+    /// Jump Up/Down: the previous or next occurrence of `style`'s tokens.
+    fn jump_to_style(&mut self, style: usize, backward: bool) {
+        let buffer = self.buffer_id();
+        let Some(from) = self
+            .editor
+            .view(self.active)
+            .map(|v| v.selections.primary().range())
+        else {
+            return;
+        };
+        let found = self
+            .token_styles
+            .jump(buffer, self.buffer().doc(), style, from, backward);
+        if let Some(m) = found {
+            self.apply(Action::SetSelections(ochrepad_core::SelectionSet::single(
+                ochrepad_core::Selection::new(m.start, m.end),
+            )));
+        }
+    }
+
+    /// Search > Copy Styled Text: every occurrence of a style's tokens (or
+    /// every style's), one per line, as in Notepad++.
+    fn copy_styled_text(&mut self, ui: &Ui, style: Option<usize>) {
+        let buffer = self.buffer_id();
+        let found = self
+            .token_styles
+            .styled_text(buffer, self.buffer().doc(), style);
+        if found.is_empty() {
+            self.note_text("No styled text to copy");
+            return;
+        }
+        let n = found.len();
+        ui.ctx().copy_text(found.join("\n"));
+        self.note_text(if n == crate::token_styles::MAX_COPIED {
+            format!("Copied the first {n} styled occurrences")
+        } else {
+            format!("Copied {n} styled occurrences")
+        });
+    }
+
+    /// Search > Bookmark, as in Notepad++.
+    fn bookmark_menu(&mut self, ui: &mut Ui) {
+        let item = |ui: &mut Ui, enabled: bool, label: &str, shortcut: &str| {
+            let button = if shortcut.is_empty() {
+                Button::new(label)
+            } else {
+                Button::new(label).shortcut_text(shortcut)
+            };
+            ui.add_enabled(enabled, button).clicked()
+        };
+        let marked = !self.buffer().bookmarks().is_empty();
+        if item(ui, true, "Toggle Bookmark", "Ctrl+F2") {
+            self.apply(Action::ToggleBookmark);
+        }
+        if item(ui, marked, "Next Bookmark", "F2") {
+            self.apply(Action::NextBookmark);
+        }
+        if item(ui, marked, "Previous Bookmark", "Shift+F2") {
+            self.apply(Action::PrevBookmark);
+        }
+        if item(ui, marked, "Clear All Bookmarks", "") {
+            self.apply(Action::ClearBookmarks);
+        }
+        ui.separator();
+        if item(ui, marked, "Cut Bookmarked Lines", "") {
+            self.copy_bookmarked_lines(ui.ctx());
+            self.apply(Action::RemoveBookmarkedLines);
+        }
+        if item(ui, marked, "Copy Bookmarked Lines", "") {
+            self.copy_bookmarked_lines(ui.ctx());
+        }
+        if item(ui, marked, "Paste to (Replace) Bookmarked Lines", "") {
+            // The clipboard comes as a paste event, which the editor sends to
+            // the bookmarked lines.
+            let now = self.now;
+            self.view_state_mut().paste_to_bookmarks(now);
+            ui.ctx().send_viewport_cmd(ViewportCommand::RequestPaste);
+        }
+        if item(ui, marked, "Remove Bookmarked Lines", "") {
+            self.apply(Action::RemoveBookmarkedLines);
+        }
+        if item(ui, marked, "Remove Unmarked Lines", "") {
+            self.apply(Action::RemoveUnbookmarkedLines);
+        }
+        if item(ui, true, "Inverse Bookmark", "") {
+            self.apply(Action::InverseBookmarks);
+        }
+    }
+
+    /// View > Function List: the panel on the right, kept up to date for
+    /// the active document.
+    fn function_list_panel(&mut self, ui: &mut Ui) {
+        if !self.settings.show_function_list {
+            return;
+        }
+        let buffer = self.buffer_id();
+        let viewer = self.focused_viewer();
+        let limit = self.settings.highlight_limit_mb * 1024 * 1024;
+        let language = self.highlighting.language(buffer).to_owned();
+        let caret_line = self
+            .editor
+            .view(self.active)
+            .zip(self.editor.buffer(buffer))
+            .map_or(0, |(v, b)| b.doc().line_of(v.selections.primary().head));
+        let target = self
+            .editor
+            .buffer(buffer)
+            .filter(|b| viewer.is_none() && b.doc().len().0 <= limit)
+            .map(|b| crate::function_list::Target {
+                buffer,
+                revision: b.revision(),
+                language: &language,
+                doc: b.doc(),
+                indent_width: b.indent.width,
+                caret_line,
+            });
+        if let Some(t) = &target
+            && self
+                .function_list
+                .tick(t, self.highlighting.registry(), self.now)
+        {
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(100));
+        }
+        let frame = egui::Frame::new()
+            .fill(ui.visuals().panel_fill)
+            .inner_margin(egui::Margin::same(crate::theme::space::S as i8));
+        let shown = Panel::right("function-list")
+            .frame(frame)
+            .resizable(true)
+            .default_size(self.settings.function_list_width)
+            .size_range(160.0..=480.0)
+            .show(ui, |ui| self.function_list.ui(ui, target.as_ref()));
+        let width = shown.response.rect.width();
+        if (width - self.settings.function_list_width).abs() > 0.5 {
+            self.settings.function_list_width = width;
+        }
+        let (go, close) = shown.inner;
+        if close {
+            self.settings.show_function_list = false;
+        }
+        if let Some(line) = go {
+            self.apply(Action::GoToLine {
+                line: line + 1,
+                column: 1,
+            });
+        }
+    }
+
+    /// View > Document List: the open documents and viewers in tab order,
+    /// beside the Function List. A click activates a document's tab and a
+    /// middle click closes it, as they do on the tab itself.
+    fn document_list_panel(&mut self, ui: &mut Ui) {
+        use crate::document_list::{ListRequest, Row};
+        if !self.settings.show_document_list {
+            return;
+        }
+        let current = self
+            .focused_viewer()
+            .map_or(Tab::Editor(self.active), Tab::Viewer);
+        let (tabs, rows): (Vec<Tab>, Vec<Row>) = self
+            .dock
+            .iter_all_tabs()
+            .filter_map(|(_, &tab)| {
+                let (title, path) = match tab {
+                    Tab::Editor(view) => (
+                        editor_title(&self.editor, &self.untitled, view),
+                        self.editor
+                            .view(view)
+                            .and_then(|v| self.editor.buffer(v.buffer()))
+                            .and_then(|b| b.meta.path.as_deref()),
+                    ),
+                    Tab::Viewer(id) => (
+                        viewer_title(&self.viewers, id),
+                        self.viewers.get(id).map(|v| v.file.path()),
+                    ),
+                    Tab::Preview(_) | Tab::Compare(_) => return None,
+                };
+                let row = Row {
+                    title,
+                    path,
+                    active: tab == current,
+                };
+                Some((tab, row))
+            })
+            .unzip();
+        let frame = egui::Frame::new().fill(ui.visuals().panel_fill);
+        let shown = Panel::right("document-list")
+            .frame(frame)
+            .resizable(true)
+            .default_size(self.settings.document_list_width)
+            .size_range(160.0..=480.0)
+            .show(ui, |ui| self.document_list.ui(ui, &rows));
+        let width = shown.response.rect.width();
+        if (width - self.settings.document_list_width).abs() > 0.5 {
+            self.settings.document_list_width = width;
+        }
+        match shown.inner {
+            Some(ListRequest::Activate(i)) => match tabs.get(i) {
+                Some(&Tab::Editor(view)) => self.activate(view),
+                Some(&Tab::Viewer(id)) => self.activate_viewer(id),
+                _ => {}
+            },
+            Some(ListRequest::Close(i)) => match tabs.get(i) {
+                Some(&Tab::Editor(view)) => self.close_view(view),
+                Some(&Tab::Viewer(id)) => self.close_viewer(id),
+                _ => {}
+            },
+            Some(ListRequest::Hide) => self.settings.show_document_list = false,
+            None => {}
+        }
+    }
+
+    /// Goes to the start of the next (or previous) run of lines changed since
+    /// the file was saved, going round the document.
+    pub fn go_to_change(&mut self, backward: bool) {
+        let buffer = self.buffer_id();
+        let lines = self.buffer().doc().line_count();
+        let starts = self
+            .changes
+            .marks(buffer)
+            .filter(|_| self.settings.change_history)
+            .map(|m| m.starts(lines))
+            .unwrap_or_default();
+        if starts.is_empty() {
+            self.note_text("No changes since the file was saved");
+            return;
+        }
+        let caret = self.editor.view(self.active).map_or(0, |v| {
+            self.buffer().doc().line_of(v.selections.primary().head)
+        });
+        let target = if backward {
+            starts.iter().rev().find(|&&l| l < caret).or(starts.last())
+        } else {
+            starts.iter().find(|&&l| l > caret).or(starts.first())
+        };
+        if let Some(&line) = target {
+            self.apply(Action::GoToLine {
+                line: line + 1,
+                column: 1,
+            });
+        }
+    }
+
+    /// Select and Find Next/Previous (Ctrl+F3, Ctrl+Shift+F3): finds the
+    /// selected text, or the word at the caret, without opening the find
+    /// panel; F3 and Shift+F3 then go on with it.
+    fn select_and_find(&mut self, backward: bool) {
+        let empty = self
+            .editor
+            .view(self.active)
+            .is_some_and(|v| v.selections.primary().is_empty());
+        if empty {
+            let _ = self.editor.apply(self.active, Action::CollapseSelections);
+            let _ = self.editor.apply(self.active, Action::SelectWord);
+        }
+        let Some(range) = self
+            .editor
+            .view(self.active)
+            .map(|v| v.selections.primary().range())
+        else {
+            return;
+        };
+        if range.end.0 - range.start.0 > crate::find_panel::MAX_PATTERN {
+            return;
+        }
+        let text = self.buffer().doc().slice(range);
+        if text.is_empty() || text.contains('\n') {
+            return;
+        }
+        self.find.pattern = if self.find.options.regex {
+            ochrepad_core::search::escape(&text)
+        } else {
+            text
+        };
+        self.find.find(&mut self.editor, self.active, backward);
+        // With the panel closed, its message (Not found, wrapped) goes to
+        // the status bar.
+        if !self.find.open
+            && let Some(m) = self.find.message()
+        {
+            let m = m.to_owned();
+            self.note_text(m);
+        }
+        let state = self.view_state_mut();
+        state.reveal_caret();
+        state.request_focus();
+    }
+
+    /// Reopens the file closed last that is not open again (Ctrl+Shift+T).
+    pub fn restore_closed_file(&mut self) {
+        while let Some(path) = self.closed_files.pop() {
+            let open = self
+                .editor
+                .buffers()
+                .any(|b| b.meta.path.as_deref() == Some(path.as_path()));
+            if !open && path.is_file() {
+                self.open_path(&path);
+                return;
+            }
+        }
+        self.note_text("No closed file to reopen");
+    }
+
+    /// Copy Bookmarked Lines: their text, each with its line break.
+    fn copy_bookmarked_lines(&mut self, ctx: &egui::Context) {
+        let b = self.buffer();
+        let text = ochrepad_core::bookmarks::marked_text(b.doc(), b.bookmarks());
+        crate::editor_view::copy_text(ctx, text);
     }
 
     /// Opens a comparison of two buffers in a new tab.
@@ -1335,6 +2407,10 @@ impl OchrepadApp {
     }
 
     fn compare_menu(&mut self, ui: &mut Ui) {
+        if self.focused_viewer().is_some() {
+            ui.label(egui::RichText::new("Files open in the viewer cannot be compared").weak());
+            return;
+        }
         let current = self.buffer_id();
         let others: Vec<(BufferId, String)> = self
             .tabs()
@@ -1424,7 +2500,68 @@ impl OchrepadApp {
         self.activate(self.active);
     }
 
+    /// View > Show Symbol, as in Notepad++.
+    fn show_symbol_menu(&mut self, ui: &mut Ui) {
+        let s = &mut self.settings;
+        ui.checkbox(&mut s.show_space_tab, "Show Space and Tab");
+        ui.checkbox(&mut s.show_eol, "Show End of Line");
+        ui.checkbox(&mut s.show_non_printing, "Show Non-Printing Characters")
+            .on_hover_text(
+                "Zero-width and bidi characters, the BOM and unusual spaces, as labelled \
+                 boxes. Control characters are always shown.",
+            );
+        let all = s.show_all_characters();
+        if ui
+            .add(
+                Button::new("Show All Characters")
+                    .selected(all)
+                    .shortcut_text("Ctrl+Shift+8"),
+            )
+            .clicked()
+        {
+            s.set_show_all_characters(!all);
+        }
+        ui.separator();
+        ui.checkbox(&mut s.show_indent_guides, "Show Indent Guide");
+        ui.checkbox(&mut s.show_wrap_symbol, "Show Wrap Symbol");
+    }
+
+    /// View > Zoom: the editors' text size (not the menus').
+    fn zoom_menu(&mut self, ui: &mut Ui) {
+        let zoom = self.settings.zoom;
+        let max = crate::settings::ZOOM_LEVELS[crate::settings::ZOOM_LEVELS.len() - 1];
+        let min = crate::settings::ZOOM_LEVELS[0];
+        if ui
+            .add_enabled(zoom < max, Button::new("Zoom In").shortcut_text("Ctrl++"))
+            .clicked()
+        {
+            self.zoom_by(1);
+        }
+        if ui
+            .add_enabled(zoom > min, Button::new("Zoom Out").shortcut_text("Ctrl+-"))
+            .clicked()
+        {
+            self.zoom_by(-1);
+        }
+        if ui
+            .add_enabled(
+                zoom != 100,
+                Button::new("Restore Default Zoom").shortcut_text("Ctrl+0"),
+            )
+            .clicked()
+        {
+            self.settings.zoom = 100;
+        }
+    }
+
+    /// Zooms every editor's text `steps` levels in (or out, negative).
+    pub fn zoom_by(&mut self, steps: i32) {
+        self.settings.zoom = crate::settings::zoom_step(self.settings.zoom, steps);
+    }
+
     fn view_menu(&mut self, ui: &mut Ui) {
+        self.window_view_items(ui);
+        ui.separator();
         if ui
             .add(Button::new("Markdown Preview").shortcut_text("Ctrl+Shift+M"))
             .clicked()
@@ -1433,6 +2570,23 @@ impl OchrepadApp {
         }
         if ui.button("Clone to Other View").clicked() {
             self.clone_to_other_view();
+        }
+        if self.focused_viewer().is_none()
+            && ui
+                .button("Summary…")
+                .on_hover_text("The document's characters, words and lines, and its file's times")
+                .clicked()
+        {
+            self.show_summary();
+        }
+        let viewer = self.focused_viewer();
+        if ui
+            .add_enabled(viewer.is_some(), Button::new("Open as Editable…"))
+            .on_hover_text("Opens the large file shown read-only in an editor")
+            .clicked()
+            && let Some(id) = viewer
+        {
+            self.ask_open_as_editable(id);
         }
         if ui
             .add(Button::new("Next Tab").shortcut_text("Ctrl+Tab"))
@@ -1445,6 +2599,18 @@ impl OchrepadApp {
             .clicked()
         {
             self.cycle_tab(false);
+        }
+        if ui
+            .add(Button::new("Move Tab Forward").shortcut_text("Ctrl+Shift+PageDown"))
+            .clicked()
+        {
+            self.move_tab(true);
+        }
+        if ui
+            .add(Button::new("Move Tab Backward").shortcut_text("Ctrl+Shift+PageUp"))
+            .clicked()
+        {
+            self.move_tab(false);
         }
         ui.separator();
         for (label, shortcut, action) in [
@@ -1481,6 +2647,35 @@ impl OchrepadApp {
         ui.checkbox(&mut self.settings.fold_margin, "Show Fold Margin");
         ui.checkbox(&mut self.settings.word_wrap, "Word Wrap");
         ui.checkbox(&mut self.settings.document_map, "Document Map");
+        ui.checkbox(&mut self.settings.show_document_list, "Document List")
+            .on_hover_text("A panel listing the open documents, to switch between them");
+        ui.checkbox(&mut self.settings.show_function_list, "Function List")
+            .on_hover_text("A panel listing the document's functions, types and headings");
+        ui.checkbox(&mut self.settings.change_history, "Change History")
+            .on_hover_text("Mark the lines changed since the file was saved, in the gutter");
+        let buffer = self.buffer_id();
+        if let Some(id) = self.focused_viewer() {
+            // A viewer reads what the file gains by itself; following keeps
+            // its end in view.
+            if let Some(v) = self.viewers.get_mut(id) {
+                ui.checkbox(&mut v.state.follow, "Follow (tail -f)")
+                    .on_hover_text("Scroll to the end as the file grows");
+            }
+        } else {
+            let mut following = self.is_following(buffer);
+            if ui
+                .add_enabled(
+                    self.buffer().meta.path.is_some(),
+                    egui::Checkbox::new(&mut following, "Follow (tail -f)"),
+                )
+                .on_hover_text("Add what other programs append to this file as it grows")
+                .changed()
+            {
+                self.set_following(buffer, following);
+            }
+        }
+        ui.menu_button("Show Symbol", |ui| self.show_symbol_menu(ui));
+        ui.menu_button("Zoom", |ui| self.zoom_menu(ui));
         ui.separator();
         if ui
             .add(
@@ -1526,8 +2721,38 @@ impl OchrepadApp {
             return String::new();
         };
         let head = v.selections.primary().head;
-        let col = byte_to_visual_col(doc, head, self.editor.settings.tab_width);
+        let col = byte_to_visual_col(doc, head, self.buffer().indent.width);
         format!("Ln {}, Col {}", doc.line_of(head) + 1, col.0 + 1)
+    }
+
+    /// "12 selected, 3 lines": the characters selected and the lines they
+    /// are on, as in Notepad++'s status bar; with several selections, how
+    /// many there are ("4 selections, 20 selected"). `None` for one caret.
+    pub fn selection_status(&self) -> Option<String> {
+        let v = self.editor.view(self.active)?;
+        let count = v.selections.len();
+        if count > 1000 {
+            // Counting characters in that many every frame costs too much.
+            return Some(format!("{count} selections"));
+        }
+        let doc = self.buffer().doc();
+        let (mut chars, mut lines) = (0, 0);
+        for s in v.selections.ranges().iter().filter(|s| !s.is_empty()) {
+            chars += doc.to_char_idx(s.end()).0 - doc.to_char_idx(s.start()).0;
+            let (first, mut last) = (doc.line_of(s.start()), doc.line_of(s.end()));
+            // Whole lines selected end at the start of the next one.
+            if last > first && s.end() == doc.line_start(last) {
+                last -= 1;
+            }
+            lines += last + 1 - first;
+        }
+        match (count, chars, lines) {
+            (1, 0, _) => None,
+            (1, c, 1) => Some(format!("{c} selected")),
+            (1, c, l) => Some(format!("{c} selected, {l} lines")),
+            (n, 0, _) => Some(format!("{n} selections")),
+            (n, c, _) => Some(format!("{n} selections, {c} selected")),
+        }
     }
 
     fn language_picker(&mut self, ui: &mut Ui) {
@@ -1553,52 +2778,106 @@ impl OchrepadApp {
     }
 
     fn status_bar(&mut self, ui: &mut Ui) {
+        if let Some(id) = self.focused_viewer() {
+            self.viewer_status_bar(ui, id);
+            return;
+        }
         let (carets, column) = self.editor.view(self.active).map_or((1, false), |v| {
             (v.selections.len(), v.selections.rect().is_some())
         });
         let meta = self.buffer().meta.clone();
-        ui.horizontal(|ui| {
-            ui.label(self.caret_status());
-            if let Some(recorded) = self.editor.recorded() {
+        // The menus on the right are laid out first; the notes on the left
+        // get what is left and are cut short with "…" in a narrow window.
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            self.encoding_menu(ui);
+            ui.separator();
+            self.line_ending_menu(ui);
+            if meta.mixed_line_endings {
                 ui.separator();
-                ui.colored_label(
-                    ui.visuals().error_fg_color,
-                    format!("Recording macro ({} actions)", recorded.len()),
-                );
-            }
-            if column {
-                ui.separator();
-                ui.label(format!("Column selection, {carets} lines"));
-            } else if carets > 1 {
-                ui.separator();
-                ui.label(format!("{carets} selections"));
-            }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let enc = if meta.bom {
-                    format!("{} BOM", meta.encoding)
-                } else {
-                    meta.encoding.clone()
-                };
-                ui.label(enc);
-                ui.separator();
-                ui.label(match meta.line_ending {
-                    LineEnding::CrLf => "Windows (CR LF)",
-                    LineEnding::Lf => "Unix (LF)",
-                    LineEnding::Cr => "Macintosh (CR)",
-                });
-                if meta.mixed_line_endings {
-                    ui.separator();
-                    ui.label("Mixed line endings (saved as shown)")
-                        .on_hover_text(
-                            "The file had more than one kind of line ending. \
+                ui.add(egui::Label::new("Mixed line endings (saved as shown)").truncate())
+                    .on_hover_text(
+                        "The file had more than one kind of line ending. \
                          Saving converts all of them to the one shown.",
-                        );
-                }
+                    );
+            }
+            ui.separator();
+            self.indent_menu(ui);
+            ui.separator();
+            self.language_picker(ui);
+            let buffer = self.buffer_id();
+            if self.is_following(buffer) {
                 ui.separator();
-                self.language_picker(ui);
-                if let Some(problem) = self.highlighting.problem(self.buffer_id()) {
+                if ui
+                    .button("Following")
+                    .on_hover_text("The end of the file is followed as it grows. Click to stop.")
+                    .clicked()
+                {
+                    self.set_following(buffer, false);
+                }
+            }
+            if self.settings.zoom != 100 {
+                ui.separator();
+                if ui
+                    .button(format!("{}%", self.settings.zoom))
+                    .on_hover_text("Zoom. Click (or Ctrl+0) for 100%.")
+                    .clicked()
+                {
+                    self.settings.zoom = 100;
+                }
+            }
+            if self.editor.settings.overtype {
+                ui.separator();
+                if ui
+                    .button("OVR")
+                    .on_hover_text(
+                        "Overtype: typing replaces the character after the caret. \
+                         Click (or press Insert) to insert instead.",
+                    )
+                    .clicked()
+                {
+                    self.editor.settings.overtype = false;
+                    self.view_state_mut().request_focus();
+                }
+            }
+            if let Some(problem) = self.highlighting.problem(self.buffer_id()) {
+                ui.separator();
+                ui.add(egui::Label::new(problem).truncate());
+            }
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                if ui
+                    .add(egui::Label::new(self.caret_status()).sense(egui::Sense::click()))
+                    .on_hover_text("Go to Line (Ctrl+G)")
+                    .clicked()
+                {
+                    self.go_to_line = Some(String::new());
+                }
+                if let Some((note, until)) = &self.status_note {
+                    if self.now < *until {
+                        ui.separator();
+                        let color = ui.visuals().warn_fg_color;
+                        ui.add(egui::Label::new(egui::RichText::new(note).color(color)).truncate());
+                        ui.ctx()
+                            .request_repaint_after(std::time::Duration::from_secs_f64(
+                                (until - self.now).max(0.0),
+                            ));
+                    } else {
+                        self.status_note = None;
+                    }
+                }
+                if let Some(recorded) = self.editor.recorded() {
                     ui.separator();
-                    ui.label(problem);
+                    let text = format!("Recording macro ({} actions)", recorded.len());
+                    let color = ui.visuals().error_fg_color;
+                    ui.add(egui::Label::new(egui::RichText::new(text).color(color)).truncate());
+                }
+                if column {
+                    ui.separator();
+                    ui.add(
+                        egui::Label::new(format!("Column selection, {carets} lines")).truncate(),
+                    );
+                } else if let Some(selected) = self.selection_status() {
+                    ui.separator();
+                    ui.add(egui::Label::new(selected).truncate());
                 }
             });
         });
@@ -1668,10 +2947,17 @@ impl OchrepadApp {
 
 /// Draws the tabs: one editor per view, Markdown previews and comparisons.
 struct Tabs<'a> {
-    font_size: f32,
+    look: crate::editor_view::Look,
+    log_rules: &'a crate::log_rules::LogRules,
+    tab_width: usize,
+    viewers: &'a mut crate::viewer::Viewers,
     fold_margin: bool,
     word_wrap: bool,
     document_map: bool,
+    changes: Option<&'a crate::change_history::ChangeHistory>,
+    token_styles: &'a crate::token_styles::TokenStyles,
+    /// The open folder, where Open File also looks.
+    workspace_root: Option<&'a Path>,
     compares: &'a mut Compares,
     previews: &'a mut Previews,
     find_highlight: Option<&'a ochrepad_core::Searcher>,
@@ -1687,6 +2973,41 @@ struct Tabs<'a> {
     tab_rects: &'a mut Vec<(Tab, egui::Rect, egui::LayerId)>,
 }
 
+impl Tabs<'_> {
+    /// A tab's right-click menu.
+    fn tab_menu(&mut self, ui: &mut Ui, tab: Tab) {
+        let view = match tab {
+            Tab::Editor(view) => view,
+            Tab::Viewer(id) => {
+                if ui.button("Close").clicked() {
+                    self.commands.push(TabCommand::CloseViewer(id));
+                }
+                if ui.button("Open as Editable…").clicked() {
+                    self.commands.push(TabCommand::OpenAsEditable(id));
+                }
+                return;
+            }
+            Tab::Preview(_) | Tab::Compare(_) => {
+                if ui.button("Close").clicked() {
+                    self.commands.push(TabCommand::CloseTab(tab));
+                }
+                return;
+            }
+        };
+        if ui.button("Close").clicked() {
+            self.commands.push(TabCommand::Close(view));
+        }
+        if ui.button("Close All but This").clicked() {
+            self.commands.push(TabCommand::CloseOthers(view));
+        }
+        if ui.button("Clone to Other View").clicked() {
+            self.commands.push(TabCommand::CloneToOtherView(view));
+        }
+        ui.separator();
+        edit_tools::tab_menu(ui, view, self.editor, self.untitled, self.commands);
+    }
+}
+
 impl TabViewer for Tabs<'_> {
     type Tab = Tab;
 
@@ -1695,6 +3016,7 @@ impl TabViewer for Tabs<'_> {
             Tab::Editor(v) => Id::new(("ochrepad-tab", v.0)),
             Tab::Preview(b) => Id::new(("ochrepad-preview-tab", b.0)),
             Tab::Compare(c) => Id::new(("ochrepad-compare-tab", c.0)),
+            Tab::Viewer(v) => Id::new(("ochrepad-viewer-tab", v.0)),
         }
     }
 
@@ -1716,25 +3038,21 @@ impl TabViewer for Tabs<'_> {
                 }
                 .into();
             }
+            Tab::Viewer(id) => {
+                return viewer_title(self.viewers, *id).into();
+            }
         };
-        let Some(buffer) = self.editor.view(view).map(|v| v.buffer()) else {
-            return "?".into();
-        };
-        let name = buffer_name(self.editor, self.untitled, buffer);
-        let dirty = self.editor.buffer(buffer).is_some_and(Buffer::is_dirty);
-        if dirty {
-            format!("{name} *").into()
-        } else {
-            name.into()
-        }
+        editor_title(self.editor, self.untitled, view).into()
     }
 
     fn ui(&mut self, ui: &mut Ui, tab: &mut Tab) {
         let view = match *tab {
             Tab::Editor(v) => v,
             Tab::Preview(b) => {
-                if let Some(buffer) = self.editor.buffer(b) {
-                    self.previews.show(ui, buffer);
+                if let Some(buffer) = self.editor.buffer(b)
+                    && let Some(click) = self.previews.show(ui, buffer)
+                {
+                    self.commands.push(TabCommand::Link(click));
                 }
                 return;
             }
@@ -1749,8 +3067,30 @@ impl TabViewer for Tabs<'_> {
                         self.highlighting,
                         self.keymap,
                         labels,
-                        self.font_size,
+                        &self.look,
                         self.find_highlight,
+                    );
+                }
+                return;
+            }
+            Tab::Viewer(id) => {
+                let label = format!("Viewer: {}", viewer_name(self.viewers, id));
+                if let Some(v) = self.viewers.get_mut(id) {
+                    let rules = v
+                        .file
+                        .path()
+                        .file_name()
+                        .is_some_and(|n| self.log_rules.applies_to(&n.to_string_lossy()))
+                        .then_some(self.log_rules);
+                    crate::viewer::viewer_ui(
+                        ui,
+                        id,
+                        v,
+                        &self.look,
+                        self.tab_width,
+                        &label,
+                        self.find_highlight,
+                        rules,
                     );
                 }
                 return;
@@ -1771,7 +3111,7 @@ impl TabViewer for Tabs<'_> {
             buffer_name(self.editor, self.untitled, buffer)
         );
         let state = self.view_states.entry(view).or_default();
-        state.font_size = self.font_size;
+        state.set_look(&self.look);
         state.fold_margin = self.fold_margin;
         state.word_wrap = self.word_wrap;
         state.document_map = self.document_map;
@@ -1780,7 +3120,24 @@ impl TabViewer for Tabs<'_> {
             *self.focus_request = None;
         }
         let mut styler = self.highlighting.styler(buffer);
-        editor_view(
+        // Log highlight rules, for files they apply to. The document is
+        // cloned (cheaply) because the editor is lent to the widget.
+        let log_doc = self
+            .editor
+            .buffer(buffer)
+            .filter(|b| {
+                b.meta
+                    .path
+                    .as_deref()
+                    .and_then(|p| p.file_name())
+                    .is_some_and(|n| self.log_rules.applies_to(&n.to_string_lossy()))
+            })
+            .map(|b| b.doc().clone());
+        let log_style = log_doc.as_ref().map(|doc| {
+            crate::log_rules::LogStyle::new(self.log_rules, doc, ui.visuals().dark_mode)
+        });
+        let styled = self.token_styles.highlights(buffer, ui.visuals());
+        let response = editor_view(
             ui,
             self.editor,
             view,
@@ -1788,31 +3145,49 @@ impl TabViewer for Tabs<'_> {
             self.keymap,
             &label,
             Decorations {
+                token_styles: &styled,
                 styler: styler.as_mut().map(|s| s as &mut dyn LineStyler),
                 find_highlight: self.find_highlight,
-                row_style: None,
+                row_style: log_style
+                    .as_ref()
+                    .map(|s| s as &dyn crate::editor_view::RowStyle),
+                changes: self.changes.and_then(|c| c.marks(buffer)),
             },
         );
-    }
-
-    fn context_menu(&mut self, ui: &mut Ui, tab: &mut Tab, _path: NodePath) {
-        let Tab::Editor(tab) = tab else {
-            return;
-        };
-        if ui.button("Close").clicked() {
-            self.commands.push(TabCommand::Close(*tab));
-        }
-        if ui.button("Close All but This").clicked() {
-            self.commands.push(TabCommand::CloseOthers(*tab));
-        }
-        if ui.button("Clone to Other View").clicked() {
-            self.commands.push(TabCommand::CloneToOtherView(*tab));
+        let mut command = None;
+        let doc_dir = self
+            .editor
+            .buffer(buffer)
+            .and_then(|b| b.meta.path.as_deref())
+            .and_then(Path::parent)
+            .map(Path::to_path_buf);
+        let dirs: Vec<&Path> = doc_dir
+            .as_deref()
+            .into_iter()
+            .chain(self.workspace_root)
+            .collect();
+        response.context_menu(|ui| {
+            command = crate::editor_menu::show(ui, self.editor, view, state, &dirs);
+        });
+        if let Some(command) = command {
+            self.commands.push(TabCommand::Menu(view, command));
         }
     }
 
     fn on_tab_button(&mut self, tab: &mut Tab, response: &egui::Response) {
         self.tab_rects
             .push((*tab, response.rect, response.layer_id));
+        // A middle click closes the tab, as in Notepad++ and browsers.
+        if response.middle_clicked() {
+            self.commands.push(match *tab {
+                Tab::Editor(view) => TabCommand::Close(view),
+                Tab::Viewer(id) => TabCommand::CloseViewer(id),
+                other => TabCommand::CloseTab(other),
+            });
+        }
+        // The right-click menu: ours, as egui_dock's is turned off.
+        let target = *tab;
+        response.context_menu(|ui| self.tab_menu(ui, target));
         // egui_dock gives tab buttons no accessibility info.
         let title = self.title(tab).text().to_owned();
         response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &title));
@@ -1826,6 +3201,10 @@ impl TabViewer for Tabs<'_> {
                 OnCloseResponse::Ignore
             }
             Tab::Preview(_) => OnCloseResponse::Close,
+            Tab::Viewer(id) => {
+                self.commands.push(TabCommand::CloseViewer(*id));
+                OnCloseResponse::Ignore
+            }
             Tab::Compare(id) => {
                 self.compares.remove(*id, self.editor);
                 OnCloseResponse::Close
@@ -1839,6 +3218,57 @@ impl TabViewer for Tabs<'_> {
 
     fn scroll_bars(&self, _tab: &Tab) -> [bool; 2] {
         [false, false]
+    }
+}
+
+/// A copied text as a menu item: its first line, cut short, and how many
+/// more lines it has.
+fn clip_label(text: &str) -> String {
+    const MAX: usize = 40;
+    let mut lines = text.lines();
+    let first = lines.next().unwrap_or("").trim();
+    let mut label: String = first.chars().take(MAX).collect();
+    if first.chars().count() > MAX {
+        label.push('…');
+    }
+    if label.is_empty() {
+        label.push_str("(blank)");
+    }
+    let more = lines.count();
+    if more > 0 {
+        label.push_str(&format!("  (+{more} lines)"));
+    }
+    label
+}
+
+/// A viewer's file name.
+fn viewer_name(viewers: &crate::viewer::Viewers, id: crate::viewer::ViewerId) -> String {
+    viewers
+        .get(id)
+        .and_then(|v| v.file.path().file_name())
+        .map_or_else(|| "?".to_owned(), |n| n.to_string_lossy().into_owned())
+}
+
+/// A viewer tab's title (the tab bar and the Document List).
+fn viewer_title(viewers: &crate::viewer::Viewers, id: crate::viewer::ViewerId) -> String {
+    format!("{} (read-only)", viewer_name(viewers, id))
+}
+
+/// An editor tab's title (the tab bar and the Document List): its
+/// document's name, with " *" while it has unsaved changes and
+/// " (read-only)" while it refuses edits.
+fn editor_title(editor: &Editor, untitled: &HashMap<BufferId, String>, view: ViewId) -> String {
+    let Some(buffer) = editor.view(view).map(|v| v.buffer()) else {
+        return "?".to_owned();
+    };
+    let name = buffer_name(editor, untitled, buffer);
+    let dirty = editor.buffer(buffer).is_some_and(Buffer::is_dirty);
+    let read_only = editor.buffer(buffer).is_some_and(|b| b.read_only);
+    let name = if dirty { format!("{name} *") } else { name };
+    if read_only {
+        format!("{name} (read-only)")
+    } else {
+        name
     }
 }
 
@@ -1883,5 +3313,101 @@ fn new_file_meta() -> FileMeta {
     FileMeta {
         line_ending: fileio::default_line_ending(),
         ..FileMeta::default()
+    }
+}
+
+impl OchrepadApp {
+    /// Shows `error` in the status bar for a few seconds (invalid JSON in
+    /// a message, with the caret moved to it).
+    fn note(&mut self, error: &ochrepad_core::ActionError) {
+        use ochrepad_core::ActionError;
+        if self.json_error(error) {
+            return;
+        }
+        let text = match error {
+            ActionError::UnknownView(_) | ActionError::UnknownBuffer(_) => return,
+            ActionError::NotFound => "Not found".to_owned(),
+            e => {
+                let s = e.to_string();
+                let mut c = s.chars();
+                c.next()
+                    .map(|f| f.to_uppercase().collect::<String>() + c.as_str())
+                    .unwrap_or_default()
+            }
+        };
+        self.note_text(text);
+    }
+
+    /// Shows `text` in the status bar for a few seconds.
+    pub(super) fn note_text(&mut self, text: impl Into<String>) {
+        self.status_note = Some((text.into(), self.now + 4.0));
+    }
+
+    /// Ctrl+G: a line, or `line:column`, counted from 1.
+    fn go_to_line_dialog(&mut self, ui: &mut Ui) {
+        if self.go_to_line.is_none() {
+            return;
+        }
+        let viewer = self.focused_viewer();
+        let lines = match viewer {
+            Some(id) => self.viewer_line_hint(id),
+            None => format!("1–{}", self.buffer().doc().line_count()),
+        };
+        let Some(text) = &mut self.go_to_line else {
+            return;
+        };
+        let resp = Modal::new(Id::new("ochrepad-go-to-line")).show(ui.ctx(), |ui| {
+            ui.label(format!("Go to line ({lines}), or line:column"));
+            let field = ui.add(
+                egui::TextEdit::singleline(text)
+                    .id(Id::new("ochrepad-go-to-line-field"))
+                    .desired_width(160.0),
+            );
+            if !field.has_focus() && !field.lost_focus() {
+                field.request_focus();
+            }
+            let enter = field.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                if ui.button("Go").clicked() || enter {
+                    Some(true)
+                } else if ui.button("Cancel").clicked() {
+                    Some(false)
+                } else {
+                    None
+                }
+            })
+            .inner
+        });
+        let choice = if resp.should_close() {
+            Some(false)
+        } else {
+            resp.inner
+        };
+        match choice {
+            Some(true) => {
+                let mut parts = text.trim().splitn(2, [':', ',']);
+                let line = parts.next().and_then(|l| l.trim().parse::<usize>().ok());
+                let column = parts
+                    .next()
+                    .and_then(|c| c.trim().parse::<usize>().ok())
+                    .unwrap_or(1);
+                if let Some(line) = line {
+                    self.go_to_line = None;
+                    match viewer {
+                        Some(id) => self.viewer_go_to_line(id, line as u64, column),
+                        None => self.apply(Action::GoToLine { line, column }),
+                    }
+                }
+            }
+            Some(false) => {
+                self.go_to_line = None;
+                match viewer.and_then(|id| self.viewers.get_mut(id)) {
+                    Some(v) => v.state.request_focus(),
+                    None => self.view_state_mut().request_focus(),
+                }
+            }
+            None => {}
+        }
     }
 }

@@ -6,6 +6,10 @@ pressing **Ctrl+F** and typing always starts a new search, even if the panel
 was already open. **Enter** / **F3** finds the next match,
 **Shift+Enter** / **Shift+F3** the previous one, **Esc** closes the panel.
 
+**Ctrl+F3** (Search > Select and Find Next) searches for the selected text,
+or the word at the caret, without opening the panel, and **Ctrl+Shift+F3**
+backwards; F3 and Shift+F3 then go on with it. The panel's options apply.
+
 Options:
 
 - **Regular expression**: see the dialect notes below. Off means the text is
@@ -21,6 +25,9 @@ Options:
 **Select All** turns every match into a selection, so typing edits them all.
 **Replace All** is a single undo step.
 
+**Bookmark** bookmarks every line with a match, so F2 and Shift+F2 can go
+from one to the next ([Bookmarks](editing.md#bookmarks)).
+
 ## Find All and the Search Results panel
 
 **Find All in Current Document** and **Find All in All Open Documents** list
@@ -35,6 +42,8 @@ and press Enter) to go to the match; its tab comes to the front.
 - Each search is added at the top of the panel and the older ones are
   folded away (click a heading to open or close it). The panel keeps the
   last 10 searches; **Clear** removes them and **Close** hides the panel.
+  **Copy** puts every result on the clipboard as `file:line: text` lines,
+  as grep writes them.
 - Results are not updated as you edit. If a document has changed since the
   search, clicking a result goes to the same line number and selects the
   match nearest to where it was on that line, or the start of the line if
@@ -51,7 +60,10 @@ panel, adds a row for searching the files in a folder on disk:
   a folder in the sidebar and choose **Find in Folder…** to search just that
   one. **Browse…** picks one.
 - **Filters**: which files, as globs separated by `;` (or spaces or
-  commas), such as `*.rs; *.toml`. Empty means every file.
+  commas), such as `*.rs; *.toml`. Empty means every file. A glob starting
+  with `!` leaves files out instead, and a folder's name leaves out the
+  whole folder: `*.js; !*.min.js; !node_modules`. They work as lines of a
+  `.gitignore` file do.
 - **Subfolders**: search the folders inside too (on by default).
 - **Ignored files**: also search files that `.gitignore` and `.ignore` leave
   out. The `.git` folder is never searched.
@@ -67,13 +79,50 @@ opens it.
   skipped and counted in the results heading.
 - A file that is open in a tab is searched as it is in the editor, unsaved
   changes included, not as it is on disk.
-- **In selection** does not apply. Find in Files only finds; there is no
-  replace for files that are not open.
+- **In selection** does not apply.
+
+**Replace in Files** (with the replace row shown too) replaces every match
+in the same files. It first counts them, then asks: "Replace 42 matches in
+7 files?", saying how many are saved as they are done and how many are
+open, and listing the files with matches it will leave alone.
+
+- Files open in a tab get a Replace All each, as an undo step, and are left
+  unsaved, as Replace All in All Open Documents does. A document set to
+  Read-Only is left alone.
+- The other files are saved one by one in the background, each in its own
+  encoding, byte order mark and line endings, written to a temporary file
+  and moved into place so a file is never half written. This can't be
+  undone. A window shows how far it has got; **Stop** leaves the files not
+  yet done as they were. The app waits for it before it exits.
+- A file is only rewritten if nothing but the matches would change. Files
+  with mixed line endings (a save would make them all alike), files
+  read-only on disk, binary files and files over 50 MB are left alone. So is
+  a file that changed on disk after the matches were counted.
+- A file that can't be saved (a replacement its encoding has no characters
+  for, say) is listed afterwards and left as it was.
 
 **Replace All in All Open Documents** (in replace mode) first counts the
 matches and asks before replacing. Each document gets its own undo step,
 the documents become unsaved, and nothing is written to disk until you save.
 It is not recorded in a macro.
+
+## Styling tokens
+
+**Search > Style All Occurrences of Token** highlights the selected text,
+or the word at the caret, everywhere in the document in one of five colours
+(sky, violet, yellow, rose and green), as in Notepad++. The right-click
+menu has it too. Styling a token again changes its colour. Case matters, and
+a word only matches whole words.
+
+- **Search > Clear Style** removes one style's highlights, or all of them.
+- **Search > Jump Down** and **Jump Up** select the next or previous
+  occurrence of a style's tokens, going round the document.
+- **Search > Copy Styled Text** copies every occurrence of a style's
+  tokens (or of every style's), in the order they come in the document,
+  one per line.
+
+Unlike Notepad++, an occurrence you type later is highlighted too. Styles
+belong to the document and last until you clear them or close it.
 
 ## Smart highlighting
 

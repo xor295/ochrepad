@@ -7,6 +7,14 @@
 //! good checkpoint and stops as soon as a recomputed checkpoint equals the
 //! old one past every edit. The caller runs that pass in small time slices.
 
+pub mod comments;
+mod markup;
+mod symbols;
+
+pub use comments::comment_syntax;
+pub use markup::{Markup, markup};
+pub use symbols::{Symbol, SymbolKind};
+
 use std::collections::HashMap;
 use std::ops::Range;
 use std::path::Path;
@@ -29,6 +37,10 @@ pub const MAX_CATCH_UP: usize = CHECKPOINT_INTERVAL;
 pub const MAX_CACHED_LINES: usize = 100_000;
 /// Files larger than this are not highlighted (PLAN M4).
 pub const DEFAULT_SIZE_LIMIT: usize = 10 * 1024 * 1024;
+/// Lines longer than this (in bytes) are not highlighted: they show in the
+/// default colour, and the parser's state carries over them as if they were
+/// not there. Parsing a megabyte of minified code takes seconds.
+pub const MAX_HIGHLIGHT_LINE: usize = 20_000;
 pub const PLAIN_TEXT: &str = "Plain Text";
 
 /// A styled byte range within one line (never including its `\n`).
@@ -44,6 +56,14 @@ pub struct Span {
 }
 
 pub type LineSpans = Arc<[Span]>;
+
+/// A theme's default text and background colours, straight (unmultiplied)
+/// RGBA.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ThemeColors {
+    pub foreground: [u8; 4],
+    pub background: [u8; 4],
+}
 
 /// All syntaxes and themes, loaded once.
 pub struct Registry {
@@ -101,6 +121,40 @@ impl Registry {
         } else {
             EmbeddedThemeName::OneHalfLight.as_name()
         }
+    }
+
+    /// The default text and background colours of the theme `name` (black
+    /// on white where it sets none, as syntect does).
+    pub fn theme_colors(&self, name: &str) -> ThemeColors {
+        let style = Highlighter::new(self.theme(name)).get_default();
+        let (fg, bg) = (style.foreground, style.background);
+        ThemeColors {
+            foreground: [fg.r, fg.g, fg.b, fg.a],
+            background: [bg.r, bg.g, bg.b, bg.a],
+        }
+    }
+
+    /// The spans of every line of `doc`, highlighted from its start in the
+    /// language `syntax` and the theme `theme`: what File > Export needs,
+    /// where the editor highlights only what it shows. Long lines are left
+    /// plain, as in the editor; after a parse error the list stops, and the
+    /// lines past its end have no spans.
+    pub fn highlight_all(&self, syntax: &str, theme: &str, doc: &Document) -> Vec<LineSpans> {
+        let hl = Highlighter::new(self.theme(theme));
+        let mut s = State {
+            line: 0,
+            parse: ParseState::new(self.syntax(syntax)),
+            highlight: HighlightState::new(&hl, ScopeStack::new()),
+        };
+        let mut out = Vec::with_capacity(doc.line_count());
+        while s.line < doc.line_count() {
+            match highlight_line(&mut s, doc, &self.syntaxes, &hl) {
+                Ok(spans) => out.push(spans),
+                Err(_) => break,
+            }
+            s.line += 1;
+        }
+        out
     }
 
     fn theme(&self, name: &str) -> &Theme {
@@ -330,11 +384,8 @@ impl BufferHighlighter {
         budget: Duration,
     ) -> bool {
         let deadline = Instant::now() + budget;
-        let mut n = 0u32;
-        self.work_while(reg, doc, viewport, |_| {
-            n += 1;
-            !n.is_multiple_of(16) || Instant::now() < deadline
-        })
+        // The clock is cheap next to parsing even a short line.
+        self.work_while(reg, doc, viewport, |_| Instant::now() < deadline)
     }
 
     /// Like `work`, but processes at most `max_lines` lines.
@@ -558,6 +609,9 @@ fn highlight_line(
     syntax_set: &SyntaxSet,
     hl: &Highlighter<'_>,
 ) -> Result<LineSpans, String> {
+    if doc.line_end(s.line).0 - doc.line_start(s.line).0 > MAX_HIGHLIGHT_LINE {
+        return Ok(Vec::new().into());
+    }
     let mut text = doc.line_text(s.line);
     let content_len = text.len();
     text.push('\n');

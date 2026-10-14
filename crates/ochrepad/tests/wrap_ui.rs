@@ -27,7 +27,7 @@ fn harness(text: &str, width: f32) -> Harness<'static, OchrepadApp> {
 fn with_rows<R>(h: &Harness<'_, OchrepadApp>, f: impl FnOnce(&DisplayMap) -> R) -> R {
     let app = h.state();
     let v = app.editor.view(app.active_view()).unwrap();
-    let rows = DisplayMap::new(app.buffer(), v, app.editor.settings.tab_width);
+    let rows = DisplayMap::new(app.buffer(), v);
     f(&rows)
 }
 

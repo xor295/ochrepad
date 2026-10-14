@@ -25,6 +25,13 @@ The status bar shows the result, for example `UTF-8`, `UTF-8 BOM`,
 - **Text that isn't valid in its encoding**, for example a file with a UTF-16
   BOM but an odd number of bytes. ochrepad won't replace the bad bytes with
   `�`, because saving would then lose them for good.
+- **Anything that isn't a regular file**: a folder, a device (such as
+  `/dev/zero`, which never ends) or a pipe (which would wait for a writer
+  forever), even behind a symbolic link.
+- **Files over 1 GB** can't be edited: the text would be held in memory
+  several times over. They open read-only in the
+  [viewer for large files](logs.md#large-files-the-viewer), as do files over
+  256 MB (a setting).
 
 UTF-16 files without a BOM contain NUL bytes, so they are treated as binary.
 
@@ -34,10 +41,50 @@ them, ochrepad uses the most common one and says
 `Mixed line endings (saved as shown)` in the status bar: saving converts every
 line to the ending shown.
 
+**Indentation.** The first 10,000 lines decide whether the file is indented
+with tabs or spaces, and for spaces how wide one level is (2, 4 or 8: the
+most common step from one indent level to the next). Tab, Indent and the
+other indenting commands then use the same, and tabs are shown that wide.
+A file with no indented lines uses the preferences. If some lines are
+indented with tabs and others with spaces, the status bar says `Mixed`.
+
+## The status bar menus
+
+The encoding, line ending and indentation in the status bar are menus that
+change them for the current document only.
+
+**Indentation** (`Spaces: 4`, `Tabs: 4`, or `Mixed, ...`):
+
+- *Indent Using Spaces* / *Indent Using Tabs*, and *Width 2, 4 or 8*: how
+  this document is indented from now on, and how wide its tabs are shown.
+  Nothing in the text changes. A choice made here, or detected on opening,
+  is kept when you change the preferences and when ochrepad restarts;
+  documents that have neither follow the preferences.
+- *Convert Indentation to Spaces* / *to Tabs*: rewrites the leading
+  whitespace of every line, keeping its width, and indents that way from now
+  on. Only leading whitespace changes, and it is one undo step. Converting
+  to tabs keeps spaces for a remainder narrower than a tab.
+
+**Line ending** (`Windows (CR LF)`, `Unix (LF)`, `Macintosh (CR)`): choosing
+another converts the document when it is next saved, and marks it unsaved,
+like Notepad++'s EOL conversion. It also clears the mixed line endings note.
+
+**Encoding**:
+
+- *Reopen with Encoding*: reads the file again, decoded as the encoding you
+  pick, for when the guess on opening was wrong. A file that isn't valid in
+  that encoding is refused with a message. It is not offered while the
+  document has unsaved changes (save or undo them first), because reopening
+  replaces the text with what is on disk.
+- *Save with Encoding*: the document is saved as UTF-8, UTF-8 with BOM,
+  UTF-16 LE or BE (with a BOM), or one of the common legacy encodings, from
+  now on, and is marked unsaved. If the text has characters the encoding
+  can't store, nothing changes and a message lists them with their lines.
+
 ## New files
 
 A new tab is UTF-8 without a BOM, with Windows line endings on Windows and
-Unix line endings elsewhere.
+Unix line endings elsewhere, indented as the preferences say.
 
 ## Saving
 
@@ -46,20 +93,45 @@ was opened with. **Save As** keeps them too, under the new name.
 
 If the text now contains a character the file's encoding can't store (say,
 an emoji in a Windows-1252 file), saving stops with a message naming the
-character and its line, and the file on disk is left untouched. ochrepad
-doesn't yet have a command to change a file's encoding or line endings.
+character and its line, and the file on disk is left untouched. To change
+a file's encoding or line endings, use the status bar menus (above).
 
 **Saving is atomic.** ochrepad writes the new contents to a temporary file in
 the same folder, flushes it to disk, then swaps it in place of the old file
 in one step. If the computer crashes or the disk fills up in the middle, you
 have either the old file or the new one, never a mix. The file keeps its
 permissions, and if the file is a symbolic link, the file it points to is
-updated and the link stays.
+updated and the link stays. A new file gets the usual permissions for the
+folder (on Linux, `0666` less your umask). On Windows, a file downloaded
+from the internet keeps its "downloaded" mark when saved, so Windows still
+warns before running it.
 
 Saving happens in the background, so typing never waits for a slow disk. A
 tab's `*` goes away when the write has finished. If you close a tab or exit
 while its save is still running, ochrepad waits for it, and if the save
 fails, the close or exit is cancelled so you can deal with it.
+
+The File menu also has:
+
+- **Save All**: saves every document that has a file and unsaved changes.
+  New documents that were never saved are left for Save As; the status bar
+  says how many.
+- **Save a Copy As…**: writes the document to another file, in its encoding
+  and line endings. The tab stays on its own file, still unsaved if it was.
+- **Export > HTML…**: writes the document as a web page that looks as it
+  does in the editor: the text in a monospace font and the syntax theme's
+  colours, with tabs as wide as the document's. The dialog suggests the
+  document's name with `.html` added (`main.rs.html`) in its folder. The
+  page holds the text as it is in the editor, unsaved changes included, as
+  UTF-8 with LF line breaks. A document over the highlighting limit (see
+  [Large files](#large-files)) is exported without colours, and the status
+  bar says so. The page is made in the background and saved like any file;
+  it can't replace the document's own file.
+- **Reload from Disk**: reads the file again (asking first if there are
+  unsaved changes; Undo brings them back).
+- **Rename…**: renames the document's file in its folder. An existing file
+  of that name is never replaced. The tab, the sidebar and the session
+  follow the new name.
 
 ## Pasted text
 
@@ -71,8 +143,16 @@ endings.
 
 Above 10 MB (**Highlight files up to … MB** in Preferences) syntax
 highlighting is turned off, and the status bar says so. Scrolling, typing and
-search stay fast in files of 100 MB, the largest size tested. Bigger files
-should still open and save correctly, but more slowly.
+search stay fast in files of 100 MB, the largest size tested.
+
+Files over 256 MB (**Open read-only above … MB** in Preferences) open in the
+[viewer for large files](logs.md#large-files-the-viewer), read-only and
+without reading them into memory: a log of several gigabytes opens at once.
+View > Open as Editable opens one for editing anyway, up to 1 GB.
+
+Lines longer than 20,000 characters are shown without highlighting (the
+rest of the file keeps it), and lines of any length are drawn quickly: only
+the part on screen is laid out.
 
 ## Backups and other programs
 

@@ -332,3 +332,155 @@ fn the_open_folder_comes_back_with_the_session() {
     let tree = h.state().file_tree().expect("a folder is open");
     assert_eq!(tree.root(), project.as_path());
 }
+
+#[test]
+fn a_crash_backup_brings_unsaved_work_back() {
+    let d = dirs();
+    let mut h = app(&d);
+    // Typed just now: no autosave tick has run.
+    typ(&mut h, "typed right before a crash");
+    assert!(h.state_mut().emergency_backup());
+    drop(h);
+    let h = app(&d);
+    assert_eq!(
+        h.state().buffer().doc().to_string(),
+        "typed right before a crash"
+    );
+    assert!(h.state().buffer().is_dirty());
+}
+
+fn undo(h: &mut Harness<'_, OchrepadApp>) {
+    key(h, Modifiers::COMMAND, Key::Z);
+}
+
+fn histories(d: &Dirs) -> usize {
+    std::fs::read_dir(d.data.join("history")).map_or(0, |r| r.count())
+}
+
+#[test]
+fn undo_reaches_back_past_closing_and_reopening_a_file() {
+    let d = dirs();
+    let file = d.files.join("notes.txt");
+    write(&file, "first\n");
+    let mut h = app(&d);
+    h.state_mut().open_path(&file);
+    h.run();
+    key(&mut h, Modifiers::COMMAND, Key::End);
+    typ(&mut h, "second");
+    key(&mut h, Modifiers::COMMAND, Key::S);
+    h.state_mut().flush_disk();
+    h.run();
+    key(&mut h, Modifiers::COMMAND, Key::W);
+    h.state_mut().flush_disk();
+    assert_eq!(histories(&d), 1);
+
+    h.state_mut().open_path(&file);
+    h.run();
+    assert_eq!(text(&h), "first\nsecond");
+    assert!(!h.state().buffer().is_dirty());
+    undo(&mut h);
+    assert_eq!(text(&h), "first\n");
+    assert!(h.state().buffer().is_dirty());
+    key(&mut h, Modifiers::COMMAND, Key::Y);
+    assert!(
+        !h.state().buffer().is_dirty(),
+        "redo back to the saved text"
+    );
+}
+
+#[test]
+fn a_file_changed_since_gets_no_history() {
+    let d = dirs();
+    let file = d.files.join("notes.txt");
+    write(&file, "first\n");
+    let mut h = app(&d);
+    h.state_mut().open_path(&file);
+    h.run();
+    typ(&mut h, "x");
+    key(&mut h, Modifiers::COMMAND, Key::S);
+    h.state_mut().flush_disk();
+    key(&mut h, Modifiers::COMMAND, Key::W);
+    h.state_mut().flush_disk();
+    // Another program changes it while it is closed.
+    write(&file, "xfirst\nchanged\n");
+    h.state_mut().open_path(&file);
+    h.run();
+    undo(&mut h);
+    assert_eq!(text(&h), "xfirst\nchanged\n");
+}
+
+#[test]
+fn unsaved_work_comes_back_with_its_undo_history() {
+    let d = dirs();
+    {
+        let mut h = app(&d);
+        typ(&mut h, "one");
+        key(&mut h, Modifiers::NONE, Key::Enter);
+        typ(&mut h, "two");
+        h.state_mut().request_exit();
+        h.run();
+    }
+    let mut h = app(&d);
+    assert_eq!(text(&h), "one\ntwo");
+    assert!(h.state().buffer().is_dirty());
+    undo(&mut h);
+    assert_eq!(text(&h), "one\n");
+    undo(&mut h);
+    undo(&mut h);
+    assert_eq!(text(&h), "");
+}
+
+#[test]
+fn undo_history_can_be_turned_off_or_cleared() {
+    let d = dirs();
+    let file = d.files.join("notes.txt");
+    write(&file, "first\n");
+    let mut h = app(&d);
+    h.state_mut().open_path(&file);
+    h.run();
+    typ(&mut h, "x");
+    key(&mut h, Modifiers::COMMAND, Key::S);
+    h.state_mut().flush_disk();
+    h.run();
+    assert_eq!(histories(&d), 1);
+    // Cleared: gone here and on disk.
+    h.state_mut().clear_undo_history();
+    h.state_mut().flush_disk();
+    h.run();
+    assert_eq!(histories(&d), 0);
+    undo(&mut h);
+    assert_eq!(text(&h), "xfirst\n");
+    // Off: nothing is written.
+    h.state_mut().settings.undo_history = false;
+    h.run();
+    typ(&mut h, "y");
+    key(&mut h, Modifiers::COMMAND, Key::S);
+    key(&mut h, Modifiers::COMMAND, Key::W);
+    h.state_mut().flush_disk();
+    assert_eq!(histories(&d), 0);
+}
+
+#[test]
+fn a_documents_indentation_comes_back_with_the_session() {
+    let d = dirs();
+    let file = d.files.join("a.js");
+    write(&file, "a {\n  b;\n}\n");
+    {
+        let mut h = app(&d);
+        h.state_mut().open_path(&file);
+        h.run();
+        // Detected as two spaces; chosen as tabs of width 8.
+        let b = h.state().buffer_id();
+        let buf = h.state_mut().editor.buffer_mut(b).unwrap();
+        assert!(buf.indent.use_spaces && buf.indent.width == 2);
+        buf.indent = ochrepad_core::Indent {
+            use_spaces: false,
+            width: 8,
+        };
+        h.state_mut().request_exit();
+        h.run();
+    }
+    let h = app(&d);
+    let indent = h.state().buffer().indent;
+    assert!(!indent.use_spaces && indent.width == 8, "{indent:?}");
+}

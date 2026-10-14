@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use crate::action::{Action, ActionError};
-use crate::buffer::{Buffer, BufferId, FileMeta, LineEdit};
+use crate::buffer::{Buffer, BufferId, FileMeta, Indent, LineEdit};
 use crate::changeset::{Bias, ChangeSet};
 use crate::display::DisplayMap;
 use crate::fold::{self, FoldSet};
@@ -56,11 +56,31 @@ impl Clock for ManualClock {
     }
 }
 
+/// Defaults for new buffers (each buffer has its own [`Indent`]).
 #[derive(Clone, Debug)]
 pub struct Settings {
     pub tab_width: usize,
     /// The Tab key inserts spaces instead of a tab character.
     pub use_spaces: bool,
+    /// Typing an opening bracket or quote inserts its partner (Notepad++'s
+    /// Auto-Insert; see `autoclose`).
+    pub auto_close: bool,
+    /// Enter after an opening bracket indents, and a closing bracket lines
+    /// up with its partner (see `smart_indent`).
+    pub smart_indent: bool,
+    /// Typing replaces the character after the caret (the Insert key; see
+    /// `overtype`).
+    pub overtype: bool,
+}
+
+impl Settings {
+    /// The indentation a new buffer starts with.
+    pub fn indent(&self) -> Indent {
+        Indent {
+            use_spaces: self.use_spaces,
+            width: self.tab_width,
+        }
+    }
 }
 
 impl Default for Settings {
@@ -68,6 +88,9 @@ impl Default for Settings {
         Self {
             tab_width: 4,
             use_spaces: false,
+            auto_close: false,
+            smart_indent: false,
+            overtype: false,
         }
     }
 }
@@ -111,7 +134,9 @@ impl Editor {
 
     pub fn add_buffer(&mut self, text: &str, meta: FileMeta) -> BufferId {
         let id = BufferId(self.fresh_id());
-        self.buffers.insert(id, Buffer::new(id, text, meta));
+        let mut buffer = Buffer::new(id, text, meta);
+        buffer.indent = self.settings.indent();
+        self.buffers.insert(id, buffer);
         id
     }
 
@@ -255,9 +280,40 @@ impl Editor {
             | Action::UnfoldAll
             | Action::FoldLevel(_)
             | Action::UnfoldLevel(_) => self.fold_action(view, buffer_id, &action),
+            Action::ToggleBookmark
+            | Action::ClearBookmarks
+            | Action::InverseBookmarks
+            | Action::BookmarkMatches(_) => self.bookmark_action(view, buffer_id, &action)?,
             _ => {
+                let marked = match action {
+                    Action::ReplaceBookmarkedLines(_) => self
+                        .buffers
+                        .get(&buffer_id)
+                        .map(|b| b.bookmarks.lines().to_vec())
+                        .unwrap_or_default(),
+                    _ => Vec::new(),
+                };
                 let resolved = self.resolve_in(view, buffer_id, &action)??;
                 self.commit(view, buffer_id, resolved)?;
+                if let Some(b) = self.buffers.get_mut(&buffer_id) {
+                    let count = b.doc.line_count();
+                    match &action {
+                        // Their lines are gone (the marks would otherwise
+                        // land on the lines after them).
+                        Action::RemoveBookmarkedLines => b.bookmarks.clear(),
+                        Action::ReplaceBookmarkedLines(text) => b
+                            .bookmarks
+                            .set(crate::bookmarks::after_replace(&marked, text), count),
+                        _ => {}
+                    }
+                }
+                if let Action::ConvertIndentation { to_spaces } = action
+                    && let Some(b) = self.buffers.get_mut(&buffer_id)
+                {
+                    b.indent.use_spaces = to_spaces;
+                    b.indent_set = true;
+                    b.indent_mixed = false;
+                }
             }
         }
         self.sync_folds(buffer_id);
@@ -301,9 +357,72 @@ impl Editor {
             | Action::Replace { .. }
             | Action::ReplaceAll { .. }
             | Action::SelectAllMatches(_) => resolve_search(action, &buffer.doc, sels),
+            Action::ToggleLineComment
+            | Action::CommentLines
+            | Action::UncommentLines
+            | Action::ToggleBlockComment => {
+                use crate::transform::CommentOp;
+                let syntax = buffer.comments.as_ref();
+                let op = match action {
+                    Action::CommentLines => CommentOp::Add,
+                    Action::UncommentLines => CommentOp::Remove,
+                    _ => CommentOp::Toggle,
+                };
+                let resolved = match (action, syntax) {
+                    (Action::ToggleBlockComment, Some(c)) => {
+                        c.block.as_ref().map(|(open, close)| {
+                            crate::transform::toggle_block_comment(&buffer.doc, sels, open, close)
+                        })
+                    }
+                    (_, Some(c)) => crate::transform::comment_lines(&buffer.doc, sels, c, op),
+                    _ => None,
+                };
+                resolved.ok_or(ActionError::NoCommentSyntax)
+            }
+            Action::MultiSelectNext { .. } | Action::MultiSelectAll { .. } => {
+                crate::multiselect::resolve(action, &buffer.doc, sels)
+            }
+            Action::NextBookmark
+            | Action::PrevBookmark
+            | Action::RemoveBookmarkedLines
+            | Action::RemoveUnbookmarkedLines
+            | Action::ReplaceBookmarkedLines(_) => {
+                crate::bookmarks::resolve(action, &buffer.doc, sels, &buffer.bookmarks)
+            }
+            Action::FormatJson { .. }
+            | Action::MinifyJson
+            | Action::Encode(_)
+            | Action::Decode(_) => crate::text_tools::resolve(
+                action,
+                &buffer.doc,
+                sels,
+                buffer.indent,
+                buffer.meta.line_ending,
+            ),
             _ => {
-                let rows = DisplayMap::new(buffer, v, self.settings.tab_width);
-                Ok(resolve(action, &buffer.doc, sels, &self.settings, &rows))
+                if self.settings.overtype
+                    && let Some(r) = crate::overtype::resolve(action, &buffer.doc, sels)
+                {
+                    return Ok(Ok(r));
+                }
+                if self.settings.auto_close
+                    && let Some(r) = crate::autoclose::resolve(action, &buffer.doc, sels)
+                {
+                    return Ok(Ok(r));
+                }
+                if self.settings.smart_indent
+                    && let Some(r) = crate::smart_indent::resolve(
+                        action,
+                        &buffer.doc,
+                        sels,
+                        buffer.indent,
+                        buffer.language.as_deref(),
+                    )
+                {
+                    return Ok(Ok(r));
+                }
+                let rows = DisplayMap::new(buffer, v);
+                Ok(resolve(action, &buffer.doc, sels, buffer.indent, &rows))
             }
         })
     }
@@ -337,7 +456,7 @@ impl Editor {
                     return Err(ActionError::UnknownBuffer(buffer_id));
                 };
                 let inverse = changes.invert(&buffer.doc);
-                apply_changes(buffer, &changes);
+                let line_edits = apply_changes(buffer, &changes);
                 let rev_before = buffer.revision;
                 let rev_after = buffer.next_revision;
                 buffer.next_revision += 1;
@@ -356,7 +475,7 @@ impl Editor {
                 );
                 self.set_selections(view, after);
                 self.map_other_views(buffer_id, view, &changes);
-                self.map_folds(buffer_id, &changes);
+                self.map_folds(buffer_id, &changes, &line_edits);
             }
         }
         Ok(())
@@ -364,7 +483,8 @@ impl Editor {
 
     /// Replaces a buffer's text with `text` read from disk (an external
     /// change), as one undoable step; carets keep their line and column.
-    /// The buffer takes `meta` and is marked saved.
+    /// The buffer takes `meta` and is marked saved. It mirrors the file, so
+    /// it goes through even when the buffer refuses edits (Read-Only).
     pub fn reload_buffer(
         &mut self,
         buffer: BufferId,
@@ -401,7 +521,11 @@ impl Editor {
                     text,
                 )],
             );
-            self.commit(
+            let read_only = self
+                .buffers
+                .get_mut(&buffer)
+                .map(|b| std::mem::replace(&mut b.read_only, false));
+            let committed = self.commit(
                 view,
                 buffer,
                 Resolved::Edit {
@@ -409,7 +533,11 @@ impl Editor {
                     after,
                     kind: crate::history::EditKind::Other,
                 },
-            )?;
+            );
+            if let (Some(b), Some(read_only)) = (self.buffers.get_mut(&buffer), read_only) {
+                b.read_only = read_only;
+            }
+            committed?;
         }
         if let Some(b) = self.buffers.get_mut(&buffer) {
             b.meta = meta;
@@ -427,16 +555,17 @@ impl Editor {
             return;
         };
         let inverses: Vec<ChangeSet> = step.txns.iter().rev().map(|t| t.inverse.clone()).collect();
-        for inv in &inverses {
-            apply_changes(buffer, inv);
-        }
+        let line_edits: Vec<Vec<LineEdit>> = inverses
+            .iter()
+            .map(|inv| apply_changes(buffer, inv))
+            .collect();
         buffer.revision = step.rev_before;
         let sels = step.txns[0].before.clone();
         buffer.history.push_redo(step);
         self.set_selections(view, sels);
-        for inv in &inverses {
+        for (inv, edits) in inverses.iter().zip(&line_edits) {
             self.map_other_views(buffer_id, view, inv);
-            self.map_folds(buffer_id, inv);
+            self.map_folds(buffer_id, inv, edits);
         }
     }
 
@@ -448,16 +577,15 @@ impl Editor {
             return;
         };
         let changes: Vec<ChangeSet> = step.txns.iter().map(|t| t.changes.clone()).collect();
-        for cs in &changes {
-            apply_changes(buffer, cs);
-        }
+        let line_edits: Vec<Vec<LineEdit>> =
+            changes.iter().map(|cs| apply_changes(buffer, cs)).collect();
         buffer.revision = step.rev_after;
         let sels = step.txns[step.txns.len() - 1].after.clone();
         buffer.history.push_undo(step);
         self.set_selections(view, sels);
-        for cs in &changes {
+        for (cs, edits) in changes.iter().zip(&line_edits) {
             self.map_other_views(buffer_id, view, cs);
-            self.map_folds(buffer_id, cs);
+            self.map_folds(buffer_id, cs, edits);
         }
     }
 
@@ -469,13 +597,143 @@ impl Editor {
 
     /// Maps every view's folds through `changes`, dropping the folds it
     /// touches (PLAN_v0.2.0 3.6). [`sync_folds`](Self::sync_folds) then
-    /// recomputes their lines.
-    fn map_folds(&mut self, buffer: BufferId, changes: &ChangeSet) {
+    /// recomputes their lines. A filter moves by `line_edits` (the same
+    /// change by line), showing the lines it touched.
+    fn map_folds(&mut self, buffer: BufferId, changes: &ChangeSet, line_edits: &[LineEdit]) {
         for v in self.views.values_mut() {
-            if v.buffer() == buffer && !v.folds.is_empty() {
+            if v.buffer() != buffer {
+                continue;
+            }
+            if !v.folds.is_empty() {
                 v.folds.map(changes);
             }
+            v.folds.filter_line_edits(line_edits);
         }
+    }
+
+    /// Appends `text` that the file on disk gained (follow mode, PLAN_v0.3.0
+    /// P6). It is not an undo step: undoing earlier steps keeps it. A clean
+    /// buffer stays clean. Carets at the end move along to the new end.
+    pub fn append_unrecorded(
+        &mut self,
+        buffer_id: BufferId,
+        text: &str,
+    ) -> Result<(), ActionError> {
+        let buffer = self
+            .buffers
+            .get_mut(&buffer_id)
+            .ok_or(ActionError::UnknownBuffer(buffer_id))?;
+        if text.is_empty() {
+            return Ok(());
+        }
+        let end = buffer.doc.len();
+        let changes = ChangeSet::new(end, vec![crate::changeset::Edit::new(end, end, text)]);
+        let clean = !buffer.is_dirty();
+        let line_edits = apply_changes(buffer, &changes);
+        let (old, new) = (buffer.revision, buffer.next_revision);
+        buffer.history.extend_base(text.len(), old, new);
+        buffer.revision = new;
+        buffer.next_revision += 1;
+        if clean {
+            buffer.mark_saved();
+        }
+        for v in self.views.values_mut() {
+            if v.buffer() == buffer_id {
+                v.selections = v.selections.map(|s| Selection {
+                    anchor: changes.map_position(s.anchor, Bias::After),
+                    head: changes.map_position(s.head, Bias::After),
+                    goal: None,
+                });
+            }
+        }
+        self.map_folds(buffer_id, &changes, &line_edits);
+        self.sync_folds(buffer_id);
+        Ok(())
+    }
+
+    /// Shows only the lines `shown` (sorted line numbers) of `view`, or
+    /// every line again with `None`: the filter view (PLAN_v0.3.0 P6).
+    /// Carets on lines it hides move to the start of the nearest shown
+    /// line. With no line to show, the primary caret's line stays.
+    pub fn set_filter(&mut self, view: ViewId, shown: Option<&[usize]>) {
+        let Some(v) = self.views.get_mut(&view) else {
+            return;
+        };
+        let Some(b) = self.buffers.get(&v.buffer()) else {
+            return;
+        };
+        let doc = &b.doc;
+        let count = doc.line_count();
+        let Some(shown) = shown else {
+            v.folds.set_filter(None, count);
+            return;
+        };
+        let caret_line = [doc.line_of(v.selections.primary().head)];
+        let in_doc = shown.partition_point(|&l| l < count);
+        let shown = if in_doc == 0 {
+            &caret_line[..]
+        } else {
+            &shown[..in_doc]
+        };
+        v.folds.set_filter(Some(shown), count);
+        let folds = &v.folds;
+        let moved = v.selections.map(|s| {
+            let line = doc.line_of(s.head);
+            if !folds.filter_hides(line) {
+                return s.clone();
+            }
+            let after = shown.partition_point(|&l| l < line);
+            let target = shown
+                .get(after)
+                .or_else(|| after.checked_sub(1).and_then(|i| shown.get(i)))
+                .copied()
+                .unwrap_or(0)
+                .min(count - 1);
+            Selection::caret(doc.line_start(target))
+        });
+        v.selections = moved;
+    }
+
+    /// After text was appended to a filtered `view` (follow mode): hides
+    /// the lines from `from` on but `shown` (sorted) and the lines holding
+    /// a caret, leaving the lines before `from` as they were.
+    pub fn filter_appended(&mut self, view: ViewId, from: usize, shown: &[usize]) {
+        let Some(v) = self.views.get_mut(&view) else {
+            return;
+        };
+        let Some(b) = self.buffers.get(&v.buffer()) else {
+            return;
+        };
+        let doc = &b.doc;
+        let mut lines = shown.to_vec();
+        lines.extend(
+            v.selections
+                .ranges()
+                .iter()
+                .map(|s| doc.line_of(s.head))
+                .filter(|&l| l >= from),
+        );
+        lines.sort_unstable();
+        lines.dedup();
+        v.folds.set_filter_from(from, &lines, doc.line_count());
+    }
+
+    /// The lines of `view` holding a selection's head, in order.
+    pub fn caret_lines(&self, view: ViewId) -> Vec<usize> {
+        let Some(v) = self.views.get(&view) else {
+            return Vec::new();
+        };
+        let Some(b) = self.buffers.get(&v.buffer()) else {
+            return Vec::new();
+        };
+        let mut lines: Vec<usize> = v
+            .selections
+            .ranges()
+            .iter()
+            .map(|s| b.doc.line_of(s.head))
+            .collect();
+        lines.dedup();
+        lines
     }
 
     /// After any action: brings the folds' line numbers up to date and
@@ -491,6 +749,18 @@ impl Editor {
             // Also when an edit dropped the last fold: the hidden lines need
             // rebuilding. Cheap when nothing was mapped.
             v.folds.relines(doc);
+            // A caret the filter hides (Go to Line, a match on a hidden
+            // line, an edit elsewhere) brings its line back.
+            if v.folds.has_filter() {
+                let lines: Vec<usize> = v
+                    .selections
+                    .ranges()
+                    .iter()
+                    .map(|s| doc.line_of(s.head))
+                    .filter(|&l| v.folds.filter_hides(l))
+                    .collect();
+                v.folds.unfilter(&lines);
+            }
             if v.folds.is_empty() {
                 continue;
             }
@@ -511,13 +781,13 @@ impl Editor {
     /// Folds the region `line` heads in `view`; returns whether it did.
     /// Carets inside move to the end of the header line.
     pub fn fold_at(&mut self, view: ViewId, line: usize) -> bool {
-        let tab_width = self.settings.tab_width;
         let Some(v) = self.views.get_mut(&view) else {
             return false;
         };
         let Some(b) = self.buffers.get(&v.buffer()) else {
             return false;
         };
+        let tab_width = b.indent.width;
         let Some(last) = fold::region(&b.doc, line, b.fold_strategy, tab_width) else {
             return false;
         };
@@ -539,10 +809,10 @@ impl Editor {
     }
 
     fn fold_action(&mut self, view: ViewId, buffer: BufferId, action: &Action) {
-        let tab_width = self.settings.tab_width;
         let (Some(v), Some(b)) = (self.views.get_mut(&view), self.buffers.get(&buffer)) else {
             return;
         };
+        let tab_width = b.indent.width;
         let (doc, strategy) = (&b.doc, b.fold_strategy);
         let caret = doc.line_of(v.selections.primary().head);
         let around = || fold::enclosing(doc, caret, strategy, tab_width);
@@ -590,11 +860,60 @@ impl Editor {
         reveal_carets(doc, v);
     }
 
+    /// The bookmark actions that change only the bookmarks.
+    fn bookmark_action(
+        &mut self,
+        view: ViewId,
+        buffer: BufferId,
+        action: &Action,
+    ) -> Result<(), ActionError> {
+        let (Some(v), Some(b)) = (self.views.get(&view), self.buffers.get_mut(&buffer)) else {
+            return Err(ActionError::UnknownView(view));
+        };
+        let count = b.doc.line_count();
+        match action {
+            Action::ToggleBookmark => {
+                let lines = crate::bookmarks::caret_lines(&b.doc, &v.selections);
+                if lines.iter().all(|&l| b.bookmarks.contains(l)) {
+                    for l in lines {
+                        b.bookmarks.remove(l);
+                    }
+                } else {
+                    for l in lines {
+                        b.bookmarks.insert(l);
+                    }
+                }
+            }
+            Action::ClearBookmarks => b.bookmarks.clear(),
+            Action::InverseBookmarks => b.bookmarks.invert(count),
+            Action::BookmarkMatches(query) => {
+                let searcher = crate::search::Searcher::new(query)
+                    .map_err(|e| ActionError::InvalidPattern(e.0))?;
+                let matches = searcher.find_in(&b.doc, &v.selections);
+                if matches.is_empty() {
+                    return Err(ActionError::NotFound);
+                }
+                let found = matches.iter().map(|m| b.doc.line_of(m.start));
+                let all: Vec<usize> = b.bookmarks.lines().iter().copied().chain(found).collect();
+                b.bookmarks.set(all, count);
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
     /// Shifts the selections of every other view of `buffer` through `changes`
     /// so their carets stay put relative to the text.
+    /// Maps the selections of `buffer`'s views other than `except` through
+    /// `changes`, and every view's Begin/End Select start.
     fn map_other_views(&mut self, buffer: BufferId, except: ViewId, changes: &ChangeSet) {
         for v in self.views.values_mut() {
-            if v.buffer() == buffer && v.id() != except {
+            if v.buffer() != buffer {
+                continue;
+            }
+            // As in Notepad++, text typed where it began goes before it.
+            v.begin_select = v.begin_select.map(|p| changes.map_position(p, Bias::After));
+            if v.id() != except {
                 v.selections = v.selections.map(|s| Selection {
                     anchor: changes.map_position(s.anchor, Bias::Before),
                     head: changes.map_position(s.head, Bias::Before),
@@ -613,7 +932,7 @@ fn reveal_carets(doc: &crate::text::Document, v: &mut View) {
         return;
     }
     let moved = v.selections.map(|s| {
-        let Some((start, _)) = folds.hidden_range(doc.line_of(s.head)) else {
+        let Some((start, _)) = folds.fold_hidden_range(doc.line_of(s.head)) else {
             return s.clone();
         };
         let head = doc.line_end(start - 1);
@@ -626,17 +945,39 @@ fn reveal_carets(doc: &crate::text::Document, v: &mut View) {
     v.selections = moved;
 }
 
-fn apply_changes(buffer: &mut Buffer, changes: &ChangeSet) {
+/// Applies `changes` to the buffer's text and returns how the lines changed,
+/// in the order the edits were applied.
+fn apply_changes(buffer: &mut Buffer, changes: &ChangeSet) -> Vec<LineEdit> {
     // `ChangeSet::apply` goes back to front, so each line edit is recorded in
     // the coordinates of the document at the moment it is applied.
+    let mut edits = Vec::with_capacity(changes.edits().len());
+    let marked = !buffer.bookmarks.is_empty();
+    let mut mark_edits = Vec::new();
     for e in changes.edits().iter().rev() {
         let start = buffer.doc.line_of(e.start);
+        let new_lines = e.text.bytes().filter(|&b| b == b'\n').count();
         let edit = LineEdit {
             start,
             old_end: buffer.doc.line_of(e.end),
-            new_end: start + e.text.bytes().filter(|&b| b == b'\n').count(),
+            new_end: start + new_lines,
         };
+        if marked {
+            mark_edits.push(crate::bookmarks::EditLines {
+                start,
+                old_end: edit.old_end,
+                new_lines,
+                at_line_start: buffer.doc.line_start(start) == e.start,
+                insertion: e.start == e.end,
+            });
+        }
         buffer.record_line_edit(edit);
+        edits.push(edit);
     }
     changes.apply(&mut buffer.doc);
+    if marked {
+        mark_edits.reverse();
+        let count = buffer.doc.line_count();
+        buffer.bookmarks.map(&mark_edits, count);
+    }
+    edits
 }

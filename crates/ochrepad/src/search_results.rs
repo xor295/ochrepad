@@ -43,6 +43,9 @@ pub enum Source {
     Buffer(BufferId),
     /// A file that was not open when it was searched.
     Path(PathBuf),
+    /// A large file open in a viewer; a hit's `start` and `end` are offsets
+    /// in the file.
+    Viewer(crate::viewer::ViewerId),
 }
 
 /// An open document Find in Files should search instead of its file.
@@ -139,7 +142,45 @@ impl SearchResults {
     /// Starts searching `jobs` for `query` in the background, as the newest
     /// search; older ones are collapsed.
     pub fn start(&mut self, query: SearchQuery, scope: String, jobs: Vec<Job>) {
-        self.spawn(query, scope, false, move |q, c, tx| search(q, jobs, c, tx));
+        self.spawn(query, scope, false, None, move |q, c, tx| {
+            search(q, jobs, c, tx)
+        });
+    }
+
+    /// Starts a search that `work` does on the background thread (the
+    /// viewer's, over a file too large to open), and lists what it returns:
+    /// the results and whether more matches were found than are kept.
+    /// `cancel` is the flag Stop and Clear set; the work should watch it
+    /// (a file source can stop its reads on it).
+    pub fn start_external(
+        &mut self,
+        query: SearchQuery,
+        scope: String,
+        cancel: Arc<AtomicBool>,
+        work: impl FnOnce(Arc<AtomicBool>) -> Result<(Vec<FileHits>, bool), String> + Send + 'static,
+    ) {
+        self.spawn(
+            query,
+            scope,
+            false,
+            Some(cancel),
+            move |_, cancel, tx| match work(cancel) {
+                Ok((files, truncated)) => {
+                    for f in files {
+                        if tx.send(Msg::File(f)).is_err() {
+                            return;
+                        }
+                    }
+                    let _ = tx.send(Msg::Done {
+                        truncated,
+                        skipped_large: 0,
+                    });
+                }
+                Err(e) => {
+                    let _ = tx.send(Msg::Failed(e));
+                }
+            },
+        );
     }
 
     /// Starts Find in Files over `folder`.
@@ -151,7 +192,7 @@ impl SearchResults {
         open: Vec<OpenDoc>,
     ) {
         let scope = format!("in {}", folder.display());
-        self.spawn(query, scope, true, move |q, c, tx| {
+        self.spawn(query, scope, true, None, move |q, c, tx| {
             search_files(q, &folder, &options, open, c, tx)
         });
     }
@@ -161,12 +202,13 @@ impl SearchResults {
         query: SearchQuery,
         scope: String,
         in_files: bool,
+        cancel: Option<Arc<AtomicBool>>,
         work: impl FnOnce(SearchQuery, Arc<AtomicBool>, Sender<Msg>) + Send + 'static,
     ) {
         for s in &mut self.searches {
             s.expanded = false;
         }
-        let cancel = Arc::new(AtomicBool::new(false));
+        let cancel = cancel.unwrap_or_default();
         let (tx, rx) = channel();
         let (q, c) = (query.clone(), cancel.clone());
         std::thread::Builder::new()
@@ -201,7 +243,20 @@ impl SearchResults {
         let mut running = false;
         for s in &mut self.searches {
             let Some(rx) = &s.receiver else { continue };
-            while let Ok(msg) = rx.try_recv() {
+            loop {
+                let msg = match rx.try_recv() {
+                    Ok(msg) => msg,
+                    Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                    // The search thread ended without saying it was done
+                    // (it failed).
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                        if !s.done {
+                            s.error = Some("The search stopped unexpectedly".into());
+                            s.done = true;
+                        }
+                        break;
+                    }
+                };
                 match msg {
                     Msg::File(f) => {
                         s.matches += f.matches;
@@ -241,6 +296,20 @@ impl SearchResults {
         }
     }
 
+    /// Every result, as "name:line: text" lines (newest search first), as
+    /// grep writes them.
+    pub fn as_text(&self) -> String {
+        let mut out = String::new();
+        for s in &self.searches {
+            for f in &s.files {
+                for h in &f.hits {
+                    out.push_str(&format!("{}:{}: {}\n", f.name, h.line + 1, h.text));
+                }
+            }
+        }
+        out
+    }
+
     pub fn clear(&mut self) {
         for s in self.searches.drain(..) {
             s.cancel.store(true, Ordering::Relaxed);
@@ -258,6 +327,14 @@ impl SearchResults {
                 }
                 if ui.button("Clear").clicked() {
                     self.clear();
+                }
+                if !self.searches.is_empty()
+                    && ui
+                        .button("Copy")
+                        .on_hover_text("Copy every result as \"file:line: text\"")
+                        .clicked()
+                {
+                    ui.ctx().copy_text(self.as_text());
                 }
                 if self.searches.iter().any(|s| !s.done) && ui.button("Stop").clicked() {
                     self.stop();
@@ -381,7 +458,7 @@ enum Row {
 }
 
 /// "1 file", "3 files".
-fn files(n: usize) -> String {
+pub(crate) fn files(n: usize) -> String {
     if n == 1 {
         "1 file".to_owned()
     } else {
@@ -662,7 +739,7 @@ fn hits(doc: &Document, found: &[Range<ByteOffset>]) -> Vec<Hit> {
 }
 
 /// Cuts a long line down to a window around its first match.
-fn shorten(h: &mut Hit) {
+pub(crate) fn shorten(h: &mut Hit) {
     if h.text.len() <= MAX_LINE_BYTES {
         return;
     }

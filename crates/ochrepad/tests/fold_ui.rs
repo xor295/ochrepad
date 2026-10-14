@@ -148,6 +148,9 @@ fn shortcuts_fold_all_levels_and_unfold() {
 #[test]
 fn the_view_menu_folds_everything() {
     let mut h = harness(CODE);
+    // Tall enough for the View menu.
+    h.set_size(Vec2::new(500.0, 700.0));
+    h.run();
     h.get_by_label("View").click();
     h.run();
     h.get_by_label_contains("Fold All").click();

@@ -13,8 +13,8 @@ use crate::position::{
 };
 use std::ops::Range;
 
+use crate::buffer::Indent;
 use crate::display::DisplayMap;
-use crate::editor::Settings;
 use crate::search::{SearchQuery, Searcher};
 use crate::selection::{Rectangle, Selection, SelectionSet};
 use crate::text::Document;
@@ -36,15 +36,51 @@ pub(crate) fn resolve(
     action: &Action,
     doc: &Document,
     sels: &SelectionSet,
-    settings: &Settings,
+    indent: Indent,
     rows: &DisplayMap,
 ) -> Resolved {
-    let tab_width = settings.tab_width;
+    let tab_width = indent.width;
     match action {
+        Action::Indent => transform::indent(doc, sels, &indent_unit(indent)),
+        // Tab with a selection over several lines indents them.
+        Action::InsertTab if transform::spans_lines(doc, sels) => {
+            transform::indent(doc, sels, &indent_unit(indent))
+        }
+        Action::Unindent => transform::unindent(doc, sels, tab_width),
+        Action::ConvertIndentation { to_spaces } => {
+            crate::indent::convert(doc, sels, *to_spaces, tab_width)
+        }
+        Action::GoToLine { line, column } => {
+            let line = line.saturating_sub(1).min(doc.line_count() - 1);
+            let col = VisualCol(column.saturating_sub(1));
+            Resolved::Selections(SelectionSet::caret(visual_col_to_byte(
+                doc, line, col, tab_width,
+            )))
+        }
+        Action::GoToMatchingBracket | Action::SelectToMatchingBracket => {
+            let select = matches!(action, Action::SelectToMatchingBracket);
+            let pair = crate::brackets::bracket_at(doc, sels.primary().head);
+            match pair.and_then(|p| p.matching.map(|m| (p, m))) {
+                None => Resolved::Selections(sels.clone()),
+                Some((p, m)) if select => {
+                    let (a, b) = (p.at.min(m), p.at.max(m));
+                    Resolved::Selections(SelectionSet::single(Selection::new(
+                        a,
+                        ByteOffset(b.0 + 1),
+                    )))
+                }
+                // The caret keeps its side: before the bracket stays before.
+                Some((p, m)) => Resolved::Selections(SelectionSet::caret(if p.after_caret {
+                    m
+                } else {
+                    ByteOffset(m.0 + 1)
+                })),
+            }
+        }
         Action::InsertTab => {
             // A tab character, or spaces up to the next tab stop.
             edit_each(doc, sels, EditKind::Other, |_, s| {
-                let text = if settings.use_spaces {
+                let text = if indent.use_spaces {
                     let tw = tab_width.max(1);
                     let col = byte_to_visual_col(doc, s.start(), tab_width).0;
                     " ".repeat(tw - col % tw)
@@ -126,20 +162,33 @@ pub(crate) fn resolve(
         }
         Action::ConvertCase(mode) => transform::case(doc, sels, *mode),
         Action::SortLines(options) => transform::sort(doc, sels, *options, tab_width),
+        Action::ShuffleLines { seed } => transform::shuffle(doc, sels, *seed, tab_width),
         Action::TrimTrailingWhitespace => transform::trim_trailing(doc, sels),
         Action::DuplicateLine => transform::duplicate(doc, sels),
         Action::MoveLinesUp => transform::move_lines(doc, sels, true),
         Action::MoveLinesDown => transform::move_lines(doc, sels, false),
         Action::JoinLines => transform::join(doc, sels),
+        Action::SplitLines { width } => transform::split_lines(doc, sels, *width, tab_width),
         Action::RemoveEmptyLines { include_whitespace } => {
             transform::remove_empty(doc, sels, *include_whitespace)
         }
         Action::RemoveDuplicateLines { consecutive_only } => {
             transform::remove_duplicates(doc, sels, *consecutive_only)
         }
+        Action::DeleteLine => transform::delete_lines(doc, sels),
+        Action::TransposeLines => transform::transpose(doc, sels),
+        Action::InsertLineAbove => transform::insert_line(doc, sels, true),
+        Action::InsertLineBelow => transform::insert_line(doc, sels, false),
+        Action::ReverseLines => transform::reverse(doc, sels),
+        Action::TrimLeadingWhitespace => transform::trim_lines(doc, sels, false),
+        Action::TrimLeadingAndTrailingWhitespace => transform::trim_lines(doc, sels, true),
+        Action::EolToSpace => transform::eol_to_space(doc, sels),
+        Action::TabsToSpaces => transform::tabs_to_spaces(doc, sels, tab_width),
+        Action::SpacesToTabs => transform::spaces_to_tabs(doc, sels, tab_width),
+        Action::ColumnInsert(what) => crate::column_edit::insert(doc, sels, what, tab_width),
         Action::PasteBlock(text) => {
             if sels.len() > 1 || !sels.primary().is_empty() {
-                return resolve(&Action::Paste(text.clone()), doc, sels, settings, rows);
+                return resolve(&Action::Paste(text.clone()), doc, sels, indent, rows);
             }
             paste_block(doc, sels.primary().head, text, tab_width)
         }
@@ -221,10 +270,29 @@ pub(crate) fn resolve(
         | Action::UnfoldAll
         | Action::FoldLevel(_)
         | Action::UnfoldLevel(_)
+        | Action::ToggleLineComment
+        | Action::CommentLines
+        | Action::UncommentLines
+        | Action::ToggleBlockComment
+        | Action::FormatJson { .. }
+        | Action::MinifyJson
+        | Action::Encode(_)
+        | Action::Decode(_)
         | Action::Find { .. }
         | Action::Replace { .. }
         | Action::ReplaceAll { .. }
-        | Action::SelectAllMatches(_) => Resolved::Selections(sels.clone()),
+        | Action::SelectAllMatches(_)
+        | Action::MultiSelectNext { .. }
+        | Action::MultiSelectAll { .. }
+        | Action::ToggleBookmark
+        | Action::NextBookmark
+        | Action::PrevBookmark
+        | Action::ClearBookmarks
+        | Action::InverseBookmarks
+        | Action::BookmarkMatches(_)
+        | Action::RemoveBookmarkedLines
+        | Action::RemoveUnbookmarkedLines
+        | Action::ReplaceBookmarkedLines(_) => Resolved::Selections(sels.clone()),
     }
 }
 
@@ -321,6 +389,15 @@ pub(crate) fn resolve_search(
         }
         // Only search actions are routed here.
         _ => Ok(Resolved::Selections(sels.clone())),
+    }
+}
+
+/// One level of indentation: a tab, or `tab_width` spaces.
+fn indent_unit(indent: Indent) -> String {
+    if indent.use_spaces {
+        " ".repeat(indent.width.max(1))
+    } else {
+        "\t".to_owned()
     }
 }
 
@@ -653,7 +730,9 @@ pub(crate) fn word_left(doc: &Document, mut p: ByteOffset) -> ByteOffset {
 
 /// The run of same-class graphemes around `p`, preferring a word on either
 /// side. Never crosses a newline.
-fn word_at(doc: &Document, p: ByteOffset) -> (ByteOffset, ByteOffset) {
+/// The word (or run of punctuation, or of blanks) at `p`, as a
+/// double-click selects it; empty between two line breaks.
+pub fn word_at(doc: &Document, p: ByteOffset) -> (ByteOffset, ByteOffset) {
     let a = after(doc, p).map(|x| x.1).filter(|c| *c != Class::Newline);
     let b = before(doc, p).map(|x| x.1).filter(|c| *c != Class::Newline);
     let class = match (a, b) {

@@ -3,7 +3,9 @@
 mod util;
 
 use ochrepad_core::position::{byte_to_visual_col, next_grapheme_boundary, visual_col_to_byte};
-use ochrepad_core::{Action, ByteOffset, Document, Motion, SelectionSet};
+use ochrepad_core::tags::matching_tags;
+use ochrepad_core::text_tools::{format_json, minify_json, validate_json};
+use ochrepad_core::{Action, ByteOffset, Codec, Document, Indent, Motion, SelectionSet};
 use proptest::prelude::*;
 
 const PIECES: &[&str] = &[
@@ -102,15 +104,21 @@ fn action() -> impl Strategy<Value = Action> {
             ochrepad_core::CaseMode::Upper,
             ochrepad_core::CaseMode::Lower,
             ochrepad_core::CaseMode::Title,
+            ochrepad_core::CaseMode::TitleBlend,
+            ochrepad_core::CaseMode::Sentence,
+            ochrepad_core::CaseMode::SentenceBlend,
             ochrepad_core::CaseMode::Invert,
+            ochrepad_core::CaseMode::Random { seed: 3 },
         ])
         .prop_map(Action::ConvertCase),
-        1 => any::<[bool; 4]>().prop_map(|b| Action::SortLines(ochrepad_core::SortOptions {
+        1 => any::<[bool; 5]>().prop_map(|b| Action::SortLines(ochrepad_core::SortOptions {
             descending: b[0],
             case_insensitive: b[1],
             numeric: b[2],
             remove_duplicates: b[3],
+            by_length: b[4],
         })),
+        1 => any::<u64>().prop_map(|seed| Action::ShuffleLines { seed }),
         1 => prop::sample::select(vec![
             Action::TrimTrailingWhitespace,
             Action::DuplicateLine,
@@ -159,7 +167,168 @@ fn action() -> impl Strategy<Value = Action> {
             (1usize..4).prop_map(Action::FoldLevel),
             (1usize..4).prop_map(Action::UnfoldLevel),
         ],
+        2 => prop_oneof![
+            (0usize..14, 0usize..12).prop_map(|(line, column)| Action::GoToLine { line, column }),
+            Just(Action::Indent),
+            Just(Action::Unindent),
+            any::<bool>().prop_map(|to_spaces| Action::ConvertIndentation { to_spaces }),
+            Just(Action::ToggleLineComment),
+            (1usize..30).prop_map(|width| Action::SplitLines { width }),
+            Just(Action::CommentLines),
+            Just(Action::UncommentLines),
+            Just(Action::ToggleBlockComment),
+            Just(Action::GoToMatchingBracket),
+            Just(Action::SelectToMatchingBracket),
+        ],
+        // Notepad++'s line and blank operations, and the Column Editor.
+        1 => prop::sample::select(vec![
+            Action::DeleteLine,
+            Action::TransposeLines,
+            Action::InsertLineAbove,
+            Action::InsertLineBelow,
+            Action::ReverseLines,
+            Action::TrimLeadingWhitespace,
+            Action::TrimLeadingAndTrailingWhitespace,
+            Action::EolToSpace,
+            Action::TabsToSpaces,
+            Action::SpacesToTabs,
+        ]),
+        1 => prop_oneof![
+            short_text().prop_map(|t| Action::ColumnInsert(ochrepad_core::ColumnInsert::Text(t))),
+            (-5i64..20, -3i64..4, 0usize..3, 0usize..3, 0usize..4).prop_map(
+                |(initial, increase, repeat, leading, format)| {
+                    use ochrepad_core::{Leading, NumberFormat};
+                    Action::ColumnInsert(ochrepad_core::ColumnInsert::Numbers(
+                        ochrepad_core::NumberSequence {
+                            initial,
+                            increase,
+                            repeat,
+                            leading: [Leading::None, Leading::Zeros, Leading::Spaces][leading],
+                            format: [
+                                NumberFormat::Dec,
+                                NumberFormat::Hex,
+                                NumberFormat::Oct,
+                                NumberFormat::Bin,
+                            ][format],
+                        },
+                    ))
+                }
+            ),
+        ],
+        // Text tools, and JSON for them to work on.
+        1 => prop::sample::select(vec!["[1,2]", "{\"a\":[]}", " ", "\"x\"", ",", "{", "]"])
+            .prop_map(|s| Action::InsertText(s.to_owned())),
+        1 => prop_oneof![
+            prop::option::of((any::<bool>(), 1usize..5)).prop_map(|i| Action::FormatJson {
+                indent: i.map(|(use_spaces, width)| ochrepad_core::Indent { use_spaces, width }),
+            }),
+            Just(Action::MinifyJson),
+            prop::sample::select(vec![Codec::Base64, Codec::Url, Codec::Hex]).prop_map(Action::Encode),
+            prop::sample::select(vec![Codec::Base64, Codec::Url, Codec::Hex]).prop_map(Action::Decode),
+        ],
+        // Bookmarks, and the commands on the lines they mark.
+        2 => prop_oneof![
+            Just(Action::ToggleBookmark),
+            Just(Action::NextBookmark),
+            Just(Action::PrevBookmark),
+            Just(Action::ClearBookmarks),
+            Just(Action::InverseBookmarks),
+            Just(Action::RemoveBookmarkedLines),
+            Just(Action::RemoveUnbookmarkedLines),
+            short_text().prop_map(Action::ReplaceBookmarkedLines),
+            prop::sample::select(vec!["a", "b", "\\n"]).prop_map(|p| {
+                Action::BookmarkMatches(ochrepad_core::SearchQuery::new(
+                    p,
+                    ochrepad_core::SearchOptions {
+                        regex: true,
+                        ..Default::default()
+                    },
+                ))
+            }),
+        ],
     ]
+}
+
+/// Random JSON values, with blank space between tokens.
+fn json_value() -> impl Strategy<Value = String> {
+    let leaf = prop_oneof![
+        prop::sample::select(vec![
+            "null",
+            "true",
+            "false",
+            "-0.5e3",
+            "0",
+            "12.25",
+            "\"\"",
+            "\"a b\"",
+            "\"\\\"q\\u00e9\\n\"",
+            "\"漢👍\"",
+        ])
+        .prop_map(str::to_owned),
+        (0u32..1000).prop_map(|n| n.to_string()),
+    ];
+    leaf.prop_recursive(4, 32, 4, |inner| {
+        prop_oneof![
+            prop::collection::vec(inner.clone(), 0..4)
+                .prop_map(|v| format!("[ {} ]", v.join(" ,\n"))),
+            prop::collection::vec(inner, 0..4).prop_map(|v| {
+                let members: Vec<String> = v
+                    .iter()
+                    .enumerate()
+                    .map(|(i, x)| format!("\"k{i}\" :\t{x}"))
+                    .collect();
+                format!("{{{}}}", members.join(","))
+            }),
+        ]
+    })
+}
+
+/// Strings of JSON tokens and near-tokens, mostly invalid.
+fn json_ish() -> impl Strategy<Value = String> {
+    prop::collection::vec(
+        prop::sample::select(vec![
+            "{", "}", "[", "]", ":", ",", "\"a\"", "\"", "\\", "1", "-", "0", ".", " ", "\n",
+            "true", "nul", "x", "\t",
+        ]),
+        0..20,
+    )
+    .prop_map(|v| v.concat())
+}
+
+/// Strings of tags, near-tags and what holds no tags, mostly unbalanced.
+fn markup_ish() -> impl Strategy<Value = String> {
+    prop::collection::vec(
+        prop::sample::select(vec![
+            "<a>",
+            "</a>",
+            "<A>",
+            "<b x=\"1\">",
+            "</b>",
+            "<br>",
+            "<x/>",
+            "<!--",
+            "-->",
+            "<![CDATA[",
+            "]]>",
+            "<?",
+            "?>",
+            "<%",
+            "<script>",
+            "</script>",
+            "<漢>",
+            "</漢>",
+            "<",
+            "</",
+            ">",
+            "\"",
+            "=",
+            " ",
+            "\n",
+            "é",
+        ]),
+        0..20,
+    )
+    .prop_map(|v| v.concat())
 }
 
 fn check(t: &util::T) -> Result<(), TestCaseError> {
@@ -167,6 +336,14 @@ fn check(t: &util::T) -> Result<(), TestCaseError> {
     let doc = t.buffer().doc();
     sels.validate(doc)
         .map_err(|e| TestCaseError::fail(format!("{e}\nstate: {}", t.show())))?;
+    // Bookmarks: sorted, apart, on lines of the text.
+    let marks = t.buffer().bookmarks().lines();
+    prop_assert!(marks.windows(2).all(|w| w[0] < w[1]), "{marks:?}");
+    prop_assert!(
+        marks.iter().all(|&l| l < doc.line_count()),
+        "{marks:?} in {} lines",
+        doc.line_count()
+    );
     // Folds: no caret is hidden, and the display rows are the lines that are
     // not hidden, in order.
     let view = t.ed.view(t.view).unwrap();
@@ -178,7 +355,7 @@ fn check(t: &util::T) -> Result<(), TestCaseError> {
             t.show()
         );
     }
-    let rows = ochrepad_core::DisplayMap::new(t.buffer(), view, 4);
+    let rows = ochrepad_core::DisplayMap::new(t.buffer(), view);
     // Folds do not apply to a padded (compare) view.
     let padded = view.padding.is_some();
     let visible: Vec<usize> = (0..doc.line_count())
@@ -211,25 +388,41 @@ fn check(t: &util::T) -> Result<(), TestCaseError> {
     Ok(())
 }
 
-/// How a random view lays out its rows: a wrap width, and padding (blank
-/// rows before lines, as in a compare view).
-type Layout = (Option<usize>, Option<(Vec<usize>, usize)>);
+/// How a random view lays out its rows: a wrap width, padding (blank rows
+/// before lines, as in a compare view), and a filter showing every `step`th
+/// line from `offset` (the filter view).
+type Layout = (
+    Option<usize>,
+    Option<(Vec<usize>, usize)>,
+    Option<(usize, usize)>,
+);
 
 fn layout() -> impl Strategy<Value = Layout> {
     (
         prop::option::of(10usize..16),
         prop::option::weighted(0.3, (prop::collection::vec(0usize..3, 0..8), 0usize..3)),
+        prop::option::weighted(0.3, (1usize..4, 0usize..4)),
     )
 }
 
 /// A document whose view has the random `layout`.
-fn setup_wrapped(initial: &str, (wrap, padding): Layout) -> util::T {
+fn setup_wrapped(initial: &str, (wrap, padding, filter): Layout) -> util::T {
     let mut t = util::setup(initial);
+    let b = t.ed.view(t.view).unwrap().buffer();
+    t.ed.buffer_mut(b).unwrap().comments = Some(ochrepad_core::CommentSyntax {
+        line: Some("//".into()),
+        block: Some(("/*".into(), "*/".into())),
+    });
     let v = t.ed.view_mut(t.view).unwrap();
     v.wrap_cols = wrap;
     v.padding = padding.map(|(before, after_last)| {
         std::sync::Arc::new(ochrepad_core::Padding { before, after_last })
     });
+    if let Some((step, offset)) = filter {
+        let lines = t.buffer().doc().line_count();
+        let shown: Vec<usize> = (0..lines).filter(|l| (l + offset) % step == 0).collect();
+        t.ed.set_filter(t.view, Some(&shown));
+    }
     t
 }
 
@@ -379,8 +572,103 @@ proptest! {
     }
 }
 
+/// Whether `b` can undo, and its text.
+fn undo_state(ed: &ochrepad_core::Editor, b: ochrepad_core::BufferId) -> (bool, bool, String) {
+    let buffer = ed.buffer(b).unwrap();
+    (
+        buffer.history().can_undo(),
+        buffer.history().can_redo(),
+        buffer.doc().to_string(),
+    )
+}
+
 proptest! {
     #![proptest_config(ProptestConfig { cases: 2000, ..ProptestConfig::default() })]
+
+    /// A history saved as JSON and restored onto the same text in another
+    /// editor (a later session) undoes and redoes through the same texts as
+    /// the original.
+    #[test]
+    fn a_saved_history_replays_like_the_original(
+        initial in text(),
+        actions in prop::collection::vec(action(), 0..30),
+    ) {
+        let mut ed = ochrepad_core::Editor::new();
+        let b = ed.add_buffer(&initial, Default::default());
+        let v = ed.add_view(b).unwrap();
+        for a in actions {
+            let _ = ed.apply(v, a);
+        }
+        let saved = ed.buffer(b).unwrap().saved_history(usize::MAX);
+        let json = serde_json::to_string(&saved).unwrap();
+        let mut later = ochrepad_core::Editor::new();
+        let lb = later.add_buffer(&ed.buffer(b).unwrap().doc().to_string(), Default::default());
+        let lv = later.add_view(lb).unwrap();
+        let read: ochrepad_core::SavedHistory = serde_json::from_str(&json).unwrap();
+        prop_assert!(later.buffer_mut(lb).unwrap().restore_history(read, true).is_ok());
+        for action in [Action::Undo, Action::Redo] {
+            loop {
+                let (a, b2) = (undo_state(&ed, b), undo_state(&later, lb));
+                prop_assert_eq!(&a, &b2);
+                let more = if action == Action::Undo { a.0 } else { a.1 };
+                if !more {
+                    break;
+                }
+                ed.apply(v, action.clone()).unwrap();
+                later.apply(lv, action.clone()).unwrap();
+            }
+            if action == Action::Undo {
+                prop_assert_eq!(undo_state(&later, lb).2, initial.clone());
+            }
+        }
+    }
+
+    /// Formatting and minifying change only the blank space between tokens:
+    /// each undoes the other, and the value read back is the same.
+    #[test]
+    fn json_format_and_minify_keep_the_value(
+        json in json_value(),
+        width in 1usize..5,
+        tabs in any::<bool>(),
+    ) {
+        let indent = Indent { use_spaces: !tabs, width };
+        let pretty = format_json(&json, indent).unwrap();
+        let min = minify_json(&json).unwrap();
+        prop_assert_eq!(minify_json(&pretty).unwrap(), min.clone());
+        prop_assert_eq!(format_json(&min, indent).unwrap(), pretty.clone());
+        let value = |s: &str| serde_json::from_str::<serde_json::Value>(s).unwrap();
+        prop_assert_eq!(value(&pretty), value(&json));
+    }
+
+    /// Our validator accepts exactly what serde_json accepts.
+    #[test]
+    fn json_validation_agrees_with_serde_json(s in json_ish()) {
+        let ours = validate_json(&s).is_ok();
+        let theirs = serde_json::from_str::<serde::de::IgnoredAny>(&s).is_ok();
+        prop_assert_eq!(ours, theirs, "{:?}", s);
+    }
+
+    /// Matching tags never panics, and what it pairs are two names alike
+    /// (in any case for HTML), a start tag's before an end tag's, that pair
+    /// the same with the caret in either tag.
+    #[test]
+    fn matched_tags_have_names_alike(s in markup_ish(), html in any::<bool>()) {
+        let doc = Document::new(&s);
+        for pos in (0..=s.len()).filter(|&p| s.is_char_boundary(p)) {
+            let Some(pair) = matching_tags(&doc, ByteOffset(pos), html) else {
+                continue;
+            };
+            let (open, close) = (pair.open.start.0, pair.close.start.0);
+            prop_assert!(pair.open.end <= pair.close.start, "{:?} at {}", s, pos);
+            prop_assert!(s[..open].ends_with('<') && s[..close].ends_with("</"), "{:?} at {}", s, pos);
+            let a = &s[open..pair.open.end.0];
+            let b = &s[close..pair.close.end.0];
+            prop_assert!(if html { a.eq_ignore_ascii_case(b) } else { a == b }, "{:?} at {}", s, pos);
+            for from in [pair.open.start, pair.close.start] {
+                prop_assert_eq!(matching_tags(&doc, from, html), Some(pair.clone()), "{:?} at {}", s, pos);
+            }
+        }
+    }
 
     /// The aligned rows list every line of each side exactly once, in
     /// order; equal rows have equal text; hunks cover exactly the non-equal
@@ -417,5 +705,76 @@ proptest! {
                 }
             }
         }
+    }
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig { cases: 500, ..ProptestConfig::default() })]
+
+    /// With auto-closing on (and smart indentation and overtype, at
+    /// random), brackets, quotes and Backspace typed among random actions
+    /// keep every invariant, and undoing still gets back to the start.
+    #[test]
+    fn auto_closing_keeps_undo_working(
+        initial in text(),
+        actions in prop::collection::vec(
+            prop_oneof![
+                3 => prop::sample::select(vec!["(", ")", "[", "]", "{", "}", "\"", "'"])
+                    .prop_map(|s| Action::InsertText(s.to_owned())),
+                1 => Just(Action::DeleteBackward),
+                2 => Just(Action::InsertNewline),
+                4 => action(),
+            ],
+            0..30,
+        ),
+        layout in layout(),
+        smart in any::<bool>(),
+        overtype in any::<bool>(),
+    ) {
+        let mut t = setup_wrapped(&initial, layout);
+        t.ed.settings.auto_close = true;
+        // Smart indentation and overtype work on the same keys.
+        t.ed.settings.smart_indent = smart;
+        t.ed.settings.overtype = overtype;
+        for a in actions {
+            let _ = t.ed.apply(t.view, a);
+            check(&t)?;
+        }
+        while t.buffer().history().can_undo() {
+            t.apply(Action::Undo);
+            check(&t)?;
+        }
+        prop_assert_eq!(t.text(), initial);
+    }
+
+    /// Text appended outside the history (follow mode) between random
+    /// actions keeps every invariant, and undoing everything leaves the
+    /// original text with the appended text after it.
+    #[test]
+    fn appends_between_actions_keep_undo_working(
+        initial in text(),
+        steps in prop::collection::vec(
+            (action(), prop::option::weighted(0.25, short_text())),
+            0..30,
+        ),
+        layout in layout(),
+    ) {
+        let mut t = setup_wrapped(&initial, layout);
+        let b = t.ed.view(t.view).unwrap().buffer();
+        let mut appended = String::new();
+        for (a, append) in steps {
+            let _ = t.ed.apply(t.view, a);
+            check(&t)?;
+            if let Some(s) = append {
+                t.ed.append_unrecorded(b, &s).unwrap();
+                appended.push_str(&s);
+                check(&t)?;
+            }
+        }
+        while t.buffer().history().can_undo() {
+            t.apply(Action::Undo);
+            check(&t)?;
+        }
+        prop_assert_eq!(t.text(), format!("{initial}{appended}"));
     }
 }

@@ -1,4 +1,85 @@
-# The editor view: document map, word wrap and folding
+# The editor view: zoom, symbols, document map, word wrap and folding
+
+## Zoom
+
+**View > Zoom** makes the text of every editor (and both sides of a
+comparison) larger or smaller, without changing the menus and panels:
+
+- **Ctrl+plus** (or **Ctrl+=**) and **Ctrl+minus** step through 10% to 400%;
+  **Ctrl+0** goes back to 100%.
+- **Ctrl+mouse wheel** over an editor does the same, one step per notch.
+- The status bar shows the zoom while it is not 100%; click it to reset.
+
+The zoom is remembered. **Settings > Preferences > Font size** is the size at
+100%.
+
+## Show Symbol
+
+**View > Show Symbol** draws what is normally invisible, as in Notepad++:
+
+- **Show Space and Tab**: a dot in each space, an arrow across each tab.
+- **Show End of Line**: a small `CRLF`, `LF` or `CR` after each line, the
+  ending the document is saved with (the status bar's line ending menu
+  changes it). A file opened with mixed endings shows the one it will be
+  saved with on every line.
+- **Show Non-Printing Characters**: zero-width characters (such as U+200B
+  ZERO WIDTH SPACE and the BOM), bidi controls (such as U+202E
+  RIGHT-TO-LEFT OVERRIDE) and spaces other than the plain one (such as
+  U+00A0 NO-BREAK SPACE) as tinted boxes.
+- **Show All Characters** (**Ctrl+Shift+8**) turns the three above on or off
+  together.
+- **Show Indent Guide**: dotted lines at each indent level inside a line's
+  indentation, from the second level on, continuing through blank lines
+  inside a block.
+- **Show Wrap Symbol**: with word wrap on, a hooked arrow where a line
+  continues on the next row.
+
+**Control characters** (NUL, ESC and the rest of U+0000–U+001F, DEL and
+U+0080–U+009F) are always drawn as boxes, as Notepad++ does, so text after
+them stays in its columns. Each special character takes one cell, the same
+whether it is shown or not, so showing them never moves the text. **Hover
+over a box** for the character's code and name; zoomed in far enough, the
+box also shows its abbreviation (`NUL`, `ESC`, `ZWSP`, `NBSP`, …).
+
+**Vertical edge**: Settings > Preferences > **Vertical edge after column**
+draws a thin line after that column (80 when first turned on), as a guide
+for line length.
+
+## Matching brackets and tags
+
+With the caret beside a bracket (`(`, `[` or `{`, or its closer), that
+bracket and its match are outlined in the accent colour, or in red when it
+has no match within 100 KB. **Ctrl+B** goes to the match and
+**Ctrl+Alt+B** selects up to it. Brackets are matched as plain text, so one
+in a string or a comment counts like any other.
+
+In HTML and XML, the names in the start and end tag of the element at the
+caret are outlined the same way, as Notepad++ highlights matching tags, so
+you can see where the element starts and ends:
+
+- With the caret in a tag, anywhere from its `<` to its `>`, that tag and
+  its partner. Right beside a tag, that tag if it has a partner (the one
+  after the caret first).
+- Anywhere else, the innermost element around the caret: in
+  `<p>Some <b>bold</b> text</p>`, a caret in "text" outlines both `p`s.
+- Tags pair by name, counting the nested tags of that name, so an `<li>` or
+  `<p>` left without its end tag, as HTML allows, does not stop the list or
+  `<div>` around it from pairing. A tag without a partner, a self-closing
+  tag (`<x/>`) and HTML's void elements (`<br>`, `<img>`, `<input>` and the
+  like) get no outline.
+- Comments, CDATA sections, `<!DOCTYPE …>`, `<?xml … ?>` and PHP's
+  `<?php … ?>`, and `<% … %>` blocks are skipped, and in HTML so is the
+  text of `<script>`, `<style>`, `<textarea>` and `<title>`. A `>` inside a
+  quoted attribute value does not end a tag.
+- HTML names match in any case (`<DIV>` … `</div>`); XML names must match
+  exactly.
+
+It follows the document's language (the status bar's language menu): HTML
+(also `.xhtml`), XML (also SVG, XSLT, XSD, RSS and XAML), PHP, JSP, ASP,
+Vue, Svelte, and the HTML templates of Rails, Twig, Jinja2, EEx, Erlang and
+Tcl. Nothing is outlined while text is selected or with more than one
+caret. ochrepad looks up to 100 KB either way of the caret, so in a larger
+file an element whose tags are further apart than that is not outlined.
 
 ## Document map
 
@@ -17,6 +98,69 @@ colour, so you can see the shape of the file and jump around in it.
   editor.
 - **View > Document Map** turns it off for every editor. It also hides
   itself while a pane is too narrow to show 40 columns of text beside it.
+
+## Document List
+
+**View > Document List** opens a panel on the right listing the open
+documents in tab order, so you can see and switch between many files. Each
+row shows the name its tab shows, with the same `*` for unsaved changes and
+"(read-only)", followed by its folder, dimmed. A folder too long for the
+panel is cut from the front so that its last folders show; hover over a
+row for the whole path.
+
+- **Click** a row to switch to that document, as clicking its tab does.
+- **Middle-click** a row to close its tab. A document with unsaved changes
+  asks first, as on the tab bar.
+- The current document's row is highlighted, and the list scrolls to it
+  when you switch tabs another way.
+
+The tabs of both panes are listed, and files open in the
+[viewer for large files](logs.md#large-files-the-viewer); Markdown previews
+and comparisons are not. With the Function List open too, the Document List
+sits beside it, next to the editor. The panel remembers whether it is open
+and how wide it is; **×** closes it.
+
+## Function List
+
+**View > Function List** opens a panel on the right listing what the
+current document defines, in order: functions and methods (ƒ), types such
+as structs, classes, enums, traits and Rust's `impl` blocks (T), modules
+(M), and the headings of a Markdown file (#). Entries are indented as
+their lines are, so methods sit under their class.
+
+- **Click** an entry to go to its line.
+- The **Filter** field keeps the entries whose name contains what you type.
+- The entry the caret is in is highlighted.
+- The list is read again a moment after you stop typing, and when you
+  switch tabs.
+
+The entries come from the language's syntax highlighting: whatever the
+syntax marks as a definition is listed, so it works for most of the 180
+languages without a parser for each, and lists nothing for plain text.
+Files over the highlighting size limit aren't listed.
+
+## Change history
+
+The gutter marks the lines that differ from the file as it was when you
+opened or last saved it, in the compare view's colours: a **blue** bar
+beside a changed line, a **green** bar beside an added one, and a **red**
+wedge between two lines where lines were deleted. The marks update a moment
+after you stop typing. Undoing back to the saved text clears them, and
+saving starts afresh from the saved text.
+
+**F8** goes to the next change (a run of changed lines, or where lines were
+deleted) and **Shift+F8** to the previous one, going round the document,
+as they go from difference to difference in a comparison.
+
+The vertical scrollbar shows the same marks in a narrow lane on its left,
+with the bookmarks in a lane on its right and a line where the caret is,
+each at its place in the document, so you can see where the changes are
+and drag there.
+
+A document that came back from a backup with unsaved changes is compared
+with its file on disk. New documents that were never saved, and files over
+the highlighting size limit (Settings > Preferences), have no marks.
+**View > Change History** turns the marks off.
 
 ## Word wrap
 
@@ -65,7 +209,8 @@ fn main() {
 
 folding `fn main() {` hides the three lines inside, and the closing `}`
 stays visible. Blank lines at the end of a block also stay visible. Tabs
-count to the next tab stop, using the tab width from the preferences.
+count to the next tab stop, using the document's tab width (see
+[indentation](file-handling.md#the-status-bar-menus)).
 
 Because it only looks at indentation, folding works the same way in every
 language, including Python, YAML and plain text. It is fooled by code that is

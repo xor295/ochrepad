@@ -16,6 +16,16 @@ pub enum EditorCommand {
     PageDown {
         extend: bool,
     },
+    /// Switches between inserting and typing over (Insert).
+    ToggleOvertype,
+    /// Edit > Begin/End Select: marks where a selection begins, or selects
+    /// from there to the caret.
+    BeginEndSelect,
+    /// The same, ending in a column selection.
+    BeginEndSelectColumn,
+    /// Edit > Line Operations > Split Lines, at the vertical edge or else
+    /// the pane's width.
+    SplitLines,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -148,6 +158,7 @@ impl Default for Keymap {
             (Chord::new(Enter).shift(), act(Action::InsertNewline)),
             (Chord::new(Tab), act(Action::InsertTab)),
             (Chord::new(Escape), act(Action::CollapseSelections)),
+            (Chord::new(Insert), EditorCommand::ToggleOvertype),
             (Chord::new(A).cmd(), act(Action::SelectAll)),
             (Chord::new(Z).cmd(), act(Action::Undo)),
             (Chord::new(Y).cmd(), act(Action::Redo)),
@@ -182,7 +193,19 @@ impl Default for Keymap {
                 act(Action::ConvertCase(CaseMode::Title)),
             ),
             (
+                Chord::new(U).alt().shift(),
+                act(Action::ConvertCase(CaseMode::TitleBlend)),
+            ),
+            (
                 Chord::new(U).cmd().alt(),
+                act(Action::ConvertCase(CaseMode::Sentence)),
+            ),
+            (
+                Chord::new(U).cmd().alt().shift(),
+                act(Action::ConvertCase(CaseMode::SentenceBlend)),
+            ),
+            (
+                Chord::new(I).cmd().alt(),
                 act(Action::ConvertCase(CaseMode::Invert)),
             ),
             (Chord::new(D).cmd(), act(Action::DuplicateLine)),
@@ -192,11 +215,40 @@ impl Default for Keymap {
                 act(Action::MoveLinesDown),
             ),
             (Chord::new(J).cmd(), act(Action::JoinLines)),
+            (Chord::new(I).cmd(), EditorCommand::SplitLines),
+            // Notepad++'s (Scintilla's) line commands.
+            (Chord::new(L).cmd().shift(), act(Action::DeleteLine)),
+            (Chord::new(T).cmd(), act(Action::TransposeLines)),
+            (Chord::new(Enter).cmd().alt(), act(Action::InsertLineAbove)),
+            (
+                Chord::new(Enter).cmd().alt().shift(),
+                act(Action::InsertLineBelow),
+            ),
             (Chord::new(ArrowUp).cmd().alt(), act(Action::AddCursorAbove)),
             (
                 Chord::new(ArrowDown).cmd().alt(),
                 act(Action::AddCursorBelow),
             ),
+            (Chord::new(Tab).shift(), act(Action::Unindent)),
+            (Chord::new(Slash).cmd(), act(Action::ToggleLineComment)),
+            // Notepad++'s keys for the same.
+            (Chord::new(Q).cmd(), act(Action::ToggleLineComment)),
+            (Chord::new(K).cmd(), act(Action::CommentLines)),
+            (Chord::new(K).cmd().shift(), act(Action::UncommentLines)),
+            (Chord::new(Q).cmd().shift(), act(Action::ToggleBlockComment)),
+            (
+                Chord::new(Slash).cmd().shift(),
+                act(Action::ToggleBlockComment),
+            ),
+            (Chord::new(B).cmd(), act(Action::GoToMatchingBracket)),
+            (
+                Chord::new(B).cmd().alt(),
+                act(Action::SelectToMatchingBracket),
+            ),
+            // Bookmarks (Notepad++'s keys).
+            (Chord::new(F2).cmd(), act(Action::ToggleBookmark)),
+            (Chord::new(F2), act(Action::NextBookmark)),
+            (Chord::new(F2).shift(), act(Action::PrevBookmark)),
             // Folding (Notepad++'s View > Fold/Collapse shortcuts).
             (Chord::new(F).cmd().alt(), act(Action::Fold)),
             (Chord::new(F).cmd().alt().shift(), act(Action::Unfold)),

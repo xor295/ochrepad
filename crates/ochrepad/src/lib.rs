@@ -2,15 +2,24 @@
 
 pub mod app;
 pub mod bench;
+pub mod change_history;
 pub mod compare;
 pub mod doc_map;
+pub mod document_list;
+pub mod editor_menu;
 pub mod editor_view;
+pub mod export;
 pub mod file_tree;
+pub mod filter_bar;
 pub mod find_panel;
 pub mod fonts;
+pub mod function_list;
 pub mod highlight;
+pub mod invisible;
 pub mod keymap;
 pub mod layout;
+pub mod line_set;
+pub mod log_rules;
 pub mod logo;
 pub mod macro_ui;
 pub mod preview;
@@ -18,5 +27,7 @@ pub mod safe_images;
 pub mod search_results;
 pub mod settings;
 pub mod theme;
+pub mod token_styles;
+pub mod viewer;
 
 pub use app::OchrepadApp;

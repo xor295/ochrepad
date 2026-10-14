@@ -263,3 +263,36 @@ fn line_removal_works_on_the_selected_lines_only() {
     t.apply(remove_empty(false));
     assert_eq!(t.text(), "x\ny\n\nz");
 }
+
+#[test]
+fn sort_by_length_then_as_text() {
+    let mut t = setup("ccc\nb\naa\nbb\n");
+    t.apply(sort(|o| o.by_length = true));
+    assert_eq!(t.text(), "b\naa\nbb\nccc\n");
+    t.apply(sort(|o| {
+        o.by_length = true;
+        o.descending = true;
+    }));
+    assert_eq!(t.text(), "ccc\nbb\naa\nb\n");
+}
+
+#[test]
+fn shuffling_keeps_the_lines_and_the_seed_decides_the_order() {
+    let lines: Vec<String> = (0..20).map(|i| format!("line {i}")).collect();
+    let text = lines.join("\n") + "\n";
+    let shuffled = |seed| {
+        let mut t = setup(&text);
+        t.apply(Action::ShuffleLines { seed });
+        t.text()
+    };
+    let a = shuffled(7);
+    assert_eq!(a, shuffled(7), "the same seed, the same order");
+    assert_ne!(a, text, "an order was changed");
+    assert_ne!(a, shuffled(8));
+    let mut got: Vec<&str> = a.lines().collect();
+    got.sort_unstable();
+    let mut want: Vec<&str> = text.lines().collect();
+    want.sort_unstable();
+    assert_eq!(got, want, "the same lines");
+    assert!(a.ends_with('\n'), "the final line break stays");
+}

@@ -60,6 +60,34 @@ cover those.
 Saving works the same way as **Save**: the file keeps its encoding and line
 endings, and is replaced in one step (see [File handling](file-handling.md)).
 
+## Undo after closing
+
+Each file's undo history is kept when you close it or ochrepad, so **Undo**
+still works after you open it again: back through the edits you made in
+earlier sessions, and **Redo** forward again. Unsaved work restored from a
+backup comes back with its history too.
+
+- A history is used only if the file is exactly as it was when the history
+  was kept. If another program changed it in between, the file opens with
+  no history (nothing is undone into text that is not there).
+- Up to about 2 MB of the newest changes are kept per file, and the histories
+  of the 300 most recently edited files. A single change bigger than that
+  (replacing a whole large file, say) ends the kept history there.
+- Undoing back to the text on disk makes the tab clean again, as usual.
+- **Edit > Clear Undo History** forgets the current document's history,
+  also the copy on disk. **Settings > Preferences > Undo history** turns
+  keeping it off.
+- The histories are in the data folder, under `history`
+  (`%APPDATA%\ochrepad\data\history` on Windows,
+  `~/.local/share/ochrepad/history` on Linux).
+
+## If ochrepad crashes
+
+If ochrepad hits a bug and has to close, it first backs up every unsaved tab
+and writes the session, as on exit, and then says so in a message. The next
+start brings the work back. (With backups turned off there is nothing to
+bring back, and the message says that too.)
+
 ## The session file
 
 The list of open tabs and the layout are kept in `session.json` in the
@@ -67,6 +95,55 @@ configuration folder (`%APPDATA%\ochrepad\config` on Windows,
 `~/.config/ochrepad` on Linux). It is updated on the backup timer and when ochrepad exits.
 Markdown previews and comparisons are not part of the session; reopen them
 from the menus.
+
+## Session files
+
+Besides the session ochrepad keeps by itself, you can save sets of files to
+open together later, as in Notepad++:
+
+- **File > Save Session…** saves the open files to a file you name
+  (`session.json` is suggested): each file's path, in tab order, with its
+  caret and the first line on screen, which one is active, and the open
+  folder. Tabs that were never saved have no file to list, so they are left
+  out, and the status bar says how many.
+- **File > Load Session…** opens the files a session file lists, beside the
+  tabs already open (none are closed). Each opens as with **File > Open**: a
+  file that is already open is switched to, and a large one opens in the
+  viewer. The files come back with their carets and scroll positions, the
+  folder opens in the sidebar, and the session's active file becomes the
+  active tab. Files that are missing or can't be opened are listed in one
+  message afterwards; the others still open.
+
+A session file is JSON, so you can also write or change one by hand:
+
+```json
+{
+  "version": 1,
+  "files": [
+    { "path": "C:\\Users\\me\\project\\src\\main.rs", "caret": 1520, "first_line": 30 },
+    { "path": "notes.md" }
+  ],
+  "active": 0,
+  "folder": "C:\\Users\\me\\project"
+}
+```
+
+- `version` is required, and is 1. A file from a later version of
+  ochrepad, with a higher number, is refused.
+- A relative `path`, such as `notes.md` here, is taken from the session
+  file's folder. (Save Session writes full paths.)
+- `caret` is where the caret goes, in bytes from the start of the text
+  (UTF-8, with each line break counting as one); past the end it goes to the
+  end. `first_line` is the first line on screen, counting from 0.
+- `active` is the active file's place in the list, counting from 0.
+- Everything but `version` and each file's `path` can be left out.
+
+A session file may come from someone else, so ochrepad reads one only if it
+is no larger than 1 MB, opens at most 200 of its files, and skips (and
+lists) an entry it can't read. On
+Windows it also opens only files on this computer's drives: a network path
+such as `\\server\share\notes.txt` is skipped as "not on this computer",
+because opening it would send your Windows credentials to that server.
 
 ## Files changed by other programs
 

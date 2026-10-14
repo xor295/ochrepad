@@ -356,7 +356,7 @@ impl Compare {
         highlighting: &mut Highlighting,
         keymap: &Keymap,
         labels: [String; 2],
-        font_size: f32,
+        look: &crate::editor_view::Look,
         find_highlight: Option<&ochrepad_core::Searcher>,
     ) {
         let now = ui.input(|i| i.time);
@@ -382,7 +382,7 @@ impl Compare {
                 Vec2::new(half_w, rect.height()),
             ),
         ];
-        let line_h = ui.fonts_mut(|f| f.row_height(&egui::FontId::monospace(font_size)));
+        let line_h = ui.fonts_mut(|f| f.row_height(&egui::FontId::monospace(look.font_size)));
         self.rows_visible = ((rect.height() / line_h).floor() as usize).max(1);
 
         // The overview strip doubles as a scrollbar for both sides.
@@ -412,7 +412,7 @@ impl Compare {
                 visuals: &visuals,
             };
             let state = &mut self.states[side];
-            state.font_size = font_size;
+            state.set_look(look);
             let mut styler = highlighting.styler(self.shown[side]);
             let label = format!(
                 "Compare {}: {}",
@@ -431,6 +431,8 @@ impl Compare {
                         styler: styler.as_mut().map(|s| s as &mut dyn LineStyler),
                         find_highlight,
                         row_style: Some(&style),
+                        changes: None,
+                        token_styles: &[],
                     },
                 );
             });
@@ -491,11 +493,7 @@ impl Compare {
 /// Built from straight RGB (Color32 is premultiplied, so a weak tint cannot
 /// be made strong again).
 fn tint(kind: RowKind, alpha: u8) -> Color32 {
-    let (r, g, b) = match kind {
-        RowKind::Removed => (225, 70, 70),
-        RowKind::Added => (60, 185, 90),
-        _ => (80, 145, 235),
-    };
+    let (r, g, b) = crate::theme::diff_rgb(kind);
     Color32::from_rgba_unmultiplied(r, g, b, alpha)
 }
 
@@ -522,7 +520,7 @@ impl RowStyle for SideStyle<'_> {
         (kind != RowKind::Equal).then(|| tint(kind, alpha))
     }
 
-    fn spans(&self, line: usize) -> (Vec<Range<usize>>, Color32) {
+    fn spans(&self, line: usize) -> Vec<(Range<usize>, Color32)> {
         let color = tint(RowKind::Changed, 140);
         let spans = self
             .line_rows
@@ -536,7 +534,7 @@ impl RowStyle for SideStyle<'_> {
                 }
             })
             .unwrap_or_default();
-        (spans, color)
+        spans.into_iter().map(|r| (r, color)).collect()
     }
 }
 

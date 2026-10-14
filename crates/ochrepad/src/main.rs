@@ -19,7 +19,33 @@ impl eframe::App for Shell {
         if let Some(b) = &mut self.bench {
             b.drive(&mut self.app);
         }
-        self.app.show(ui);
+        let shown = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.app.show(ui)));
+        if let Err(panic) = shown {
+            // A bug: keep the unsaved work (as on exit), say so, then end as
+            // the panic would have.
+            let kept = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                self.app.emergency_backup()
+            }))
+            .unwrap_or(false);
+            let what = panic
+                .downcast_ref::<&str>()
+                .map(|s| (*s).to_owned())
+                .or_else(|| panic.downcast_ref::<String>().cloned())
+                .unwrap_or_default();
+            let after = if kept {
+                "Unsaved work was backed up and will come back when you start ochrepad again."
+            } else {
+                "Backups are turned off, so unsaved work could not be kept."
+            };
+            rfd::MessageDialog::new()
+                .set_level(rfd::MessageLevel::Error)
+                .set_title("ochrepad stopped")
+                .set_description(format!(
+                    "ochrepad hit a bug and has to close.\n\n{after}\n\n{what}"
+                ))
+                .show();
+            std::panic::resume_unwind(panic);
+        }
         if let Some(b) = &mut self.bench {
             let ui_ms = start.elapsed().as_secs_f64() * 1000.0;
             let cpu_ms = f64::from(frame.info().cpu_usage.unwrap_or(0.0)) * 1000.0;
@@ -29,6 +55,11 @@ impl eframe::App for Shell {
                 }
                 println!("{}", b.report());
                 self.bench = None;
+                // The typing phases left the file unsaved: close without
+                // the save prompt (which would wait forever).
+                for buffer in self.app.editor.buffers_mut() {
+                    buffer.mark_saved();
+                }
                 ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
             }
             ui.ctx().request_repaint();
@@ -37,6 +68,7 @@ impl eframe::App for Shell {
 }
 
 fn main() -> eframe::Result {
+    let launched = Instant::now();
     let args: Vec<String> = std::env::args().skip(1).collect();
     let bench = args.iter().any(|a| a == "--bench");
     let paths: Vec<PathBuf> = args
@@ -71,8 +103,12 @@ fn main() -> eframe::Result {
                 eprintln!("ochrepad: no system CJK font found; CJK text will show as boxes");
             }
             let mut app = OchrepadApp::new();
-            // `--bench --wrap` measures with word wrap on.
+            // `--bench --wrap` measures with word wrap on; `--bench --viewer`
+            // opens files over 1 MB in the viewer for large files.
             app.settings.word_wrap = bench && args.iter().any(|a| a == "--wrap");
+            if bench && args.iter().any(|a| a == "--viewer") {
+                app.settings.viewer_threshold_mb = 1;
+            }
             if let Some(dir) = ochrepad_fileio::config_dir() {
                 app.set_macro_file(dir.join("macros.json"));
                 if let Some(data) = ochrepad_fileio::data_dir()
@@ -88,7 +124,13 @@ fn main() -> eframe::Result {
                 }
                 let t = Instant::now();
                 app.open_path(&path);
-                if bench {
+                if bench && app.focused_viewer().is_some() {
+                    println!(
+                        "opened {} in the viewer in {:?}",
+                        path.display(),
+                        t.elapsed()
+                    );
+                } else if bench {
                     println!(
                         "opened {} ({} lines) in {:?}",
                         path.display(),
@@ -99,7 +141,11 @@ fn main() -> eframe::Result {
             }
             Ok(Box::new(Shell {
                 app,
-                bench: bench.then(Bench::default),
+                bench: bench.then(|| {
+                    let mut b = Bench::default();
+                    b.launched = Some(launched);
+                    b
+                }),
             }))
         }),
     )

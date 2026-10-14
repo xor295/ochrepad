@@ -33,6 +33,11 @@ pub struct Highlighting {
 }
 
 impl Highlighting {
+    /// The syntaxes and themes, shared with background work.
+    pub fn registry(&self) -> &Arc<Registry> {
+        &self.registry
+    }
+
     pub fn new(registry: Arc<Registry>) -> Self {
         Self {
             languages: registry.language_names(),
@@ -97,6 +102,7 @@ impl Highlighting {
 
     pub fn set_language(&mut self, buffer: &mut Buffer, language: &str, dark: bool) {
         buffer.language = Some(language.to_owned());
+        buffer.comments = ochrepad_syntax::comment_syntax(language);
         buffer.fold_strategy = if language == "Markdown" {
             ochrepad_core::FoldStrategy::Markdown
         } else {
@@ -156,15 +162,20 @@ impl Highlighting {
         busy
     }
 
+    /// The size limit, as "10 MB".
+    pub fn size_limit_text(&self) -> String {
+        match self.size_limit {
+            n if n >= 1024 * 1024 => format!("{} MB", n / (1024 * 1024)),
+            n if n >= 1024 => format!("{} KB", n / 1024),
+            n => format!("{n} bytes"),
+        }
+    }
+
     /// Text for the status bar when highlighting is not running normally.
     pub fn problem(&self, buffer: BufferId) -> Option<String> {
         let state = self.buffers.get(&buffer)?;
         if state.too_large {
-            let limit = match self.size_limit {
-                n if n >= 1024 * 1024 => format!("{} MB", n / (1024 * 1024)),
-                n if n >= 1024 => format!("{} KB", n / 1024),
-                n => format!("{n} bytes"),
-            };
+            let limit = self.size_limit_text();
             return Some(format!("Highlighting off: file larger than {limit}"));
         }
         state

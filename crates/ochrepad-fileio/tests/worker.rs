@@ -51,6 +51,29 @@ fn saves_snapshots_and_deletes_in_the_background() {
 }
 
 #[test]
+fn snapshot_names_from_a_session_cannot_leave_the_backup_folder() {
+    let dir = tempfile::tempdir().unwrap();
+    let backups = dir.path().join("backup");
+    std::fs::create_dir_all(&backups).unwrap();
+    // A snapshot-shaped pair outside the folder.
+    std::fs::write(dir.path().join("secret.txt"), "secret").unwrap();
+    std::fs::write(
+        dir.path().join("secret.json"),
+        serde_json::to_string(&SnapshotInfo {
+            meta: FileMeta::default(),
+            untitled: None,
+            language: None,
+        })
+        .unwrap(),
+    )
+    .unwrap();
+    for id in ["../secret", "..\\secret", "/etc/x", "C:x", "", "a b"] {
+        assert!(read_snapshot(&backups, id).is_err(), "{id}");
+    }
+    assert!(ochrepad_fileio::worker::is_snapshot_id("18f2a3b4c5d-12"));
+}
+
+#[test]
 fn failures_come_back_as_results() {
     let dir = tempfile::tempdir().unwrap();
     let mut w = Worker::spawn();

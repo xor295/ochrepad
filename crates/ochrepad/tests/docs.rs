@@ -1,5 +1,5 @@
-//! The documentation's key-binding examples must work, and every action
-//! must be documented in docs/keymap.md.
+//! The documentation's key-binding examples must work, every action must be
+//! documented in docs/keymap.md, and the session file example must load.
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -53,6 +53,13 @@ fn table_commands(md: &str) -> Vec<String> {
             s.starts_with("{\"Action\"")
                 || s.starts_with("{\"PageUp\": {")
                 || s.starts_with("{\"PageDown\": {")
+                || [
+                    "\"ToggleOvertype\"",
+                    "\"BeginEndSelect\"",
+                    "\"BeginEndSelectColumn\"",
+                    "\"SplitLines\"",
+                ]
+                .contains(&s.as_str())
         })
         .collect()
 }
@@ -84,15 +91,30 @@ fn name(action: &Action) -> &'static str {
         Action::Replace { .. } => "Replace",
         Action::ReplaceAll { .. } => "ReplaceAll",
         Action::SelectAllMatches(_) => "SelectAllMatches",
+        Action::MultiSelectNext { .. } => "MultiSelectNext",
+        Action::MultiSelectAll { .. } => "MultiSelectAll",
         Action::ConvertCase(_) => "ConvertCase",
         Action::SortLines(_) => "SortLines",
+        Action::ShuffleLines { .. } => "ShuffleLines",
         Action::TrimTrailingWhitespace => "TrimTrailingWhitespace",
         Action::DuplicateLine => "DuplicateLine",
         Action::MoveLinesUp => "MoveLinesUp",
         Action::MoveLinesDown => "MoveLinesDown",
         Action::JoinLines => "JoinLines",
+        Action::SplitLines { .. } => "SplitLines",
         Action::RemoveEmptyLines { .. } => "RemoveEmptyLines",
         Action::RemoveDuplicateLines { .. } => "RemoveDuplicateLines",
+        Action::DeleteLine => "DeleteLine",
+        Action::TransposeLines => "TransposeLines",
+        Action::InsertLineAbove => "InsertLineAbove",
+        Action::InsertLineBelow => "InsertLineBelow",
+        Action::ReverseLines => "ReverseLines",
+        Action::TrimLeadingWhitespace => "TrimLeadingWhitespace",
+        Action::TrimLeadingAndTrailingWhitespace => "TrimLeadingAndTrailingWhitespace",
+        Action::EolToSpace => "EolToSpace",
+        Action::TabsToSpaces => "TabsToSpaces",
+        Action::SpacesToTabs => "SpacesToTabs",
+        Action::ColumnInsert(_) => "ColumnInsert",
         Action::Fold => "Fold",
         Action::Unfold => "Unfold",
         Action::ToggleFold => "ToggleFold",
@@ -100,12 +122,35 @@ fn name(action: &Action) -> &'static str {
         Action::UnfoldAll => "UnfoldAll",
         Action::FoldLevel(_) => "FoldLevel",
         Action::UnfoldLevel(_) => "UnfoldLevel",
+        Action::GoToLine { .. } => "GoToLine",
+        Action::Indent => "Indent",
+        Action::Unindent => "Unindent",
+        Action::ConvertIndentation { .. } => "ConvertIndentation",
+        Action::ToggleLineComment => "ToggleLineComment",
+        Action::CommentLines => "CommentLines",
+        Action::UncommentLines => "UncommentLines",
+        Action::ToggleBlockComment => "ToggleBlockComment",
+        Action::GoToMatchingBracket => "GoToMatchingBracket",
+        Action::SelectToMatchingBracket => "SelectToMatchingBracket",
+        Action::FormatJson { .. } => "FormatJson",
+        Action::MinifyJson => "MinifyJson",
+        Action::Encode(_) => "Encode",
+        Action::Decode(_) => "Decode",
+        Action::ToggleBookmark => "ToggleBookmark",
+        Action::NextBookmark => "NextBookmark",
+        Action::PrevBookmark => "PrevBookmark",
+        Action::ClearBookmarks => "ClearBookmarks",
+        Action::InverseBookmarks => "InverseBookmarks",
+        Action::BookmarkMatches(_) => "BookmarkMatches",
+        Action::RemoveBookmarkedLines => "RemoveBookmarkedLines",
+        Action::RemoveUnbookmarkedLines => "RemoveUnbookmarkedLines",
+        Action::ReplaceBookmarkedLines(_) => "ReplaceBookmarkedLines",
         Action::Undo => "Undo",
         Action::Redo => "Redo",
     }
 }
 
-const ALL: [&str; 41] = [
+const ALL: [&str; 79] = [
     "InsertText",
     "Paste",
     "InsertTab",
@@ -129,15 +174,30 @@ const ALL: [&str; 41] = [
     "Replace",
     "ReplaceAll",
     "SelectAllMatches",
+    "MultiSelectNext",
+    "MultiSelectAll",
     "ConvertCase",
     "SortLines",
+    "ShuffleLines",
     "TrimTrailingWhitespace",
     "DuplicateLine",
     "MoveLinesUp",
     "MoveLinesDown",
     "JoinLines",
+    "SplitLines",
     "RemoveEmptyLines",
     "RemoveDuplicateLines",
+    "DeleteLine",
+    "TransposeLines",
+    "InsertLineAbove",
+    "InsertLineBelow",
+    "ReverseLines",
+    "TrimLeadingWhitespace",
+    "TrimLeadingAndTrailingWhitespace",
+    "EolToSpace",
+    "TabsToSpaces",
+    "SpacesToTabs",
+    "ColumnInsert",
     "Fold",
     "Unfold",
     "ToggleFold",
@@ -145,6 +205,29 @@ const ALL: [&str; 41] = [
     "UnfoldAll",
     "FoldLevel",
     "UnfoldLevel",
+    "GoToLine",
+    "Indent",
+    "Unindent",
+    "ConvertIndentation",
+    "ToggleLineComment",
+    "CommentLines",
+    "UncommentLines",
+    "ToggleBlockComment",
+    "GoToMatchingBracket",
+    "SelectToMatchingBracket",
+    "FormatJson",
+    "MinifyJson",
+    "Encode",
+    "Decode",
+    "ToggleBookmark",
+    "NextBookmark",
+    "PrevBookmark",
+    "ClearBookmarks",
+    "InverseBookmarks",
+    "BookmarkMatches",
+    "RemoveBookmarkedLines",
+    "RemoveUnbookmarkedLines",
+    "ReplaceBookmarkedLines",
     "Undo",
     "Redo",
 ];
@@ -159,6 +242,22 @@ fn keymap_examples_in_the_docs_are_valid_keymaps() {
         assert!(!blocks.is_empty(), "{file} has no JSON examples");
         for block in blocks {
             if let Err(e) = Keymap::with_file(&block) {
+                panic!("{file}: {e}\n{block}");
+            }
+        }
+    }
+}
+
+#[test]
+fn the_session_file_example_is_a_session_file() {
+    let file = "docs/backups-and-session.md";
+    let blocks = json_blocks(&read(file));
+    assert!(!blocks.is_empty(), "{file} has no JSON example");
+    for block in blocks {
+        let session = ochrepad::app::parse_session(block.as_bytes())
+            .unwrap_or_else(|e| panic!("{file}: {e}\n{block}"));
+        for entry in session.files {
+            if let Err(e) = entry {
                 panic!("{file}: {e}\n{block}");
             }
         }

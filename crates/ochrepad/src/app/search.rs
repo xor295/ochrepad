@@ -71,7 +71,13 @@ impl OchrepadApp {
     /// instead (or the line's start). A file that was not open is opened
     /// and looked up the same way.
     pub fn go_to_result(&mut self, go: GoTo) {
+        if let Source::Viewer(id) = &go.source {
+            let id = *id;
+            self.go_to_viewer_result(id, go);
+            return;
+        }
         let (buffer, exact) = match &go.source {
+            Source::Viewer(_) => return,
             Source::Buffer(b) => (*b, true),
             Source::Path(path) => {
                 self.open_path(path);
@@ -192,7 +198,9 @@ impl OchrepadApp {
             .open_buffers()
             .into_iter()
             .filter_map(|b| {
-                let doc = self.editor.buffer(b)?.doc();
+                // A Read-Only document refuses the edit: it is left out.
+                let buf = self.editor.buffer(b).filter(|buf| !buf.read_only)?;
+                let doc = buf.doc();
                 let n = searcher.matches(doc, ByteOffset(0)..doc.len()).count();
                 (n > 0).then_some((b, n))
             })

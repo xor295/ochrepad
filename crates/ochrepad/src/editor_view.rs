@@ -4,6 +4,7 @@ use egui::{
     Align2, CursorIcon, Event, EventFilter, FontId, Id, ImeEvent, Pos2, Rect, Response, Sense,
     Stroke, Ui, Vec2, WidgetInfo, WidgetType,
 };
+use ochrepad_core::tags::TagPair;
 use ochrepad_core::{
     Action, ByteOffset, DisplayMap, Document, Editor, Motion, RowPos, SearchOptions, SearchQuery,
     Searcher, Selection, SelectionSet, ViewId,
@@ -28,6 +29,9 @@ const BLINK_HALF_PERIOD: f64 = 0.53;
 const SCROLLBAR_W: f32 = 12.0;
 const TEXT_PAD: f32 = 4.0;
 const MULTI_CLICK_TIME: f64 = 0.5;
+/// The most of one grapheme laid out for drawing (an emoji sequence is a
+/// few dozen bytes).
+const MAX_GRAPHEME_BYTES: usize = 256;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum DragMode {
@@ -50,9 +54,47 @@ enum BarDrag {
     Horizontal { grab: f32 },
 }
 
+/// What View > Show Symbol draws over the text.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Symbols {
+    /// Spaces as dots and tabs as arrows.
+    pub space_tab: bool,
+    /// Each line's ending, named, after its text.
+    pub eol: bool,
+    /// Format characters and unusual spaces as labelled boxes (control
+    /// characters always are).
+    pub non_printing: bool,
+    /// Dotted lines at each indent level inside the indentation.
+    pub indent_guides: bool,
+    /// A mark at the end of each row that a wrapped line continues from.
+    pub wrap: bool,
+}
+
+/// How the app wants every editor drawn: the (zoomed) font size and the
+/// View menu's symbols.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Look {
+    pub font_size: f32,
+    pub symbols: Symbols,
+    /// A vertical line after this column.
+    pub edge_column: Option<usize>,
+}
+
+impl Default for Look {
+    fn default() -> Self {
+        Self {
+            font_size: 14.0,
+            symbols: Symbols::default(),
+            edge_column: None,
+        }
+    }
+}
+
 pub struct EditorViewState {
     cache: LayoutCache,
     pub font_size: f32,
+    pub symbols: Symbols,
+    pub edge_column: Option<usize>,
     last_activity: f64,
     preedit: Option<String>,
     drag: Option<Drag>,
@@ -63,15 +105,31 @@ pub struct EditorViewState {
     request_focus: bool,
     /// The selected text and its searcher, for smart highlighting.
     smart: Option<(String, Option<Searcher>)>,
+    /// The tag names outlined for the caret, and what they were found for.
+    tags: Option<(TagsKey, Option<TagPair>)>,
     /// Show the fold margin (chevrons) in the gutter.
     pub fold_margin: bool,
     /// Wrap lines at the pane's width.
     pub word_wrap: bool,
     /// Show the document map beside the text.
     pub document_map: bool,
+    /// The last error from an action a key ran (shown by the app).
+    pub last_error: Option<ochrepad_core::ActionError>,
     map_cache: crate::doc_map::MapCache,
     /// Dragging the map's viewport marker: where it was grabbed, from its top.
     map_drag: Option<f32>,
+    /// The line the last right-click was on (the context menu acts on it).
+    pub context_line: Option<usize>,
+    /// The file the context menu offers to open, once it has looked.
+    pub context_file: Option<Option<crate::editor_menu::FileAt>>,
+    /// The web link the context menu offers to open, once it has looked.
+    pub context_url: Option<Option<String>>,
+    /// How many columns of text the pane shows (Split Lines' width when
+    /// there is no vertical edge).
+    pub text_cols: usize,
+    /// Paste to (Replace) Bookmarked Lines asked for the clipboard at this
+    /// time: the paste that answers goes to the bookmarked lines.
+    paste_to_bookmarks: Option<f64>,
 }
 
 impl Default for EditorViewState {
@@ -80,10 +138,18 @@ impl Default for EditorViewState {
             fold_margin: true,
             word_wrap: false,
             document_map: true,
+            last_error: None,
             map_cache: Default::default(),
             map_drag: None,
+            context_line: None,
+            context_file: None,
+            context_url: None,
+            text_cols: 80,
+            paste_to_bookmarks: None,
             cache: LayoutCache::default(),
             font_size: 14.0,
+            symbols: Symbols::default(),
+            edge_column: None,
             last_activity: 0.0,
             preedit: None,
             drag: None,
@@ -93,11 +159,19 @@ impl Default for EditorViewState {
             reveal_caret: true,
             request_focus: false,
             smart: None,
+            tags: None,
         }
     }
 }
 
 impl EditorViewState {
+    /// Takes the app's font size and symbols.
+    pub fn set_look(&mut self, look: &Look) {
+        self.font_size = look.font_size;
+        self.symbols = look.symbols;
+        self.edge_column = look.edge_column;
+    }
+
     pub fn request_focus(&mut self) {
         self.request_focus = true;
     }
@@ -109,6 +183,19 @@ impl EditorViewState {
 
     pub fn preedit(&self) -> Option<&str> {
         self.preedit.as_deref()
+    }
+
+    /// The tag names outlined for the caret: those in the start and end
+    /// tag of the element it is in.
+    pub fn matched_tags(&self) -> Option<&TagPair> {
+        self.tags.as_ref().and_then(|(_, pair)| pair.as_ref())
+    }
+
+    /// The next paste (asked for now, at `now`) replaces the text of each
+    /// bookmarked line instead of going to the carets.
+    pub fn paste_to_bookmarks(&mut self, now: f64) {
+        self.paste_to_bookmarks = Some(now);
+        self.request_focus = true;
     }
 }
 
@@ -190,25 +277,37 @@ impl Top {
     }
 }
 
+/// The tab width of `buffer` (each document has its own).
+fn tab_width_of(editor: &Editor, buffer: ochrepad_core::BufferId) -> usize {
+    editor.buffer(buffer).map_or(4, |b| b.indent.width)
+}
+
 /// The display rows of `view`.
 fn display_map(editor: &Editor, view: ViewId) -> DisplayMap<'_> {
     let v = editor.view(view).expect("view exists");
     let b = editor.buffer(v.buffer()).expect("view's buffer exists");
-    DisplayMap::new(b, v, editor.settings.tab_width)
+    DisplayMap::new(b, v)
 }
 
 enum Op {
     Apply(Action),
     Copy,
     Cut,
+    ToggleOvertype,
+    BeginEndSelect { column: bool },
 }
 
-/// Per-row colours from outside the editor: a compare view's diff.
+/// Per-row colours from outside the editor: a compare view's diff, or a
+/// log's highlight rules.
 pub trait RowStyle {
     /// The background of `row` (`blank` for a padding row).
     fn background(&self, row: RowPos, blank: bool) -> Option<egui::Color32>;
-    /// Byte ranges (within the line) to tint on `line`, and their colour.
-    fn spans(&self, line: usize) -> (Vec<std::ops::Range<usize>>, egui::Color32);
+    /// Byte ranges (within the line) to tint on `line`, each with its colour.
+    fn spans(&self, line: usize) -> Vec<(std::ops::Range<usize>, egui::Color32)>;
+    /// How opaque `line`'s text is drawn (below 1 dims it).
+    fn text_opacity(&self, _line: usize) -> f32 {
+        1.0
+    }
 }
 
 /// Optional extras drawn over the text.
@@ -220,6 +319,11 @@ pub struct Decorations<'a> {
     pub find_highlight: Option<&'a ochrepad_core::Searcher>,
     /// Row backgrounds and spans (the compare view).
     pub row_style: Option<&'a dyn RowStyle>,
+    /// The lines changed since the file was saved.
+    pub changes: Option<&'a crate::change_history::LineMarks>,
+    /// Search > Style All Occurrences of Token: what to highlight, in which
+    /// colour.
+    pub token_styles: &'a [(&'a Searcher, egui::Color32)],
 }
 
 /// Shows the editor for `view` filling the available space. `label` names the
@@ -314,13 +418,15 @@ pub fn editor_view(
 
     // The wrap width follows the pane (the core's motions use it). One cell
     // stays free at the right for the caret at the end of a full row.
-    let wrap_cols = wrap.then(|| {
+    let text_cols = {
         let line_count = doc_of(editor, buffer_id).line_count();
         let content = geometry(line_count, line_count).content;
         ((content.width() - TEXT_PAD - cell_w) / cell_w)
             .floor()
             .max(1.0) as usize
-    });
+    };
+    state.text_cols = text_cols;
+    let wrap_cols = wrap.then_some(text_cols);
     if let Some(v) = editor.view_mut(view)
         && v.wrap_cols != wrap_cols
     {
@@ -363,6 +469,16 @@ pub fn editor_view(
                             extend: *extend,
                         }))
                     }
+                    Some(EditorCommand::ToggleOvertype) => ops.push(Op::ToggleOvertype),
+                    Some(EditorCommand::BeginEndSelect) => {
+                        ops.push(Op::BeginEndSelect { column: false })
+                    }
+                    Some(EditorCommand::BeginEndSelectColumn) => {
+                        ops.push(Op::BeginEndSelect { column: true })
+                    }
+                    Some(EditorCommand::SplitLines) => ops.push(Op::Apply(Action::SplitLines {
+                        width: state.split_width(),
+                    })),
                     None => {}
                 },
                 Event::Text(t)
@@ -378,7 +494,16 @@ pub fn editor_view(
                         .ctx()
                         .data(|d| d.get_temp::<String>(rect_clip_id()))
                         .is_some_and(|clip| clip == t);
-                    ops.push(Op::Apply(if block {
+                    // Asked for by Paste to (Replace) Bookmarked Lines just
+                    // now (an empty clipboard sends nothing, so a later
+                    // paste must not count).
+                    let to_marks = state
+                        .paste_to_bookmarks
+                        .take()
+                        .is_some_and(|asked| now - asked < 2.0);
+                    ops.push(Op::Apply(if to_marks {
+                        Action::ReplaceBookmarkedLines(t)
+                    } else if block {
                         Action::PasteBlock(t)
                     } else {
                         Action::Paste(t)
@@ -402,13 +527,17 @@ pub fn editor_view(
     for op in ops {
         match op {
             Op::Apply(a) => {
-                let _ = editor.apply(view, a);
+                if let Err(e) = editor.apply(view, a) {
+                    state.last_error = Some(e);
+                }
             }
             Op::Copy | Op::Cut => {
                 if copy_selection(ui.ctx(), editor, view) && matches!(op, Op::Cut) {
                     let _ = editor.apply(view, Action::InsertText(String::new()));
                 }
             }
+            Op::ToggleOvertype => editor.settings.overtype = !editor.settings.overtype,
+            Op::BeginEndSelect { column } => begin_end_select(editor, view, state, column),
         }
         state.reveal_caret = true;
         state.last_activity = now;
@@ -447,6 +576,12 @@ pub fn editor_view(
 
     // --- Wheel -------------------------------------------------------------------
     if response.contains_pointer() {
+        // Ctrl+wheel zooms (egui gives no scroll delta while Ctrl is held).
+        let zoom = ui.input(|i| wheel_zoom_steps(&i.events));
+        if zoom != 0.0 {
+            ui.ctx()
+                .data_mut(|d| *d.get_temp_mut_or_default::<f32>(zoom_id()) += zoom);
+        }
         let d = ui.input(|i| i.smooth_scroll_delta);
         if d != Vec2::ZERO {
             top = top.scrolled(&rows, -(d.y / line_h) as f64);
@@ -568,6 +703,45 @@ pub fn editor_view(
         editor.toggle_fold_at(view, line);
         fold_click = true;
         state.last_activity = now;
+    }
+
+    // --- Right click: the context menu acts where it was opened -----------------
+    // As in Scintilla: a click outside the selection moves the caret there
+    // (on a line number, to the line's start); on the selection it stays.
+    let secondary = ui.input(|i| i.pointer.secondary_pressed());
+    if secondary && response.contains_pointer() {
+        // On a scrollbar or the map: the menu has no line to act on.
+        state.context_line = None;
+        state.context_file = None;
+        state.context_url = None;
+    }
+    if secondary
+        && state.bar_drag.is_none()
+        && let Some(p) = pointer
+        && response.contains_pointer()
+        && (f.content.contains(p) || f.gutter.contains(p))
+    {
+        let hit = hit_test(editor, view, &mut state.cache, &f, top, x_off, ui, p);
+        let doc = doc_of(editor, buffer_id);
+        let line = doc.line_of(hit);
+        let in_gutter = f.gutter.contains(p);
+        let on_selection = editor.view(view).is_some_and(|v| {
+            v.selections.ranges().iter().any(|s| {
+                !s.is_empty()
+                    && if in_gutter {
+                        doc.line_of(s.start()) <= line && line <= doc.line_of(s.end())
+                    } else {
+                        s.start() <= hit && hit <= s.end()
+                    }
+            })
+        });
+        if !on_selection {
+            let at = if in_gutter { doc.line_start(line) } else { hit };
+            let _ = editor.apply(view, Action::SetSelections(SelectionSet::caret(at)));
+        }
+        state.context_line = Some(line);
+        state.last_activity = now;
+        response.request_focus();
     }
 
     // --- Mouse in the text area ------------------------------------------------
@@ -816,6 +990,16 @@ pub fn editor_view(
     }
     // Fold chevrons for every header show while the pointer is on the gutter.
     let show_chevrons = hover.is_some_and(|p| f.gutter.contains(p));
+    // The name of a special character under the pointer, while it is drawn.
+    let tip = hover.filter(|p| f.content.contains(*p)).and_then(|p| {
+        let (layout, x) = layout_at(editor, view, &mut state.cache, &f, top, x_off, ui, p);
+        let cell = layout
+            .specials
+            .iter()
+            .find(|s| s.x <= x && x < s.x + s.width)?;
+        let s = crate::invisible::special(&layout.text[cell.range.clone()])?;
+        (s.control || state.symbols.non_printing).then(|| crate::invisible::describe(&s))
+    });
 
     paint(
         ui,
@@ -836,8 +1020,50 @@ pub fn editor_view(
         decorations.styler,
         decorations.find_highlight,
         decorations.row_style,
+        decorations.changes,
+        decorations.token_styles,
     );
-    response
+    match tip {
+        Some(tip) => response.on_hover_text_at_pointer(tip),
+        None => response,
+    }
+}
+
+/// Where Ctrl+wheel zoom steps wait for the app (see [`take_zoom_steps`]).
+pub(crate) fn zoom_id() -> Id {
+    Id::new("ochrepad-zoom-steps")
+}
+
+/// Zoom steps in this frame's Ctrl+wheel events: one per notch of a mouse
+/// wheel, or per 50 points of a trackpad; positive zooms in.
+pub(crate) fn wheel_zoom_steps(events: &[Event]) -> f32 {
+    events
+        .iter()
+        .map(|e| match e {
+            Event::MouseWheel {
+                unit,
+                delta,
+                modifiers,
+                ..
+            } if modifiers.command => match unit {
+                egui::MouseWheelUnit::Line => delta.y,
+                egui::MouseWheelUnit::Point => delta.y / 50.0,
+                egui::MouseWheelUnit::Page => delta.y * 3.0,
+            },
+            _ => 0.0,
+        })
+        .sum()
+}
+
+/// The whole zoom steps Ctrl+wheel over an editor asked for since the last
+/// call; a trackpad's fraction of a step is kept for next time.
+pub fn take_zoom_steps(ctx: &egui::Context) -> i32 {
+    ctx.data_mut(|d| {
+        let acc = d.get_temp_mut_or_default::<f32>(zoom_id());
+        let whole = acc.trunc();
+        *acc -= whole;
+        whole as i32
+    })
 }
 
 /// A fold chevron in the fold margin of the row at `y`: pointing right when
@@ -870,6 +1096,52 @@ fn paint_chevron(
         visuals.weak_text_color()
     };
     painter.line(points.to_vec(), Stroke::new(1.5, color));
+}
+
+/// The change history's bar for `line` on the row at `y`, at the gutter's
+/// right edge, and on its first row a wedge if lines were deleted above it.
+fn paint_change_marks(
+    painter: &egui::Painter,
+    f: &Frame,
+    marks: &crate::change_history::LineMarks,
+    line: usize,
+    first_row: bool,
+    y: f32,
+) {
+    use crate::change_history::Mark;
+    use ochrepad_core::diff::RowKind;
+    if let Some(mark) = marks.mark(line) {
+        let kind = match mark {
+            Mark::Added => RowKind::Added,
+            Mark::Changed => RowKind::Changed,
+        };
+        let (r, g, b) = crate::theme::diff_rgb(kind);
+        let bar = Rect::from_min_max(
+            Pos2::new(f.gutter.max.x - 4.0, y),
+            Pos2::new(f.gutter.max.x - 1.0, y + f.line_h),
+        );
+        painter.rect_filled(bar, 0.0, egui::Color32::from_rgb(r, g, b));
+    }
+    if first_row && marks.deleted_before(line) {
+        paint_deleted_wedge(painter, f, y);
+    }
+}
+
+/// A red wedge pointing at the text, on the boundary at `y` where lines
+/// were deleted.
+fn paint_deleted_wedge(painter: &egui::Painter, f: &Frame, y: f32) {
+    let (r, g, b) = crate::theme::diff_rgb(ochrepad_core::diff::RowKind::Removed);
+    let s = (f.line_h * 0.22).round().max(3.0);
+    let tip = Pos2::new(f.gutter.max.x - 1.0, y);
+    painter.add(egui::Shape::convex_polygon(
+        vec![
+            tip + Vec2::new(-s * 1.4, -s),
+            tip,
+            tip + Vec2::new(-s * 1.4, s),
+        ],
+        egui::Color32::from_rgb(r, g, b),
+        Stroke::NONE,
+    ));
 }
 
 /// The `⋯` marker after a folded line whose text ends at `x_end`.
@@ -917,12 +1189,7 @@ fn fold_target(
     let folded = v.folds().is_folded(row.line);
     if in_margin {
         let header = folded
-            || ochrepad_core::fold::is_header(
-                b.doc(),
-                row.line,
-                b.fold_strategy,
-                editor.settings.tab_width,
-            );
+            || ochrepad_core::fold::is_header(b.doc(), row.line, b.fold_strategy, b.indent.width);
         return (row.sub == 0 && header).then_some(row.line);
     }
     if !folded || rows.row_range(row).end != b.doc().line_end(row.line) {
@@ -948,18 +1215,38 @@ pub(crate) fn paint_line_text(
 ) {
     let clip = painter.clip_rect();
     for piece in &layout.pieces {
-        let px = x0 + piece.x;
+        let mut px = x0 + piece.x;
         if px > clip.max.x {
             break;
         }
         if px + piece.width < clip.min.x {
             continue;
         }
-        let galley = painter.layout_no_wrap(
-            layout.text[piece.range.clone()].to_owned(),
-            font.clone(),
-            piece.color,
-        );
+        let mut range = piece.range.clone();
+        if !piece.clip {
+            // An ASCII run: one byte per cell. Lay out only the part on
+            // screen; a long line would otherwise produce more vertices
+            // than the GPU buffer holds.
+            let cell = piece.width / range.len() as f32;
+            if px < clip.min.x {
+                let skip = (((clip.min.x - px) / cell).floor() as usize).min(range.len());
+                range.start += skip;
+                px += skip as f32 * cell;
+            }
+            let keep = ((clip.max.x - px) / cell).ceil().max(0.0) as usize + 1;
+            range.end = range.end.min(range.start + keep);
+        } else if range.len() > MAX_GRAPHEME_BYTES {
+            // One grapheme: a letter with thousands of marks on it, say.
+            // Its first ones are all its cells can show, and all of it
+            // would overflow the GPU buffer.
+            let mut end = range.start + MAX_GRAPHEME_BYTES;
+            while !layout.text.is_char_boundary(end) {
+                end -= 1;
+            }
+            range.end = end;
+        }
+        let galley =
+            painter.layout_no_wrap(layout.text[range].to_owned(), font.clone(), piece.color);
         if piece.clip {
             let slot = Rect::from_min_size(Pos2::new(px, y), Vec2::new(piece.width, line_h));
             painter.with_clip_rect(slot.intersect(clip)).galley(
@@ -970,6 +1257,259 @@ pub(crate) fn paint_line_text(
         } else {
             painter.galley(Pos2::new(px, y), galley, piece.color);
         }
+    }
+}
+
+/// Colours and sizes for Show Symbol's marks.
+struct MarkStyle {
+    /// Whitespace dots and arrows, line endings, the wrap mark.
+    symbol: egui::Color32,
+    /// Indent guides and the vertical edge.
+    guide: egui::Color32,
+    special_bg: egui::Color32,
+    special_text: egui::Color32,
+    /// The line-ending pills' text.
+    small: FontId,
+}
+
+impl MarkStyle {
+    fn new(visuals: &egui::Visuals, f: &Frame) -> Self {
+        let weak = visuals.weak_text_color();
+        let warn = visuals.warn_fg_color;
+        let alpha = if visuals.dark_mode { 80 } else { 70 };
+        Self {
+            symbol: weak.gamma_multiply(0.8),
+            guide: weak.gamma_multiply(0.5),
+            special_bg: egui::Color32::from_rgba_unmultiplied(warn.r(), warn.g(), warn.b(), alpha),
+            special_text: visuals.text_color(),
+            small: FontId::proportional(f.font.size * 0.62),
+        }
+    }
+}
+
+/// Show Symbol's marks over a row's text: dots for spaces and arrows for
+/// tabs, and the boxes of special characters (control characters always,
+/// the others with Show Non-Printing Characters). `x0` is the screen x of
+/// the line's first cell.
+fn paint_marks(
+    painter: &egui::Painter,
+    layout: &LineLayout,
+    x0: f32,
+    y: f32,
+    f: &Frame,
+    symbols: Symbols,
+    m: &MarkStyle,
+) {
+    let clip = painter.clip_rect();
+    let mid = y + f.line_h / 2.0;
+    if symbols.space_tab {
+        let bytes = layout.text.as_bytes();
+        let dot = (f.cell_w * 0.09).max(1.0);
+        for (at, x, next) in layout.graphemes_between(clip.min.x - x0, clip.max.x - x0) {
+            match bytes[at] {
+                b' ' => {
+                    painter.circle_filled(Pos2::new(x0 + (x + next) / 2.0, mid), dot, m.symbol);
+                }
+                b'\t' => paint_tab_arrow(painter, x0 + x, x0 + next, mid, f.cell_w, m.symbol),
+                _ => {}
+            }
+        }
+    }
+    for cell in &layout.specials {
+        let left = x0 + cell.x;
+        if left > clip.max.x || left + cell.width < clip.min.x {
+            continue;
+        }
+        let Some(s) = crate::invisible::special(&layout.text[cell.range.clone()]) else {
+            continue;
+        };
+        if s.control || symbols.non_printing {
+            let r = Rect::from_min_size(
+                Pos2::new(left + 0.5, y + 1.5),
+                Vec2::new(cell.width - 1.0, f.line_h - 3.0),
+            );
+            paint_special(painter, r, s.abbrev, f.font.size, m);
+        }
+    }
+}
+
+/// A tab's arrow across its cells.
+fn paint_tab_arrow(
+    painter: &egui::Painter,
+    start: f32,
+    end: f32,
+    y: f32,
+    cell_w: f32,
+    color: egui::Color32,
+) {
+    let pad = cell_w * 0.2;
+    let (a, b) = (start + pad, end - pad);
+    if b <= a {
+        return;
+    }
+    let stroke = Stroke::new(1.0, color);
+    let head = (cell_w * 0.3).min(b - a);
+    painter.line_segment([Pos2::new(a, y), Pos2::new(b, y)], stroke);
+    painter.line(
+        vec![
+            Pos2::new(b - head, y - head),
+            Pos2::new(b, y),
+            Pos2::new(b - head, y + head),
+        ],
+        stroke,
+    );
+}
+
+/// Smallest text drawn in a special character's box, in points; below it
+/// the box stays empty and only its tooltip names the character.
+const MIN_LABEL_SIZE: f32 = 7.0;
+
+/// A special character's box, with its abbreviation in one row or two when
+/// that is still legible (a box is only as wide as the character's cells).
+fn paint_special(painter: &egui::Painter, r: Rect, abbrev: &str, font_size: f32, m: &MarkStyle) {
+    painter.rect_filled(r, 2.0, m.special_bg);
+    let layout = |text: &str, size: f32| {
+        painter.layout_no_wrap(text.to_owned(), FontId::proportional(size), m.special_text)
+    };
+    let avail = r.width() - 1.0;
+    let max = font_size * 0.62;
+    let one = layout(abbrev, max);
+    let size = max * (avail / one.size().x).min(1.0);
+    if size >= max * 0.8 || (size >= MIN_LABEL_SIZE && abbrev.len() <= 2) {
+        let g = if size < max {
+            layout(abbrev, size)
+        } else {
+            one
+        };
+        painter.galley(r.center() - g.size() / 2.0, g, m.special_text);
+        return;
+    }
+    let (upper, lower) = abbrev.split_at(abbrev.len().div_ceil(2));
+    let wide = layout(upper, max).size().x.max(layout(lower, max).size().x);
+    let size = (max * (avail / wide).min(1.0)).min(r.height() / 2.4);
+    if size < MIN_LABEL_SIZE {
+        return;
+    }
+    let (gu, gl) = (layout(upper, size), layout(lower, size));
+    let top = r.center().y - (gu.size().y + gl.size().y) / 2.0;
+    let (cx, h) = (r.center().x, gu.size().y);
+    painter.galley(Pos2::new(cx - gu.size().x / 2.0, top), gu, m.special_text);
+    painter.galley(
+        Pos2::new(cx - gl.size().x / 2.0, top + h),
+        gl,
+        m.special_text,
+    );
+}
+
+/// The line ending's name in a pill after the line's text.
+fn paint_eol(painter: &egui::Painter, x_end: f32, y: f32, f: &Frame, label: &str, m: &MarkStyle) {
+    let g = painter.layout_no_wrap(label.to_owned(), m.small.clone(), m.symbol);
+    let h = (f.line_h - 6.0).max(g.size().y);
+    let r = Rect::from_min_size(
+        Pos2::new(x_end + 2.0, y + (f.line_h - h) / 2.0),
+        Vec2::new(g.size().x + 6.0, h),
+    );
+    painter.rect_filled(r, 3.0, m.symbol.gamma_multiply(0.18));
+    painter.galley(r.center() - g.size() / 2.0, g, m.symbol);
+}
+
+/// The hooked arrow in the free cell after a row that its line continues
+/// from (word wrap).
+fn paint_wrap_mark(painter: &egui::Painter, x: f32, y: f32, f: &Frame, color: egui::Color32) {
+    let s = f.cell_w * 0.3;
+    let (cx, cy) = (x + f.cell_w * 0.5, y + f.line_h * 0.5);
+    let stroke = Stroke::new(1.0, color);
+    let tip = Pos2::new(cx - s, cy + s * 0.5);
+    painter.line(
+        vec![
+            Pos2::new(cx + s, cy - s),
+            Pos2::new(cx + s, cy + s * 0.5),
+            tip,
+        ],
+        stroke,
+    );
+    painter.line(
+        vec![
+            tip + Vec2::new(s * 0.6, -s * 0.6),
+            tip,
+            tip + Vec2::new(s * 0.6, s * 0.6),
+        ],
+        stroke,
+    );
+}
+
+/// The width in columns of `line`'s leading whitespace, or `None` when the
+/// line is blank (empty or only whitespace).
+fn leading_cols(doc: &Document, line: usize, tab_width: usize) -> Option<usize> {
+    let end = doc.line_end(line);
+    let mut at = doc.line_start(line);
+    let mut col = 0;
+    while at < end {
+        match doc.char_at(at)? {
+            ' ' => col += 1,
+            '\t' => col += tab_width - col % tab_width,
+            _ => return Some(col),
+        }
+        at = ByteOffset(at.0 + 1);
+    }
+    None
+}
+
+/// The indentation that indent guides follow on `line`: its own, or for a
+/// blank line the deeper of the nearest non-blank lines above and below
+/// (looking at most 100 lines each way), so guides run through blank lines
+/// inside a block.
+fn guide_indent(doc: &Document, line: usize, tab_width: usize) -> usize {
+    if let Some(cols) = leading_cols(doc, line, tab_width) {
+        return cols;
+    }
+    let above = (line.saturating_sub(100)..line)
+        .rev()
+        .find_map(|l| leading_cols(doc, l, tab_width));
+    let below =
+        (line + 1..doc.line_count().min(line + 101)).find_map(|l| leading_cols(doc, l, tab_width));
+    above.unwrap_or(0).max(below.unwrap_or(0))
+}
+
+/// Dotted indent guides on one row, at every indent level inside the
+/// line's indentation from the second level on (the first would sit on the
+/// text's left edge), as Notepad++ draws them. `x0` is the screen x of
+/// column 0.
+#[allow(clippy::too_many_arguments)]
+fn paint_indent_guides(
+    painter: &egui::Painter,
+    doc: &Document,
+    rows: &DisplayMap,
+    row: RowPos,
+    x0: f32,
+    y: f32,
+    f: &Frame,
+    width: usize,
+    color: egui::Color32,
+) {
+    let width = width.max(1);
+    let mut limit = guide_indent(doc, row.line, width);
+    if rows.text_sub(row) != Some(0) {
+        // A wrapped line's later rows are indented at most this much.
+        limit = limit.min(rows.row_indent(row));
+    }
+    let clip = painter.clip_rect();
+    let stroke = Stroke::new(1.0, color);
+    let mut col = width;
+    while col < limit {
+        let x = (x0 + col as f32 * f.cell_w).round() + 0.5;
+        if x > clip.max.x {
+            break;
+        }
+        if x >= clip.min.x {
+            painter.extend(egui::Shape::dashed_line(
+                &[Pos2::new(x, y), Pos2::new(x, y + f.line_h)],
+                stroke,
+                1.0,
+                2.0,
+            ));
+        }
+        col += width;
     }
 }
 
@@ -1011,6 +1551,39 @@ fn smart_searcher<'s>(
         *cache = Some((text, Searcher::new(&query).ok()));
     }
     cache.as_ref().and_then(|(_, s)| s.as_ref())
+}
+
+/// What the tag names were found for: the buffer, its text's revision, the
+/// caret, and whether HTML's rules applied.
+type TagsKey = (
+    ochrepad_core::BufferId,
+    ochrepad_core::history::Revision,
+    ByteOffset,
+    bool,
+);
+
+/// The tag names to outline, as Notepad++ highlights matching tags: in a
+/// markup language, with one caret and nothing selected, the names in the
+/// start and end tag of the element at the caret. They are found again only
+/// when the text or the caret changes.
+fn matching_tag_names<'s>(
+    cache: &'s mut Option<(TagsKey, Option<TagPair>)>,
+    buffer: &ochrepad_core::Buffer,
+    sels: &SelectionSet,
+) -> Option<&'s TagPair> {
+    let caret = sels.primary();
+    let markup = buffer.language.as_deref().and_then(ochrepad_syntax::markup);
+    let Some(markup) = markup.filter(|_| sels.len() == 1 && caret.is_empty()) else {
+        *cache = None;
+        return None;
+    };
+    let html = markup == ochrepad_syntax::Markup::Html;
+    let key = (buffer.id(), buffer.revision(), caret.head, html);
+    if cache.as_ref().is_none_or(|(k, _)| *k != key) {
+        let pair = ochrepad_core::tags::matching_tags(buffer.doc(), caret.head, html);
+        *cache = Some((key, pair));
+    }
+    cache.as_ref().and_then(|(_, pair)| pair.as_ref())
 }
 
 pub fn editor_id(view: ViewId) -> Id {
@@ -1057,6 +1630,96 @@ fn rect_clip_id() -> Id {
     Id::new("ochrepad-rect-clip")
 }
 
+/// Puts `text` on the clipboard as ordinary text (not a rectangle to paste
+/// as a block).
+pub fn copy_text(ctx: &egui::Context, text: String) {
+    ctx.data_mut(|d| d.remove::<String>(rect_clip_id()));
+    remember_copy(ctx, &text, false);
+    ctx.copy_text(text);
+}
+
+/// Where the texts copied in ochrepad are remembered, newest first, with
+/// whether each was a rectangle (Edit > Paste from History).
+fn clip_history_id() -> Id {
+    Id::new("ochrepad-clip-history")
+}
+
+/// How many copies Paste from History offers.
+const MAX_CLIP_HISTORY: usize = 10;
+/// Larger copies are not remembered.
+const MAX_CLIP_REMEMBERED: usize = 1 << 20;
+
+fn remember_copy(ctx: &egui::Context, text: &str, rect: bool) {
+    if text.is_empty() || text.len() > MAX_CLIP_REMEMBERED {
+        return;
+    }
+    ctx.data_mut(|d| {
+        let history = d.get_temp_mut_or_default::<Vec<(String, bool)>>(clip_history_id());
+        history.retain(|(t, _)| t != text);
+        history.insert(0, (text.to_owned(), rect));
+        history.truncate(MAX_CLIP_HISTORY);
+    });
+}
+
+/// The texts copied in ochrepad, newest first, and whether each was a
+/// rectangle.
+pub fn clip_history(ctx: &egui::Context) -> Vec<(String, bool)> {
+    ctx.data(|d| d.get_temp(clip_history_id()))
+        .unwrap_or_default()
+}
+
+impl EditorViewState {
+    /// Split Lines' width: up to the vertical edge, or else the pane's.
+    pub fn split_width(&self) -> usize {
+        self.edge_column.unwrap_or(self.text_cols)
+    }
+}
+
+/// Begin/End Select, as in Notepad++: the first time marks where the
+/// selection begins (the caret), the second selects from there to the
+/// caret, as a column selection with `column`.
+pub fn begin_end_select(
+    editor: &mut Editor,
+    view: ViewId,
+    state: &mut EditorViewState,
+    column: bool,
+) {
+    let Some(v) = editor.view_mut(view) else {
+        return;
+    };
+    let head = v.selections.primary().head;
+    // The editor keeps the place it began in step with edits.
+    let Some(begin) = v.begin_select.take() else {
+        v.begin_select = Some(head);
+        return;
+    };
+    let v = &*v;
+    let action = if column {
+        let buffer = v.buffer();
+        let doc = doc_of(editor, buffer);
+        let tab_width = tab_width_of(editor, buffer);
+        // The text may have changed since: a place in it still.
+        let mut begin = begin.min(doc.len());
+        while !doc.is_char_boundary(begin) {
+            begin.0 -= 1;
+        }
+        let col = |p| ochrepad_core::position::byte_to_visual_col(doc, p, tab_width);
+        Action::ColumnSelect {
+            anchor_line: doc.line_of(begin),
+            anchor_col: col(begin),
+            head_line: doc.line_of(head),
+            head_col: col(head),
+        }
+    } else {
+        // Clamped into the text by the editor.
+        Action::SetSelections(SelectionSet::single(Selection::new(begin, head)))
+    };
+    if let Err(e) = editor.apply(view, action) {
+        state.last_error = Some(e);
+    }
+    state.reveal_caret = true;
+}
+
 /// Copies the selection to the clipboard; returns whether anything was
 /// copied. Rectangular copies are remembered for block paste.
 pub fn copy_selection(ctx: &egui::Context, editor: &Editor, view: ViewId) -> bool {
@@ -1074,6 +1737,7 @@ pub fn copy_selection(ctx: &egui::Context, editor: &Editor, view: ViewId) -> boo
             d.remove::<String>(rect_clip_id());
         }
     });
+    remember_copy(ctx, &text, rect);
     ctx.copy_text(text);
     true
 }
@@ -1128,10 +1792,30 @@ fn line_layout(
         (buffer, b.revision()),
         line,
         f.cell_w,
-        editor.settings.tab_width,
+        tab_width_of(editor, buffer),
         ui.visuals().text_color(),
         styling,
     )
+}
+
+/// The layout of the line under `p`, and `p`'s x in that layout.
+#[allow(clippy::too_many_arguments)]
+fn layout_at(
+    editor: &Editor,
+    view: ViewId,
+    cache: &mut LayoutCache,
+    f: &Frame,
+    top: Top,
+    x_off: f32,
+    ui: &Ui,
+    p: Pos2,
+) -> (std::sync::Arc<LineLayout>, f32) {
+    let rows = display_map(editor, view);
+    let row = row_at(&rows, f, top, p);
+    let buffer = editor.view(view).expect("view exists").buffer();
+    let layout = line_layout(editor, buffer, cache, row.line, f, ui, Styling::Any);
+    let x = p.x - f.text_left() + x_off + row_x0(&rows, &layout, row, f.cell_w);
+    (layout, x)
 }
 
 /// Pixel -> byte offset, through the same `LineLayout` painting uses.
@@ -1222,6 +1906,8 @@ fn paint(
     styler: Option<&mut dyn LineStyler>,
     find_highlight: Option<&ochrepad_core::Searcher>,
     row_style: Option<&dyn RowStyle>,
+    changes: Option<&crate::change_history::LineMarks>,
+    token_styles: &[(&Searcher, egui::Color32)],
 ) {
     let Some(v) = editor.view(view) else { return };
     let doc = doc_of(editor, buffer);
@@ -1270,6 +1956,12 @@ fn paint(
     };
     // Every match of the find panel's pattern on the visible lines.
     let matches = find_highlight.map(find_in_runs).unwrap_or_default();
+    // Styled tokens on the visible lines, with their colours, by start.
+    let mut styled: Vec<(std::ops::Range<ByteOffset>, egui::Color32)> = token_styles
+        .iter()
+        .flat_map(|(s, color)| find_in_runs(s).into_iter().map(move |m| (m, *color)))
+        .collect();
+    styled.sort_by_key(|(m, _)| m.start);
     let match_bg = crate::theme::match_bg(&visuals);
     // Smart highlighting: other occurrences of the selected text.
     let smart = smart_searcher(&mut state.smart, doc, &v.selections)
@@ -1277,11 +1969,33 @@ fn paint(
         .unwrap_or_default();
     let smart_bg = crate::theme::smart_highlight_bg(&visuals);
     let accent = crate::theme::accent(&visuals);
-    let tab_width = editor.settings.tab_width;
+    // The bracket beside the primary caret and its match.
+    let primary = v.selections.primary();
+    let bracket = primary
+        .is_empty()
+        .then(|| ochrepad_core::brackets::bracket_at(doc, primary.head))
+        .flatten();
+    // In markup, the names in the tags of the element at the caret.
+    let tags = editor
+        .buffer(buffer)
+        .and_then(|b| matching_tag_names(&mut state.tags, b, &v.selections))
+        .cloned();
+    let tab_width = tab_width_of(editor, buffer);
     let strategy = editor
         .buffer(buffer)
         .map(|b| b.fold_strategy)
         .unwrap_or_default();
+    let symbols = state.symbols;
+    let marks = MarkStyle::new(&visuals, f);
+    let eol_label = editor
+        .buffer(buffer)
+        .map_or("LF", |b| match b.meta.line_ending {
+            ochrepad_core::LineEnding::CrLf => "CRLF",
+            ochrepad_core::LineEnding::Lf => "LF",
+            ochrepad_core::LineEnding::Cr => "CR",
+        });
+    let last_line = doc.line_count().saturating_sub(1);
+    let bookmarks = editor.buffer(buffer).map(|b| b.bookmarks());
 
     for (i, &row) in shown.iter().enumerate() {
         let line = row.line;
@@ -1306,11 +2020,12 @@ fn paint(
             Vec2::new(f.content.width(), f.line_h),
         );
         let blank = rows.is_filler(row);
-        if let Some(bg) = row_style.and_then(|s| s.background(row, blank)) {
-            text_painter.rect_filled(rect, 0.0, bg);
-        }
+        let row_bg = row_style.and_then(|s| s.background(row, blank));
         if blank {
             // A padding row: no text, no number.
+            if let Some(bg) = row_bg {
+                text_painter.rect_filled(rect, 0.0, bg);
+            }
             continue;
         }
 
@@ -1325,6 +2040,26 @@ fn paint(
             .any(|s| s.head >= line_start && s.head <= line_end);
         if has_caret {
             text_painter.rect_filled(rect, 0.0, current_line_bg);
+        }
+        // Over the current line's background, so a diff or log colour still
+        // shows on the caret's line.
+        if let Some(bg) = row_bg {
+            text_painter.rect_filled(rect, 0.0, bg);
+        }
+        // Tokens are short (one line at most), so those reaching this row
+        // start at most a line before it.
+        let from = styled.partition_point(|(m, _)| m.start < line_start);
+        for (m, color) in styled[from..]
+            .iter()
+            .take_while(|(m, _)| m.start <= row_end)
+        {
+            if m.start >= m.end || m.end < row_start {
+                continue;
+            }
+            let a = m.start.max(row_start);
+            let b = m.end.min(row_end);
+            let r = Rect::from_min_max(Pos2::new(x_at(a), y), Pos2::new(x_at(b), y + f.line_h));
+            text_painter.rect_filled(r, 2.0, *color);
         }
         let from = matches.partition_point(|m| m.end <= row_start && m.start < row_start);
         for m in matches[from..].iter().take_while(|m| m.start <= row_end) {
@@ -1369,8 +2104,7 @@ fn paint(
         }
 
         if let Some(style) = row_style {
-            let (spans, color) = style.spans(line);
-            for sp in spans {
+            for (sp, color) in style.spans(line) {
                 let a = ByteOffset(line_start.0 + sp.start).max(row_start);
                 let b = ByteOffset(line_start.0 + sp.end).min(row_end);
                 if a < b {
@@ -1379,6 +2113,20 @@ fn paint(
                     text_painter.rect_filled(r, 2.0, color);
                 }
             }
+        }
+
+        if symbols.indent_guides {
+            paint_indent_guides(
+                &text_painter,
+                doc,
+                &rows,
+                row,
+                x0,
+                y,
+                f,
+                tab_width,
+                marks.guide,
+            );
         }
 
         // A wrapped row draws only its own slice of the line.
@@ -1396,21 +2144,89 @@ fn paint(
         } else {
             text_painter.clone()
         };
+        let mut row_painter = row_painter;
+        if let Some(o) = row_style.map(|s| s.text_opacity(line)).filter(|o| *o < 1.0) {
+            row_painter.multiply_opacity(o);
+        }
         paint_line_text(&row_painter, &layout, rx0, y, &f.font, f.line_h);
+        paint_marks(&row_painter, &layout, rx0, y, f, symbols, &marks);
+        // Matching brackets and tag names are outlined.
+        let outline = |a: ByteOffset, b: ByteOffset, color: egui::Color32| {
+            let r = Rect::from_min_max(
+                Pos2::new(x_at(a), y + 1.0),
+                Pos2::new(x_at(b), y + f.line_h - 1.0),
+            );
+            text_painter.rect_stroke(r, 2.0, Stroke::new(1.0, color), egui::StrokeKind::Inside);
+        };
+        if let Some(p) = bracket {
+            let color = if p.matching.is_some() {
+                accent
+            } else {
+                visuals.error_fg_color
+            };
+            for b in std::iter::once(p.at).chain(p.matching) {
+                if b >= row_start && b < row_end {
+                    outline(b, ByteOffset(b.0 + 1), color);
+                }
+            }
+        }
+        for name in tags.iter().flat_map(|t| [&t.open, &t.close]) {
+            // A name longer than the row wraps onto the next.
+            let (a, b) = (name.start.max(row_start), name.end.min(row_end));
+            if a < b {
+                outline(a, b, accent);
+            }
+        }
 
         let folded = v.folds().is_folded(line);
         if folded && row_end == line_end {
             paint_fold_pill(&text_painter, f, &visuals, rx0 + layout.width, y);
         }
+        if symbols.eol && row_end == line_end && !folded && line < last_line {
+            paint_eol(&text_painter, rx0 + layout.width, y, f, eol_label, &marks);
+        }
+        if symbols.wrap && rows.wraps() && !rows.is_last_in_line(row) {
+            paint_wrap_mark(&text_painter, x_at(row_end), y, f, marks.symbol);
+        }
 
-        // The line number and fold chevron go on a line's first row.
+        // Change history: a bar beside every row of a changed line, and a
+        // wedge where lines were deleted.
+        if let Some(c) = changes {
+            paint_change_marks(
+                &gutter_painter,
+                f,
+                c,
+                line,
+                rows.text_sub(row) == Some(0),
+                y,
+            );
+            if line == last_line && rows.is_last_in_line(row) && c.deleted_before(line + 1) {
+                paint_deleted_wedge(&gutter_painter, f, y + f.line_h);
+            }
+        }
+
+        // The line number and fold chevron go on a line's first row. A
+        // bookmarked line's number sits on a tag in the accent colour.
         if rows.text_sub(row) == Some(0) {
+            let marked = bookmarks.is_some_and(|m| m.contains(line));
+            if marked {
+                let tag = Rect::from_min_max(
+                    Pos2::new(f.gutter.min.x + 2.0, y + 1.0),
+                    Pos2::new(
+                        f.gutter.max.x - f.fold_w + (f.cell_w * 0.4).round(),
+                        y + f.line_h - 1.0,
+                    ),
+                );
+                gutter_painter.rect_filled(tag, 3.0, crate::theme::bookmark_bg(&visuals));
+            }
             gutter_painter.text(
                 Pos2::new(f.gutter.max.x - f.fold_w, y),
                 Align2::RIGHT_TOP,
                 (line + 1).to_string(),
                 f.font.clone(),
-                if has_caret {
+                if marked {
+                    crate::theme::bookmark_fg(&visuals)
+                } else if has_caret {
                     accent
                 } else {
                     visuals.weak_text_color()
@@ -1423,6 +2239,14 @@ fn paint(
             {
                 paint_chevron(&gutter_painter, f, &visuals, y, folded);
             }
+        }
+    }
+
+    // The vertical edge, after its column.
+    if let Some(col) = state.edge_column {
+        let x = (x0 + col as f32 * f.cell_w).round() + 0.5;
+        if x > f.content.min.x {
+            text_painter.vline(x, f.content.y_range(), Stroke::new(1.0, marks.guide));
         }
     }
 
@@ -1445,11 +2269,33 @@ fn paint(
         let since = now - state.last_activity;
         let on = ((since / BLINK_HALF_PERIOD) as u64).is_multiple_of(2);
         if on {
-            let caret_stroke = Stroke::new(2.0, visuals.text_cursor.stroke.color);
+            let caret_color = visuals.text_cursor.stroke.color;
             for s in sels {
                 let (p, on_screen) = caret_pos(s.head, &mut state.cache);
-                if on_screen {
-                    text_painter.line_segment([p, p + Vec2::new(0.0, f.line_h)], caret_stroke);
+                if !on_screen {
+                    continue;
+                }
+                if editor.settings.overtype {
+                    // A bar under the character that typing replaces (a
+                    // cell wide at the line's end), as in Scintilla.
+                    let line_end = doc.line_end(doc.line_of(s.head));
+                    let next = ochrepad_core::position::next_grapheme_boundary(doc, s.head);
+                    let w = if next <= line_end && next > s.head {
+                        let (q, _) = caret_pos(next, &mut state.cache);
+                        if q.y == p.y { q.x - p.x } else { f.cell_w }
+                    } else {
+                        f.cell_w
+                    };
+                    let bar = Rect::from_min_size(
+                        Pos2::new(p.x, p.y + f.line_h - 2.0),
+                        Vec2::new(w.max(2.0), 2.0),
+                    );
+                    text_painter.rect_filled(bar, 0.0, caret_color);
+                } else {
+                    text_painter.line_segment(
+                        [p, p + Vec2::new(0.0, f.line_h)],
+                        Stroke::new(2.0, caret_color),
+                    );
                 }
             }
         }
@@ -1520,7 +2366,7 @@ fn paint(
             buffer,
             &|line| map_spans.get(&line).cloned(),
             &visuals,
-            editor.settings.tab_width,
+            tab_width_of(editor, buffer),
             hovered || state.map_drag.is_some(),
         );
     }
@@ -1539,7 +2385,119 @@ fn paint(
     if h_max > 0.0 {
         painter.rect_filled(h_thumb.shrink(2.0), 3.0, thumb_color);
     }
+    let caret_offset = rows.offset_of(rows.row_of(v.selections.primary().head), 0.0);
+    paint_overview(
+        &painter,
+        f,
+        &rows,
+        editor.buffer(buffer).map(|b| b.bookmarks()),
+        changes,
+        caret_offset,
+        &visuals,
+    );
     state.cache.retain_near(first, last.max(first + 1));
+}
+
+/// The overview on the vertical scrollbar: the bookmarks (right) and the
+/// changed lines (left) at their places in the document, and the caret's
+/// line across it. Worked out per pixel row, so a document with a million
+/// bookmarks costs no more than one with ten.
+fn paint_overview(
+    painter: &egui::Painter,
+    f: &Frame,
+    rows: &DisplayMap,
+    bookmarks: Option<&ochrepad_core::Bookmarks>,
+    changes: Option<&crate::change_history::LineMarks>,
+    caret_offset: f64,
+    visuals: &egui::Visuals,
+) {
+    let bar = f.vbar;
+    let visible = rows.visible_line_count();
+    // A short document maps to the part of the bar its lines fill.
+    let total = visible.max(f.rows_full) as f64;
+    let height = bar.height().floor();
+    if height < 1.0 || visible == 0 {
+        return;
+    }
+    let y_of = |offset: f64| bar.min.y + (offset / total) as f32 * height;
+    let caret_y = y_of(caret_offset).round();
+    let caret = Rect::from_min_max(
+        Pos2::new(bar.min.x + 1.0, caret_y),
+        Pos2::new(bar.max.x - 1.0, caret_y + 2.0),
+    );
+    painter.rect_filled(caret, 0.0, visuals.text_color().gamma_multiply(0.55));
+
+    let marks = bookmarks.filter(|b| !b.is_empty());
+    let changed = changes.filter(|c| !c.is_empty());
+    if marks.is_none() && changed.is_none() {
+        return;
+    }
+    let doc_lines = rows.doc().line_count();
+    // The document lines pixel row `y` covers, hidden ones included.
+    let lines_at = |y: usize| -> Option<std::ops::Range<usize>> {
+        let i0 = (y as f64 / height as f64 * total) as usize;
+        if i0 >= visible {
+            return None;
+        }
+        let i1 = (((y + 1) as f64 / height as f64 * total) as usize).max(i0 + 1);
+        let start = rows.visible_line_at(i0);
+        let end = if i1 >= visible {
+            doc_lines + 1
+        } else {
+            rows.visible_line_at(i1)
+        };
+        Some(start..end.max(start + 1))
+    };
+    let any_in = |sorted: &[usize], r: &std::ops::Range<usize>| {
+        let i = sorted.partition_point(|&l| l < r.start);
+        sorted.get(i).is_some_and(|&l| l < r.end)
+    };
+    let accent = crate::theme::bookmark_bg(visuals);
+    let lane = |y: f32, left: bool| {
+        let (x0, x1) = if left {
+            (bar.min.x + 1.0, bar.min.x + 4.0)
+        } else {
+            (bar.min.x + 6.0, bar.max.x - 1.0)
+        };
+        Rect::from_min_max(Pos2::new(x0, y), Pos2::new(x1, y + 2.0))
+    };
+    for y in 0..height as usize {
+        let Some(r) = lines_at(y) else {
+            break;
+        };
+        let top = bar.min.y + y as f32;
+        if marks.is_some_and(|m| any_in(m.lines(), &r)) {
+            painter.rect_filled(lane(top, false), 0.0, accent);
+        }
+        if let Some(c) = changed {
+            let i = c.lines.partition_point(|m| m.0 < r.start);
+            let here = c.lines[i..].iter().take_while(|m| m.0 < r.end);
+            // A changed line shows over added ones, and both over deletions.
+            let mut kind = None;
+            for (_, mark) in here {
+                match mark {
+                    crate::change_history::Mark::Changed => {
+                        kind = Some(ochrepad_core::diff::RowKind::Changed);
+                        break;
+                    }
+                    crate::change_history::Mark::Added => {
+                        kind = Some(ochrepad_core::diff::RowKind::Added);
+                    }
+                }
+            }
+            if kind.is_none() && any_in(&c.deleted_before, &r) {
+                kind = Some(ochrepad_core::diff::RowKind::Removed);
+            }
+            if let Some(kind) = kind {
+                let (red, green, blue) = crate::theme::diff_rgb(kind);
+                painter.rect_filled(
+                    lane(top, true),
+                    0.0,
+                    egui::Color32::from_rgb(red, green, blue),
+                );
+            }
+        }
+    }
 }
 
 #[cfg(test)]

@@ -61,6 +61,28 @@ fn spans_cover_tokens_and_exclude_the_newline() {
 }
 
 #[test]
+fn very_long_lines_are_left_plain_and_skipped_over() {
+    // A huge minified line between two ordinary ones: it is not parsed (that
+    // would take seconds) and the next line is highlighted from the state
+    // before it.
+    let long = format!("let a = [{}];", "1, ".repeat(10_000));
+    assert!(long.len() > ochrepad_syntax::MAX_HIGHLIGHT_LINE);
+    let doc = Document::new(&format!("// before\n{long}\nfn after() {{}}"));
+    let t = Instant::now();
+    let spans = full(&doc, "Rust");
+    assert!(spans[1].as_ref().unwrap().is_empty());
+    let alone = full(&Document::new("// before\nfn after() {}"), "Rust");
+    assert_eq!(spans[2], alone[1]);
+    if !cfg!(debug_assertions) {
+        assert!(
+            t.elapsed() < Duration::from_millis(200),
+            "{:?}",
+            t.elapsed()
+        );
+    }
+}
+
+#[test]
 fn edit_at_the_top_of_a_large_file_converges_quickly() {
     let text = rust_file(10_000);
     let mut ed = Editor::new();
@@ -152,6 +174,28 @@ fn changing_theme_or_language_restarts() {
     h.set_syntax(&REG, PLAIN_TEXT);
     while h.work_lines(&REG, &doc, 0..1, 100) {}
     assert_eq!(h.line_spans(&REG, &doc, 0..1)[0].as_ref().unwrap().len(), 1);
+}
+
+#[test]
+fn a_whole_document_is_highlighted_as_the_editor_does() {
+    // File > Export highlights everything at once, on a thread.
+    let doc = Document::new(&rust_file(300));
+    let all = REG.highlight_all("Rust", theme(), &doc);
+    let editor: Vec<LineSpans> = full(&doc, "Rust").into_iter().flatten().collect();
+    assert_eq!(all, editor);
+    // Text without a scope of its own is in the theme's default colour.
+    let colors = REG.theme_colors(theme());
+    let plain = REG.highlight_all(PLAIN_TEXT, theme(), &Document::new("just text"));
+    assert_eq!(plain[0][0].color, colors.foreground);
+}
+
+#[test]
+fn themes_say_their_text_and_background_colors() {
+    let luma = |[r, g, b, _]: [u8; 4]| u32::from(r) * 3 + u32::from(g) * 6 + u32::from(b);
+    let dark = REG.theme_colors(Registry::default_theme(true));
+    assert!(luma(dark.background) < luma(dark.foreground), "{dark:?}");
+    let light = REG.theme_colors(Registry::default_theme(false));
+    assert!(luma(light.background) > luma(light.foreground), "{light:?}");
 }
 
 // ---------------------------------------------------------------------------

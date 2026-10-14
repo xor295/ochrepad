@@ -126,6 +126,22 @@ impl SelectionSet {
         &self.ranges
     }
 
+    /// Whether this is a well-formed set for `doc` (non-empty, sorted, apart
+    /// from each other as normalizing leaves them, every end on a character
+    /// boundary of the text, a rectangle within its lines). A set read back
+    /// from disk is checked with this before it is used.
+    pub fn fits(&self, doc: &Document) -> bool {
+        let ok = |p: ByteOffset| p <= doc.len() && doc.is_char_boundary(p);
+        !self.ranges.is_empty()
+            && self.primary < self.ranges.len()
+            && self.ranges.iter().all(|s| ok(s.anchor) && ok(s.head))
+            && self.ranges.windows(2).all(|w| w[0].end() < w[1].start())
+            && self
+                .rect
+                .as_ref()
+                .is_none_or(|r| r.start_line.max(r.end_line) < doc.line_count())
+    }
+
     pub fn primary(&self) -> &Selection {
         &self.ranges[self.primary]
     }

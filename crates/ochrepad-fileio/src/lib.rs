@@ -5,17 +5,23 @@
 
 use std::borrow::Cow;
 use std::fmt;
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
 use encoding_rs::{EncoderResult, Encoding, UTF_8, UTF_16BE, UTF_16LE};
 use ochrepad_core::{Buffer, BufferId, Editor, FileMeta, LineEnding};
 
+pub mod bigfile;
 pub mod tree;
 pub mod worker;
 
 /// How many leading bytes are checked for NUL when deciding a file is binary.
 const BINARY_SNIFF_LEN: usize = 8 * 1024;
+
+/// Files larger than this are not opened: the text is held in memory several
+/// times over (file bytes, decoded text, rope, undo), and a failed allocation
+/// would end the program.
+pub const MAX_LOAD_SIZE: u64 = 1024 * 1024 * 1024;
 
 #[derive(Debug)]
 pub enum LoadError {
@@ -26,6 +32,11 @@ pub enum LoadError {
     Undecodable {
         encoding: &'static str,
     },
+    /// A folder, device, pipe or socket: reading one could block or never
+    /// end.
+    NotAFile,
+    /// Larger than [`MAX_LOAD_SIZE`] (the size in bytes).
+    TooLarge(u64),
 }
 
 impl fmt::Display for LoadError {
@@ -36,6 +47,15 @@ impl fmt::Display for LoadError {
             LoadError::Undecodable { encoding } => write!(
                 f,
                 "the file is not valid {encoding}; refusing to open it rather than replace bytes"
+            ),
+            LoadError::NotAFile => {
+                f.write_str("it is not a regular file (a folder, device or pipe)")
+            }
+            LoadError::TooLarge(size) => write!(
+                f,
+                "the file is {} MB, too large to edit (the limit is {} MB); open it to read it in the viewer for large files",
+                size / (1024 * 1024),
+                MAX_LOAD_SIZE / (1024 * 1024)
             ),
         }
     }
@@ -94,12 +114,116 @@ pub struct Decoded {
     pub meta: FileMeta,
 }
 
+/// Reads a whole regular file of at most [`MAX_LOAD_SIZE`] bytes. The file
+/// is checked after opening it (on Linux without waiting, so a pipe cannot
+/// block the open), so it cannot be swapped for something else in between.
+pub fn read_file(path: &Path) -> Result<Vec<u8>, LoadError> {
+    read_file_up_to(path, MAX_LOAD_SIZE)
+}
+
+/// [`read_file`] with another size limit.
+pub fn read_file_up_to(path: &Path, limit: u64) -> Result<Vec<u8>, LoadError> {
+    let (file, meta) = open_regular_file(path)?;
+    if meta.len() > limit {
+        return Err(LoadError::TooLarge(meta.len()));
+    }
+    let mut bytes = Vec::with_capacity(meta.len() as usize);
+    // At most one byte past the limit, in case the file grew since.
+    file.take(limit + 1).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > limit {
+        return Err(LoadError::TooLarge(bytes.len() as u64));
+    }
+    Ok(bytes)
+}
+
+/// Opens `path` for reading if it is a regular file (following links). The
+/// check is made on the open file, so it cannot be swapped in between; on
+/// Linux the open does not wait, so a pipe cannot block it.
+pub(crate) fn open_regular_file(
+    path: &Path,
+) -> Result<(std::fs::File, std::fs::Metadata), LoadError> {
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        // O_NONBLOCK on Linux: opening a FIFO with no writer returns at once.
+        // It changes nothing for regular files.
+        options.custom_flags(0o4000);
+    }
+    let file = options.open(path)?;
+    let meta = file.metadata()?;
+    if !meta.is_file() {
+        return Err(LoadError::NotAFile);
+    }
+    Ok((file, meta))
+}
+
+/// Whether `bytes` decode to text that encodes back to exactly the same
+/// bytes: false for mixed line endings (saved as the main kind) and for
+/// legacy-encoded bytes with more than one form. Such a file can't be
+/// rewritten without changing it beyond what was meant.
+pub fn round_trips(bytes: &[u8], decoded: &Decoded) -> bool {
+    encode(&decoded.text, &decoded.meta).is_ok_and(|b| b == bytes)
+}
+
 /// Reads and decodes a file.
 pub fn load(path: &Path) -> Result<Decoded, LoadError> {
-    let bytes = std::fs::read(path)?;
+    let bytes = read_file(path)?;
     let mut decoded = decode(&bytes)?;
     decoded.meta.path = Some(path.to_path_buf());
     Ok(decoded)
+}
+
+/// The encodings offered for Reopen with Encoding and Save with Encoding:
+/// (encoding_rs name, name shown).
+pub const ENCODINGS: &[(&str, &str)] = &[
+    ("UTF-8", "UTF-8"),
+    ("UTF-16LE", "UTF-16 LE"),
+    ("UTF-16BE", "UTF-16 BE"),
+    ("windows-1252", "Western (Windows-1252)"),
+    ("ISO-8859-15", "Western (ISO-8859-15)"),
+    ("windows-1250", "Central European (Windows-1250)"),
+    ("ISO-8859-2", "Central European (ISO-8859-2)"),
+    ("windows-1251", "Cyrillic (Windows-1251)"),
+    ("KOI8-R", "Cyrillic (KOI8-R)"),
+    ("windows-1253", "Greek (Windows-1253)"),
+    ("windows-1254", "Turkish (Windows-1254)"),
+    ("Shift_JIS", "Japanese (Shift_JIS)"),
+    ("EUC-JP", "Japanese (EUC-JP)"),
+    ("GBK", "Chinese Simplified (GBK)"),
+    ("Big5", "Chinese Traditional (Big5)"),
+    ("EUC-KR", "Korean (EUC-KR)"),
+];
+
+/// Reads `path` decoding it as `encoding` (an encoding_rs name) instead of
+/// detecting: Reopen with Encoding. A BOM for that encoding is skipped and
+/// remembered; bytes that are not valid in it are refused.
+pub fn load_as(path: &Path, encoding: &str) -> Result<Decoded, LoadError> {
+    let bytes = read_file(path)?;
+    let encoding = Encoding::for_label(encoding.as_bytes()).ok_or(LoadError::Undecodable {
+        encoding: "unknown",
+    })?;
+    let bom_len = match Encoding::for_bom(&bytes) {
+        Some((e, len)) if e == encoding => len,
+        _ => 0,
+    };
+    let body = &bytes[bom_len..];
+    let is_utf16 = encoding == UTF_16LE || encoding == UTF_16BE;
+    if !is_utf16 && body[..body.len().min(BINARY_SNIFF_LEN)].contains(&0) {
+        return Err(LoadError::Binary);
+    }
+    let (text, line_ending, mixed) = normalize(decode_strict(encoding, body)?);
+    Ok(Decoded {
+        text,
+        meta: FileMeta {
+            path: Some(path.to_path_buf()),
+            encoding: encoding.name().to_owned(),
+            bom: bom_len > 0,
+            line_ending,
+            mixed_line_endings: mixed,
+        },
+    })
 }
 
 /// Decodes file bytes (PLAN 3.6 steps 1-3). `meta.path` is left empty.
@@ -136,6 +260,52 @@ pub fn decode(bytes: &[u8]) -> Result<Decoded, LoadError> {
             mixed_line_endings: mixed,
         },
     })
+}
+
+/// Decodes bytes appended to a file in `encoding` (an encoding_rs name) as
+/// far as they make whole characters, keeping back a final CR whose LF may
+/// still come: follow mode reads a log while it is written. Returns the
+/// text (line endings as they are) and how many bytes it used. `None` when
+/// the bytes are not text in that encoding, or the encoding is one of the
+/// multi-byte legacy ones, where a character cut in two cannot be told
+/// apart reliably; the file is reloaded instead.
+pub fn decode_appended(encoding: &str, new: &[u8]) -> Option<(String, usize)> {
+    let encoding = Encoding::for_label(encoding.as_bytes())?;
+    let utf16 = encoding == UTF_16LE || encoding == UTF_16BE;
+    let (text, mut take) = if encoding == UTF_8 {
+        let take = match std::str::from_utf8(new) {
+            Ok(_) => new.len(),
+            // Cut inside the last character: the rest is still coming.
+            Err(e) if e.error_len().is_none() => e.valid_up_to(),
+            Err(_) => return None,
+        };
+        (std::str::from_utf8(&new[..take]).ok()?.to_owned(), take)
+    } else if utf16 {
+        let mut take = new.len() & !1;
+        if take >= 2 {
+            let pair = [new[take - 2], new[take - 1]];
+            let unit = if encoding == UTF_16LE {
+                u16::from_le_bytes(pair)
+            } else {
+                u16::from_be_bytes(pair)
+            };
+            // The first half of a surrogate pair.
+            if (0xD800..0xDC00).contains(&unit) {
+                take -= 2;
+            }
+        }
+        (decode_strict(encoding, &new[..take]).ok()?, take)
+    } else if encoding.is_single_byte() {
+        (decode_strict(encoding, new).ok()?, new.len())
+    } else {
+        return None;
+    };
+    let mut text = text;
+    if text.ends_with('\r') {
+        text.pop();
+        take -= if utf16 { 2 } else { 1 };
+    }
+    (!text.contains('\0')).then_some((text, take))
 }
 
 fn decode_strict(encoding: &'static Encoding, bytes: &[u8]) -> Result<String, LoadError> {
@@ -267,11 +437,50 @@ pub fn encode(text: &str, meta: &FileMeta) -> Result<Vec<u8>, SaveError> {
     }
 }
 
+/// The different characters of LF-normalized `text` that `encoding` cannot
+/// store, each with the first line (1-based) it is on, at most `limit` of
+/// them. Empty for UTF-8, UTF-16 and an unknown encoding.
+pub fn unencodable(text: &str, encoding: &str, limit: usize) -> Vec<(char, usize)> {
+    let Some(encoding) = Encoding::for_label(encoding.as_bytes()) else {
+        return Vec::new();
+    };
+    if encoding == UTF_8 || encoding == UTF_16LE || encoding == UTF_16BE {
+        return Vec::new();
+    }
+    let mut known: std::collections::HashMap<char, bool> = Default::default();
+    let mut found = Vec::new();
+    let mut buf = [0u8; 4];
+    let mut out = Vec::with_capacity(16);
+    for (i, line) in text.split('\n').enumerate() {
+        for ch in line.chars().filter(|c| !c.is_ascii()) {
+            let fits = *known.entry(ch).or_insert_with(|| {
+                out.clear();
+                let (result, _) = encoding
+                    .new_encoder()
+                    .encode_from_utf8_to_vec_without_replacement(
+                        ch.encode_utf8(&mut buf),
+                        &mut out,
+                        true,
+                    );
+                matches!(result, EncoderResult::InputEmpty)
+            });
+            if !fits {
+                known.insert(ch, true);
+                found.push((ch, i + 1));
+                if found.len() >= limit {
+                    return found;
+                }
+            }
+        }
+    }
+    found
+}
+
 /// Encodes and atomically writes `text` to `path`. Nothing is written if
 /// encoding fails.
 pub fn save(path: &Path, text: &str, meta: &FileMeta) -> Result<(), SaveError> {
     let bytes = encode(text, meta)?;
-    write_atomic(path, &bytes)?;
+    write_user_file(path, &bytes)?;
     Ok(())
 }
 
@@ -279,6 +488,20 @@ pub fn save(path: &Path, text: &str, meta: &FileMeta) -> Result<(), SaveError> {
 /// renames it over the target. A symlinked target is resolved first so the
 /// link itself survives. The target's permissions are carried over.
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    replace_file(path, bytes, false)
+}
+
+/// Writes a user's file like [`write_atomic`], but a new file gets the
+/// usual permissions (on Linux `0666` less the umask) instead of the temp
+/// file's private `0600`, which suits only ochrepad's own backups and
+/// settings. On Windows the file's "downloaded from the internet" mark
+/// (its `Zone.Identifier` stream) is kept, so programs still warn before
+/// running a downloaded script that was edited here.
+pub fn write_user_file(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    replace_file(path, bytes, true)
+}
+
+fn replace_file(path: &Path, bytes: &[u8], user_file: bool) -> io::Result<()> {
     let target: PathBuf = match std::fs::symlink_metadata(path) {
         Ok(m) if m.file_type().is_symlink() => std::fs::canonicalize(path)?,
         _ => path.to_path_buf(),
@@ -293,10 +516,41 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
         .tempfile_in(&dir)?;
     tmp.write_all(bytes)?;
     tmp.as_file().sync_all()?;
-    if let Ok(m) = std::fs::metadata(&target) {
-        std::fs::set_permissions(tmp.path(), m.permissions())?;
+    match std::fs::metadata(&target) {
+        Ok(m) => std::fs::set_permissions(tmp.path(), m.permissions())?,
+        Err(_) if user_file => set_new_file_permissions(tmp.path())?,
+        Err(_) => {}
+    }
+    if user_file && cfg!(windows) {
+        // Best effort: a missing stream or a file system without streams is
+        // fine.
+        let stream = |p: &Path| PathBuf::from(format!("{}:Zone.Identifier", p.display()));
+        if let Ok(mark) = std::fs::read(stream(&target)) {
+            let _ = std::fs::write(stream(tmp.path()), mark);
+        }
     }
     tmp.persist(&target).map_err(|e| e.error)?;
+    Ok(())
+}
+
+/// Gives a new file the permissions `File::create` would: `0666` less the
+/// process's umask (read from `/proc`, else the usual `022`).
+#[cfg(unix)]
+fn set_new_file_permissions(path: &Path) -> io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let umask = std::fs::read_to_string("/proc/self/status")
+        .ok()
+        .and_then(|s| {
+            s.lines()
+                .find_map(|l| l.strip_prefix("Umask:"))
+                .and_then(|v| u32::from_str_radix(v.trim(), 8).ok())
+        })
+        .unwrap_or(0o022);
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o666 & !umask))
+}
+
+#[cfg(not(unix))]
+fn set_new_file_permissions(_path: &Path) -> io::Result<()> {
     Ok(())
 }
 

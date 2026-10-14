@@ -102,6 +102,32 @@ fn ctrl_tab_cycles_through_the_tabs_of_the_pane() {
 }
 
 #[test]
+fn ctrl_shift_page_keys_move_the_tab_along_the_bar() {
+    let mut h = harness();
+    key(&mut h, Modifiers::COMMAND, Key::N);
+    key(&mut h, Modifiers::COMMAND, Key::N);
+    let back = Modifiers::COMMAND | Modifiers::SHIFT;
+    key(&mut h, back, Key::PageUp);
+    assert_eq!(names(&h), vec!["new 1", "new 3", "new 2"]);
+    assert_eq!(active_name(&h), "new 3", "the moved tab stays active");
+    key(&mut h, back, Key::PageUp);
+    key(&mut h, back, Key::PageUp);
+    assert_eq!(
+        names(&h),
+        vec!["new 3", "new 1", "new 2"],
+        "it stops at the end"
+    );
+    key(&mut h, back, Key::PageDown);
+    assert_eq!(names(&h), vec!["new 1", "new 3", "new 2"]);
+    assert_eq!(active_name(&h), "new 3");
+    // Ctrl+PageDown still goes to the next tab.
+    key(&mut h, Modifiers::COMMAND, Key::PageDown);
+    assert_eq!(active_name(&h), "new 2");
+    typ(&mut h, "x");
+    assert_eq!(text_of(&h, h.state().active_view()), "x");
+}
+
+#[test]
 fn clone_to_other_view_splits_and_shares_the_buffer() {
     let mut h = harness();
     typ(&mut h, "hello world");

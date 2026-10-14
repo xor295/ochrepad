@@ -8,16 +8,30 @@ menu item to explain:
   regular-expression syntax differs from Notepad++.
 - [Column selection and multiple cursors](column-selection.md): making
   rectangles and extra carets, and how copy, paste and sorting work with them.
-- [The editor view](view.md): the document map, word wrap, and folding
-  (where blocks can be folded, the shortcuts, how folded text behaves).
+- [The editor view](view.md): zoom, Show Symbol (spaces, tabs, line
+  endings, invisible characters, indent guides), matching brackets and
+  tags, the document map, the Document List and Function List, the change
+  history, word wrap, and folding (where blocks can be folded, the
+  shortcuts, how folded text behaves).
+- [Logs and large files](logs.md): filtering lines, highlight rules for log
+  levels, following a file as it grows (tail -f), and the read-only viewer
+  that opens files of any size at once.
 - [Working in a folder](workspace.md): opening a folder, the file tree in
   the sidebar, ignored files, and creating and renaming files.
 - [Macros](macros.md): what gets recorded, running a macro to the end of the
   file, saving macros with shortcuts.
+- [Text tools](text-tools.md): formatting and checking JSON, Base64, URL
+  and hex encoding, and hashes.
+- [Editing lines, blanks and columns](editing.md): Notepad++'s line and
+  blank operations, the Column Editor, the tab menu and reopening closed
+  files, bookmarks, the right-click menu, the summary, multi-select, paste
+  from history, read-only documents, full screen, closing brackets as you
+  type, and smart indentation.
 - [Key bindings](keymap.md): the `keymap.json` format and every command you
   can bind.
 - [Backups, sessions and files changed elsewhere](backups-and-session.md):
-  how unsaved work is kept, what happens on exit, automatic saving, and
-  reloading files other programs change.
+  how unsaved work is kept, what happens on exit, automatic saving, saving
+  and loading session files, and reloading files other programs change.
 - [How ochrepad reads and writes files](file-handling.md): encodings, line
-  endings, which files are refused, and atomic saves.
+  endings, which files are refused, atomic saves, and exporting a document
+  as a web page.

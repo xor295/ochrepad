@@ -23,6 +23,11 @@ impl Document {
         }
     }
 
+    /// The text in order, in the rope's pieces (for hashing without a copy).
+    pub fn chunks(&self) -> impl Iterator<Item = &str> + '_ {
+        self.rope.chunks()
+    }
+
     /// Length in bytes; also the offset of the end of the document.
     pub fn len(&self) -> ByteOffset {
         ByteOffset(self.rope.len_bytes())

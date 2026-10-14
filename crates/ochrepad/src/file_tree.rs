@@ -21,6 +21,19 @@ const INDENT: f32 = 14.0;
 /// Wait this long after a change on disk before relisting a folder.
 const RELIST_DELAY: f64 = 0.2;
 
+/// Whether `name` (typed for a new or renamed file) names something in a
+/// folder and nothing more: one plain part, with no slash, no `.` or `..`,
+/// and on Windows no `:` (`C:x` is on drive C, wherever the folder is, and
+/// `x:y` is a stream of `x`).
+pub fn is_plain_name(name: &str) -> bool {
+    let mut parts = Path::new(name).components();
+    let one = matches!(
+        (parts.next(), parts.next()),
+        (Some(std::path::Component::Normal(n)), None) if n == name
+    );
+    one && !name.contains(['/', '\\']) && !(cfg!(windows) && name.contains(':'))
+}
+
 /// What the tree asks the app to do.
 #[derive(Clone, Debug, PartialEq)]
 pub enum TreeAction {
@@ -730,4 +743,22 @@ fn tree_row(
         );
     }
     response
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_plain_name;
+
+    #[test]
+    fn a_plain_name_has_no_folder_or_drive() {
+        for good in ["a.txt", "notes", ".gitignore", "a b.md", "x..y"] {
+            assert!(is_plain_name(good), "{good}");
+        }
+        for bad in ["", ".", "..", "a/b", "a\\b", "../x", "/x", "a/", "./a"] {
+            assert!(!is_plain_name(bad), "{bad}");
+        }
+        // A drive or a stream on Windows.
+        assert_eq!(is_plain_name("C:x.txt"), !cfg!(windows));
+        assert_eq!(is_plain_name("x.txt:s"), !cfg!(windows));
+    }
 }

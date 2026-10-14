@@ -4,12 +4,41 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::bookmarks::Bookmarks;
 use crate::fold::FoldStrategy;
 use crate::history::{History, Revision};
 use crate::text::Document;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct BufferId(pub u64);
+
+/// How a document is indented: the Tab key's character and the tab width
+/// (also how wide a tab character is drawn).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Indent {
+    /// The Tab key inserts spaces instead of a tab character.
+    pub use_spaces: bool,
+    /// Cells per indent level and per tab stop.
+    pub width: usize,
+}
+
+impl Default for Indent {
+    fn default() -> Self {
+        Self {
+            use_spaces: false,
+            width: 4,
+        }
+    }
+}
+
+/// A language's comment markers.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommentSyntax {
+    /// Starts a comment that runs to the end of the line (`//`, `#`).
+    pub line: Option<String>,
+    /// Opens and closes a block comment (`/*`, `*/`).
+    pub block: Option<(String, String)>,
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LineEnding {
@@ -83,9 +112,21 @@ pub struct Buffer {
     pub fold_strategy: FoldStrategy,
     /// Edits are refused (a compare view's copy of a file on disk).
     pub read_only: bool,
+    /// The language's comment markers, for toggling comments; the app sets
+    /// them from the language.
+    pub comments: Option<CommentSyntax>,
+    /// Indentation and tab width (from the preferences, or detected).
+    pub indent: Indent,
+    /// `indent` was detected from the file or chosen for it, so changing
+    /// the preferences leaves it alone.
+    pub indent_set: bool,
+    /// Some lines are indented with tabs and others with spaces.
+    pub indent_mixed: bool,
     pub meta: FileMeta,
     /// Line edits since the last `take_line_edits`, for the highlighter.
     line_edits: Vec<LineEdit>,
+    /// The bookmarked lines; edits move them (`Editor` maps them).
+    pub(crate) bookmarks: Bookmarks,
 }
 
 impl Buffer {
@@ -100,8 +141,13 @@ impl Buffer {
             language: None,
             fold_strategy: FoldStrategy::Indent,
             read_only: false,
+            comments: None,
+            indent: Indent::default(),
+            indent_set: false,
+            indent_mixed: false,
             meta,
             line_edits: Vec::new(),
+            bookmarks: Bookmarks::default(),
         }
     }
 
@@ -115,6 +161,23 @@ impl Buffer {
 
     pub fn history(&self) -> &History {
         &self.history
+    }
+
+    pub fn bookmarks(&self) -> &Bookmarks {
+        &self.bookmarks
+    }
+
+    /// Replaces the bookmarks (a session restoring them); lines past the
+    /// end are dropped.
+    pub fn set_bookmarks(&mut self, lines: impl IntoIterator<Item = usize>) {
+        let count = self.doc.line_count();
+        self.bookmarks.set(lines, count);
+    }
+
+    /// Bookmarks `line`, or removes its bookmark (a click in the margin);
+    /// returns whether it has one now.
+    pub fn toggle_bookmark(&mut self, line: usize) -> bool {
+        line < self.doc.line_count() && self.bookmarks.toggle(line)
     }
 
     /// Identifies the current text state; returns to an earlier value on undo.
@@ -136,6 +199,46 @@ impl Buffer {
     pub fn mark_saved_at(&mut self, revision: Revision) {
         self.saved_revision = revision;
         self.history.break_coalescing();
+    }
+
+    /// The history to keep between sessions: the newest steps within about
+    /// `max_bytes`, ending at the current text.
+    pub fn saved_history(&self, max_bytes: usize) -> crate::history::SavedHistory {
+        let (undo, redo) = self.history.newest(max_bytes);
+        crate::history::SavedHistory {
+            undo,
+            redo,
+            revision: self.revision,
+            next_revision: self.next_revision,
+        }
+    }
+
+    /// Takes a history kept from an earlier session for this same text
+    /// (the caller compares the text's hash first). It is checked step by
+    /// step against the text ([`SavedHistory::check`]) and refused if
+    /// anything does not fit. `on_disk`: the text is the file's (so undoing
+    /// and redoing back to it leaves the buffer clean); otherwise the buffer
+    /// stays unsaved.
+    pub fn restore_history(
+        &mut self,
+        saved: crate::history::SavedHistory,
+        on_disk: bool,
+    ) -> Result<(), String> {
+        saved.check(&self.doc)?;
+        self.history.replace(saved.undo, saved.redo);
+        self.revision = saved.revision;
+        self.next_revision = self.next_revision.max(saved.next_revision);
+        if on_disk {
+            self.saved_revision = saved.revision;
+        } else {
+            self.mark_modified();
+        }
+        Ok(())
+    }
+
+    /// Forgets the undo and redo history.
+    pub fn clear_history(&mut self) {
+        self.history.clear();
     }
 
     /// Marks the buffer as differing from disk, e.g. when its text was

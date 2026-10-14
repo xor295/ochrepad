@@ -240,7 +240,7 @@ fn removing_the_text_of_the_last_fold_shows_every_line() {
     t.apply(Action::DeleteBackward);
     assert_eq!(t.text(), "a\nc");
     let view = t.ed.view(t.view).unwrap();
-    let rows = ochrepad_core::DisplayMap::new(t.buffer(), view, 4);
+    let rows = ochrepad_core::DisplayMap::new(t.buffer(), view);
     assert!(view.folds().is_empty());
     assert_eq!(rows.visible_line_count(), 2);
 }

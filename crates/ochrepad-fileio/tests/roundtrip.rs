@@ -2,8 +2,8 @@ use std::path::{Path, PathBuf};
 
 use ochrepad_core::{Action, Editor, LineEnding};
 use ochrepad_fileio::{
-    LoadError, SaveError, decode, default_line_ending, encode, load, normalize_line_endings,
-    open_into, save, save_buffer, save_buffer_as,
+    LoadError, SaveError, decode, decode_appended, default_line_ending, encode, load,
+    normalize_line_endings, open_into, save, save_buffer, save_buffer_as,
 };
 use proptest::prelude::*;
 
@@ -107,6 +107,75 @@ fn mixed_line_endings_are_flagged_and_saved_with_the_dominant_ending() {
         encode(&d.text, &d.meta).unwrap(),
         b"one\r\ntwo\r\nthree\r\nfour\r\nfive\r\n"
     );
+}
+
+#[test]
+fn saving_keeps_the_downloaded_mark_and_gives_new_files_normal_permissions() {
+    let dir = tempfile::tempdir().unwrap();
+    let meta = ochrepad_core::FileMeta::default();
+    if cfg!(windows) {
+        let file = dir.path().join("script.ps1");
+        std::fs::write(&file, "old").unwrap();
+        let mark = format!("{}:Zone.Identifier", file.display());
+        std::fs::write(&mark, "[ZoneTransfer]\r\nZoneId=3\r\n").unwrap();
+        ochrepad_fileio::save(&file, "new", &meta).unwrap();
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "new");
+        assert_eq!(
+            std::fs::read_to_string(&mark).unwrap(),
+            "[ZoneTransfer]\r\nZoneId=3\r\n"
+        );
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        let user = dir.path().join("new.txt");
+        ochrepad_fileio::save(&user, "x", &meta).unwrap();
+        // Readable by others under the usual umask, like any new file.
+        let made = dir.path().join("made.txt");
+        std::fs::write(&made, "x").unwrap();
+        assert_eq!(mode(&user), mode(&made));
+        // ochrepad's own files stay private.
+        let private = dir.path().join("backup.txt");
+        ochrepad_fileio::write_atomic(&private, b"x").unwrap();
+        assert_eq!(mode(&private), 0o600);
+    }
+}
+
+#[test]
+fn refuses_folders_devices_pipes_and_huge_files() {
+    let dir = tempfile::tempdir().unwrap();
+    assert!(matches!(
+        ochrepad_fileio::load(dir.path()),
+        Err(ochrepad_fileio::LoadError::NotAFile) | Err(ochrepad_fileio::LoadError::Io(_))
+    ));
+    let file = dir.path().join("ten.txt");
+    std::fs::write(&file, "0123456789").unwrap();
+    assert!(matches!(
+        ochrepad_fileio::read_file_up_to(&file, 9),
+        Err(ochrepad_fileio::LoadError::TooLarge(10))
+    ));
+    assert_eq!(
+        ochrepad_fileio::read_file_up_to(&file, 10).unwrap(),
+        b"0123456789"
+    );
+    #[cfg(target_os = "linux")]
+    {
+        // A device that never ends, and a pipe nobody writes to: refused at
+        // once instead of reading forever or blocking.
+        assert!(matches!(
+            ochrepad_fileio::load(Path::new("/dev/zero")),
+            Err(ochrepad_fileio::LoadError::NotAFile)
+        ));
+        let fifo = dir.path().join("fifo");
+        let made = std::process::Command::new("mkfifo").arg(&fifo).status();
+        if made.is_ok_and(|s| s.success()) {
+            assert!(matches!(
+                ochrepad_fileio::load(&fifo),
+                Err(ochrepad_fileio::LoadError::NotAFile)
+            ));
+        }
+    }
 }
 
 #[test]
@@ -283,4 +352,79 @@ fn json_settings_round_trip_atomically() {
     assert_eq!(ochrepad_fileio::load_json(&path), Ok(Some(value)));
     std::fs::write(&path, "not json").unwrap();
     assert!(ochrepad_fileio::load_json::<Vec<String>>(&path).is_err());
+}
+
+#[test]
+fn reopening_with_an_encoding_decodes_strictly() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("a.txt");
+    // "café" in Windows-1252; as UTF-8 it would be invalid.
+    std::fs::write(&path, b"caf\xe9\r\n").unwrap();
+    let d = ochrepad_fileio::load_as(&path, "windows-1252").unwrap();
+    assert_eq!(d.text, "café\n");
+    assert_eq!(d.meta.encoding, "windows-1252");
+    assert!(ochrepad_fileio::load_as(&path, "UTF-8").is_err());
+    // Every listed name is exactly an encoding_rs encoding's name.
+    for (name, _) in ochrepad_fileio::ENCODINGS {
+        let e = encoding_rs::Encoding::for_label(name.as_bytes());
+        assert_eq!(e.map(|e| e.name()), Some(*name));
+    }
+}
+
+#[test]
+fn round_trips_only_when_saving_gives_the_same_bytes() {
+    let check = |bytes: &[u8]| {
+        let decoded = decode(bytes).unwrap();
+        ochrepad_fileio::round_trips(bytes, &decoded)
+    };
+    assert!(check(b"a\r\nb\r\n"));
+    assert!(check(b"one\ntwo"));
+    assert!(check("caf\u{e9}\n".as_bytes()));
+    // Mixed line endings are saved as the main kind.
+    assert!(!check(b"a\r\nb\nc\r\n"));
+    assert!(!check(b"x\ry\nz\n"));
+}
+
+#[test]
+fn appended_bytes_decode_as_far_as_whole_characters_go() {
+    // UTF-8: a character cut in two waits for the rest; a final CR waits
+    // for a possible LF.
+    assert_eq!(
+        decode_appended("UTF-8", "ab\u{e9}".as_bytes()),
+        Some(("ab\u{e9}".to_owned(), 4))
+    );
+    assert_eq!(
+        decode_appended("UTF-8", &"x\u{e9}".as_bytes()[..2]),
+        Some(("x".to_owned(), 1))
+    );
+    assert_eq!(
+        decode_appended("UTF-8", b"line\r"),
+        Some(("line".to_owned(), 4))
+    );
+    assert_eq!(decode_appended("UTF-8", b"\xff\xfe"), None);
+    assert_eq!(decode_appended("UTF-8", b"a\0b"), None);
+
+    // UTF-16: whole units, and not the first half of a surrogate pair.
+    let le: Vec<u8> = "hi\u{1F600}"
+        .encode_utf16()
+        .flat_map(u16::to_le_bytes)
+        .collect();
+    assert_eq!(
+        decode_appended("UTF-16LE", &le),
+        Some(("hi\u{1F600}".to_owned(), 8))
+    );
+    assert_eq!(
+        decode_appended("UTF-16LE", &le[..7]),
+        Some(("hi".to_owned(), 4))
+    );
+    let be: Vec<u8> = "ok\r".encode_utf16().flat_map(u16::to_be_bytes).collect();
+    assert_eq!(decode_appended("UTF-16BE", &be), Some(("ok".to_owned(), 4)));
+
+    // Single-byte encodings decode every byte.
+    assert_eq!(
+        decode_appended("windows-1252", b"caf\xe9\r\n"),
+        Some(("caf\u{e9}\r\n".to_owned(), 6))
+    );
+    // Multi-byte legacy encodings are reloaded instead.
+    assert_eq!(decode_appended("Shift_JIS", b"abc"), None);
 }

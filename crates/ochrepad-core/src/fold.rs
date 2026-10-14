@@ -11,11 +11,17 @@
 //! A [`FoldSet`] is per view. Each fold is stored as a byte range so it maps
 //! through edits like selections do; the rules for edits and carets live in
 //! `Editor` (PLAN_v0.2.0 3.6).
+//!
+//! A view's filter (PLAN_v0.3.0 P6: show only the lines that match, or
+//! only those that do not) hides lines too, so it lives here: its hidden
+//! line ranges are merged with the folds' into the one list the display
+//! map reads. Edits shift them by line (lines an edit touches are shown).
 
 use std::ops::Range;
 
 use serde::{Deserialize, Serialize};
 
+use crate::buffer::LineEdit;
 use crate::changeset::{Bias, ChangeSet};
 use crate::position::{ByteOffset, byte_to_visual_col};
 use crate::text::Document;
@@ -265,21 +271,146 @@ struct Fold {
     last: usize,
 }
 
-/// The folded regions of one view, possibly nested.
+/// The folded regions of one view, possibly nested, and its filter.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct FoldSet {
     /// Sorted by start; any two are nested or disjoint.
     folds: Vec<Fold>,
-    /// The hidden lines: the union of the folds' regions as sorted, disjoint
-    /// inclusive ranges, with the hidden lines before each.
+    /// The lines the filter hides: sorted, disjoint inclusive ranges.
+    /// `None` without a filter.
+    filter: Option<Vec<(usize, usize)>>,
+    /// The hidden lines: the union of the folds' regions and the filter's
+    /// ranges as sorted, disjoint inclusive ranges, with the hidden lines
+    /// before each.
     hidden: Vec<(usize, usize, usize)>,
+    /// The lines the folds alone hide (each range follows its header).
+    fold_hidden: Vec<(usize, usize)>,
     /// Mapped through an edit since the line numbers were computed.
     stale: bool,
 }
 
 impl FoldSet {
+    /// Whether there are no folds (a filter may still hide lines).
     pub fn is_empty(&self) -> bool {
         self.folds.is_empty()
+    }
+
+    /// Whether a filter is on.
+    pub fn has_filter(&self) -> bool {
+        self.filter.is_some()
+    }
+
+    /// Lines the filter hides (0 without one).
+    pub fn filter_hidden_count(&self) -> usize {
+        self.filter
+            .as_ref()
+            .map_or(0, |f| f.iter().map(|r| r.1 + 1 - r.0).sum())
+    }
+
+    /// Whether the filter hides `line`.
+    pub fn filter_hides(&self, line: usize) -> bool {
+        self.filter.as_ref().is_some_and(|f| {
+            let i = f.partition_point(|r| r.1 < line);
+            f.get(i).is_some_and(|r| r.0 <= line)
+        })
+    }
+
+    /// The range of lines a fold hides holding `line` (not the filter's).
+    pub fn fold_hidden_range(&self, line: usize) -> Option<(usize, usize)> {
+        let i = self.fold_hidden.partition_point(|h| h.1 < line);
+        self.fold_hidden.get(i).copied().filter(|h| h.0 <= line)
+    }
+
+    /// Hides every line of `line_count` but `shown` (sorted), or none with
+    /// `None`.
+    pub(crate) fn set_filter(&mut self, shown: Option<&[usize]>, line_count: usize) {
+        self.filter = shown.map(|shown| {
+            let mut ranges = Vec::new();
+            let mut next = 0;
+            for &l in shown.iter().filter(|&&l| l < line_count) {
+                if l > next {
+                    ranges.push((next, l - 1));
+                }
+                next = next.max(l + 1);
+            }
+            if next < line_count {
+                ranges.push((next, line_count - 1));
+            }
+            ranges
+        });
+        self.rebuild();
+    }
+
+    /// Hides every line from `from` on but `shown` (sorted), leaving the
+    /// lines before `from` as they are: the lines a followed file gained.
+    pub(crate) fn set_filter_from(&mut self, from: usize, shown: &[usize], line_count: usize) {
+        let Some(f) = &mut self.filter else {
+            return;
+        };
+        f.retain_mut(|r| {
+            r.1 = r.1.min(from.saturating_sub(1));
+            r.0 < from
+        });
+        let mut next = from;
+        let mut push = |a: usize, b: usize| match f.last_mut() {
+            Some(last) if last.1 + 1 == a => last.1 = b,
+            _ => f.push((a, b)),
+        };
+        for &l in shown.iter().filter(|&&l| l >= from && l < line_count) {
+            if l > next {
+                push(next, l - 1);
+            }
+            next = next.max(l + 1);
+        }
+        if next < line_count {
+            push(next, line_count - 1);
+        }
+        self.rebuild();
+    }
+
+    /// Shows the filter's hidden lines among `lines` again.
+    pub(crate) fn unfilter(&mut self, lines: &[usize]) {
+        let Some(f) = &mut self.filter else {
+            return;
+        };
+        let mut changed = false;
+        for &l in lines {
+            let i = f.partition_point(|r| r.1 < l);
+            let Some(&(a, b)) = f.get(i).filter(|r| r.0 <= l) else {
+                continue;
+            };
+            changed = true;
+            let mut parts = Vec::with_capacity(2);
+            if a < l {
+                parts.push((a, l - 1));
+            }
+            if l < b {
+                parts.push((l + 1, b));
+            }
+            f.splice(i..=i, parts);
+        }
+        if changed {
+            self.rebuild();
+        }
+    }
+
+    /// Moves the filter's ranges through edits to the lines (in the order
+    /// they were made): later lines shift, and the lines an edit touched
+    /// are shown.
+    pub(crate) fn filter_line_edits(&mut self, edits: &[LineEdit]) {
+        let Some(f) = &mut self.filter else {
+            return;
+        };
+        if edits.is_empty() {
+            return;
+        }
+        for e in edits {
+            *f = map_filter_ranges(f, *e);
+        }
+        // Mapped folds have stale lines until `relines`, which rebuilds.
+        if !self.stale {
+            self.rebuild();
+        }
     }
 
     /// The folded header lines, in order.
@@ -398,19 +529,70 @@ impl FoldSet {
     }
 
     fn rebuild(&mut self) {
-        self.hidden.clear();
-        let mut hidden_so_far = 0;
-        let mut merged: Vec<(usize, usize)> = Vec::new();
+        self.fold_hidden.clear();
         for f in &self.folds {
             let (a, b) = (f.header + 1, f.last);
+            match self.fold_hidden.last_mut() {
+                Some(last) if a <= last.1 + 1 => last.1 = last.1.max(b),
+                _ => self.fold_hidden.push((a, b)),
+            }
+        }
+        // Both lists are sorted: merge them in one pass.
+        let filter: &[(usize, usize)] = self.filter.as_deref().unwrap_or(&[]);
+        let (mut i, mut j) = (0, 0);
+        let mut merged: Vec<(usize, usize)> =
+            Vec::with_capacity(self.fold_hidden.len() + filter.len());
+        while i < self.fold_hidden.len() || j < filter.len() {
+            let take_fold = j >= filter.len()
+                || (i < self.fold_hidden.len() && self.fold_hidden[i].0 <= filter[j].0);
+            let (a, b) = if take_fold {
+                i += 1;
+                self.fold_hidden[i - 1]
+            } else {
+                j += 1;
+                filter[j - 1]
+            };
             match merged.last_mut() {
                 Some(last) if a <= last.1 + 1 => last.1 = last.1.max(b),
                 _ => merged.push((a, b)),
             }
         }
+        self.hidden.clear();
+        let mut hidden_so_far = 0;
         for (a, b) in merged {
             self.hidden.push((a, b, hidden_so_far));
             hidden_so_far += b + 1 - a;
         }
     }
+}
+
+/// `ranges` after one edit to the lines: lines `e.start..=e.old_end` became
+/// `e.start..=e.new_end`, which are shown; later lines move.
+fn map_filter_ranges(ranges: &[(usize, usize)], e: LineEdit) -> Vec<(usize, usize)> {
+    let mut out = Vec::with_capacity(ranges.len() + 1);
+    if e.old_end == usize::MAX {
+        // Anything from `start` on may have changed: show it all.
+        for &(a, b) in ranges {
+            if a < e.start {
+                out.push((a, b.min(e.start - 1)));
+            }
+        }
+        return out;
+    }
+    let shift = |l: usize| (l as isize + e.new_end as isize - e.old_end as isize) as usize;
+    for &(a, b) in ranges {
+        if b < e.start {
+            out.push((a, b));
+        } else if a > e.old_end {
+            out.push((shift(a), shift(b)));
+        } else {
+            if a < e.start {
+                out.push((a, e.start - 1));
+            }
+            if b > e.old_end {
+                out.push((shift(e.old_end + 1), shift(b)));
+            }
+        }
+    }
+    out
 }
