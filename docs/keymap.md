@@ -50,8 +50,8 @@ For example `Ctrl+Shift+Up`, `alt+f5`, `Ctrl+OpenBracket`.
   so binding them here has no effect: Ctrl+N, Ctrl+O, Ctrl+S, Ctrl+Shift+S,
   Ctrl+W, Ctrl+Tab, Ctrl+Shift+Tab, Ctrl+F, Ctrl+Shift+F, Ctrl+H, Ctrl+G, F3,
   Shift+F3, Ctrl+Shift+R, Ctrl+Shift+P, Ctrl+Shift+M, Ctrl+Shift+E, F8,
-  Shift+F8, Ctrl+plus, Ctrl+=, Ctrl+minus, Ctrl+0, Ctrl+Shift+8 and
-  Alt+Shift+L.
+  Shift+F8, Ctrl+plus, Ctrl+=, Ctrl+minus, Ctrl+0, Ctrl+Shift+8,
+  Alt+Shift+L, Alt+C (Column Editor) and F11 (Full Screen).
 - **Copy, cut and paste** (Ctrl+C, Ctrl+X, Ctrl+V) come from the system
   clipboard, not from key bindings.
 - **A saved macro's shortcut** takes precedence over a keymap binding for the
@@ -120,7 +120,18 @@ Motions for `MoveCursor`:
 | `{"Action": "JoinLines"}` | Joins the selected lines (or the caret's line and the next). |
 | `{"Action": "TrimTrailingWhitespace"}` | Removes trailing spaces and tabs from the selected lines, or from every line when nothing is selected. |
 | `{"Action": {"RemoveEmptyLines": {"include_whitespace": false}}}` | Removes empty lines from the selected lines, or from the whole document when nothing is selected. With `include_whitespace`, lines of only spaces and tabs go too. |
+| `{"Action": "DeleteLine"}` | Deletes the caret's line, or every line a selection touches, with its line break (Ctrl+Shift+L). |
+| `{"Action": "TransposeLines"}` | Swaps the caret's line with the line above it; the caret goes to the start of its line (Ctrl+T). |
+| `{"Action": "InsertLineAbove"}` | Inserts a line above the caret's line, indented like it, and moves the caret there (Ctrl+Alt+Enter). |
+| `{"Action": "InsertLineBelow"}` | Inserts a line below the caret's line, indented like it, and moves the caret there (Ctrl+Alt+Shift+Enter). |
+| `{"Action": "ReverseLines"}` | Reverses the order of the selected lines, or of every line when nothing is selected. |
 | `{"Action": {"RemoveDuplicateLines": {"consecutive_only": false}}}` | Removes lines equal to an earlier line, keeping the first one and the order, in the selected lines or the whole document. Lines compare exactly. With `consecutive_only`, only a line equal to the one right before it is removed. |
+| `{"Action": "TrimLeadingWhitespace"}` | Removes leading spaces and tabs from the selected lines, or from every line when nothing is selected. |
+| `{"Action": "TrimLeadingAndTrailingWhitespace"}` | Removes leading and trailing spaces and tabs from the selected lines, or from every line. |
+| `{"Action": "EolToSpace"}` | Replaces the line breaks between the selected lines (every line when nothing is selected) with spaces, keeping the blanks around them. |
+| `{"Action": "TabsToSpaces"}` | Replaces every tab on the selected lines (every line) with the spaces that reach the same tab stop. |
+| `{"Action": "SpacesToTabs"}` | Replaces spaces with tabs wherever the columns stay the same: the indentation, and runs of two or more spaces reaching a tab stop. |
+| `{"Action": {"ColumnInsert": {"Text": "> "}}}` | The Column Editor: inserts the text at the caret's column on its line and every line below, on each line of a column selection, or at each of several carets ([more](editing.md#column-editor)). For numbers, give `{"Numbers": {"initial": 1, "increase": 1, "repeat": 1, "leading": "Zeros", "format": "Dec"}}` instead of `{"Text": …}`: `leading` is `"None"`, `"Zeros"` or `"Spaces"`, and `format` is `"Dec"`, `"Hex"`, `"Oct"` or `"Bin"`. Fields left out take those values (with `"None"`). |
 | `{"Action": {"ConvertCase": "Upper"}}` | Converts the selections (or the caret's line) to `"Upper"`, `"Lower"`, `"Title"` or `"Invert"` case. |
 | `{"Action": {"SortLines": {"descending": false, "case_insensitive": true, "numeric": false, "remove_duplicates": false}}}` | Sorts the selected lines, or the whole document when nothing is selected. All four options must be given. `numeric` compares the number at the start of each line; `remove_duplicates` drops repeated lines. With a column selection, lines are sorted by the text inside the column. |
 

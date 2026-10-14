@@ -170,6 +170,41 @@ fn action() -> impl Strategy<Value = Action> {
             Just(Action::GoToMatchingBracket),
             Just(Action::SelectToMatchingBracket),
         ],
+        // Notepad++'s line and blank operations, and the Column Editor.
+        1 => prop::sample::select(vec![
+            Action::DeleteLine,
+            Action::TransposeLines,
+            Action::InsertLineAbove,
+            Action::InsertLineBelow,
+            Action::ReverseLines,
+            Action::TrimLeadingWhitespace,
+            Action::TrimLeadingAndTrailingWhitespace,
+            Action::EolToSpace,
+            Action::TabsToSpaces,
+            Action::SpacesToTabs,
+        ]),
+        1 => prop_oneof![
+            short_text().prop_map(|t| Action::ColumnInsert(ochrepad_core::ColumnInsert::Text(t))),
+            (-5i64..20, -3i64..4, 0usize..3, 0usize..3, 0usize..4).prop_map(
+                |(initial, increase, repeat, leading, format)| {
+                    use ochrepad_core::{Leading, NumberFormat};
+                    Action::ColumnInsert(ochrepad_core::ColumnInsert::Numbers(
+                        ochrepad_core::NumberSequence {
+                            initial,
+                            increase,
+                            repeat,
+                            leading: [Leading::None, Leading::Zeros, Leading::Spaces][leading],
+                            format: [
+                                NumberFormat::Dec,
+                                NumberFormat::Hex,
+                                NumberFormat::Oct,
+                                NumberFormat::Bin,
+                            ][format],
+                        },
+                    ))
+                }
+            ),
+        ],
         // Text tools, and JSON for them to work on.
         1 => prop::sample::select(vec!["[1,2]", "{\"a\":[]}", " ", "\"x\"", ",", "{", "]"])
             .prop_map(|s| Action::InsertText(s.to_owned())),

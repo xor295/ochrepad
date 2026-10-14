@@ -173,6 +173,17 @@ pub(crate) fn resolve(
         Action::RemoveDuplicateLines { consecutive_only } => {
             transform::remove_duplicates(doc, sels, *consecutive_only)
         }
+        Action::DeleteLine => transform::delete_lines(doc, sels),
+        Action::TransposeLines => transform::transpose(doc, sels),
+        Action::InsertLineAbove => transform::insert_line(doc, sels, true),
+        Action::InsertLineBelow => transform::insert_line(doc, sels, false),
+        Action::ReverseLines => transform::reverse(doc, sels),
+        Action::TrimLeadingWhitespace => transform::trim_lines(doc, sels, false),
+        Action::TrimLeadingAndTrailingWhitespace => transform::trim_lines(doc, sels, true),
+        Action::EolToSpace => transform::eol_to_space(doc, sels),
+        Action::TabsToSpaces => transform::tabs_to_spaces(doc, sels, tab_width),
+        Action::SpacesToTabs => transform::spaces_to_tabs(doc, sels, tab_width),
+        Action::ColumnInsert(what) => crate::column_edit::insert(doc, sels, what, tab_width),
         Action::PasteBlock(text) => {
             if sels.len() > 1 || !sels.primary().is_empty() {
                 return resolve(&Action::Paste(text.clone()), doc, sels, indent, rows);

@@ -313,7 +313,7 @@ impl OchrepadApp {
 
 /// Shows `path` in the system's file manager: selected in Explorer on
 /// Windows; its folder (or itself, for a folder) elsewhere.
-fn reveal_in_file_manager(path: &Path) -> std::io::Result<()> {
+pub(super) fn reveal_in_file_manager(path: &Path) -> std::io::Result<()> {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;

@@ -81,6 +81,8 @@ pub struct AppSettings {
     /// The sidebar with the open folder's files.
     pub show_sidebar: bool,
     pub sidebar_width: f32,
+    /// View > Always on Top.
+    pub always_on_top: bool,
     pub recent_folders: Vec<PathBuf>,
     pub recent_files: Vec<PathBuf>,
 }
@@ -113,6 +115,7 @@ impl Default for AppSettings {
             highlight_rules: crate::log_rules::default_rules(),
             show_sidebar: true,
             sidebar_width: 240.0,
+            always_on_top: false,
             recent_folders: Vec::new(),
             recent_files: Vec::new(),
         }

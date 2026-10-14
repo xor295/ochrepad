@@ -20,6 +20,8 @@ menu item to explain:
   file, saving macros with shortcuts.
 - [Text tools](text-tools.md): formatting and checking JSON, Base64 and URL
   encoding, and hashes.
+- [Editing lines, blanks and columns](editing.md): Notepad++'s line and
+  blank operations, the Column Editor, the tab menu, and full screen.
 - [Key bindings](keymap.md): the `keymap.json` format and every command you
   can bind.
 - [Backups, sessions and files changed elsewhere](backups-and-session.md):

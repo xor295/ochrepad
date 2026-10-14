@@ -16,3 +16,5 @@ cc dfaeec7535eea3bd55c3a3dc3ed3b13da5e8e1d43126258ef2a5978fa98d5880 # shrinks to
 cc 892943e46feba04425abbce2853571f6332e911215b6c1baa8dacbdbf6ffa88e # shrinks to initial = "", actions = [Fold]
 cc df224d88f1cfb248612de1634ca946ac6f18af2b079edec09ed4ec766092fa6d # shrinks to initial = "", actions = [Fold]
 cc e02527247c4ce26238b3cc76bf76289ab9eefc5b4e097be400dbeb52dfe6045b # shrinks to initial = "\n", actions = [ConvertCase(Upper), Fold]
+cc f9748b986b0b1b09e37092afc44e37c420a4f2b9d881a54926c0d3b9763132fa # shrinks to initial = "👨\u{200d}👩\u{200d}👧\n", actions = [GoToLine { line: 2, column: 0 }, ColumnInsert(Text("ß")), SelectAllMatches(SearchQuery { pattern: "\\w+", options: SearchOptions { regex: true, match_case: false, whole_word: false, wrap: false, in_selection: false } }), TransposeLines, InsertText("ß")], layout = (None, None)
+cc 318ffb2b1b2be32eea80c1e6833137101d160cff3b603e7103029c9077fee09a # shrinks to initial = "ß", actions = [PasteBlock("\n\na\n漢"), ColumnSelect { anchor_line: 0, anchor_col: VisualCol(0), head_line: 1, head_col: VisualCol(1) }, TransposeLines], layout = (None, None)

@@ -22,6 +22,7 @@ use crate::editor_view::{
 };
 mod autosave;
 mod document;
+mod edit_tools;
 mod external;
 mod history_store;
 mod prefs;
@@ -96,6 +97,8 @@ enum TabCommand {
     CloneToOtherView(ViewId),
     /// A link clicked in a Markdown preview.
     Link(crate::preview::LinkClick),
+    /// A file command from a tab's context menu.
+    File(edit_tools::TabFileCommand, ViewId),
 }
 
 pub struct OchrepadApp {
@@ -144,6 +147,8 @@ pub struct OchrepadApp {
     go_to_line: Option<String>,
     /// The hash dialog (Text Tools > Hashes), while it is open.
     hashes: Option<tools::HashDialog>,
+    /// The Column Editor and the other Notepad++ editing extras.
+    edit_tools: edit_tools::EditTools,
     pub macros: Macros,
     persist: autosave::Persist,
     external: external::External,
@@ -206,6 +211,7 @@ impl OchrepadApp {
             status_note: None,
             go_to_line: None,
             hashes: None,
+            edit_tools: Default::default(),
             macros: Macros::default(),
             persist: autosave::Persist::default(),
             external: external::External::default(),
@@ -879,6 +885,7 @@ impl OchrepadApp {
                     }
                 }
                 TabCommand::Link(crate::preview::LinkClick::Refused(why)) => self.note_text(why),
+                TabCommand::File(command, v) => self.tab_file_command(command, v),
             }
         }
 
@@ -888,6 +895,7 @@ impl OchrepadApp {
         self.new_entry_dialog(ui);
         self.go_to_line_dialog(ui);
         self.hash_dialog(ui);
+        self.edit_tools_frame(ui);
         self.external_dialog(ui);
         self.preferences_window(ui);
         if let Some((source, repeat)) = self.macros.dialogs(ui) {
@@ -899,6 +907,7 @@ impl OchrepadApp {
         let idle = self.message.is_none()
             && self.confirming.is_none()
             && !self.macros.dialog_open()
+            && !self.edit_tools.dialog_open()
             && ui.memory(|m| m.focused().is_none());
         if idle && self.find.open {
             self.find.focus_field();
@@ -1068,6 +1077,7 @@ impl OchrepadApp {
         if pressed(ui, &NEXT_TAB) {
             self.cycle_tab(true);
         }
+        self.edit_tools_shortcuts(ui);
     }
 
     fn menu_bar(&mut self, ui: &mut Ui) {
@@ -1205,6 +1215,7 @@ impl OchrepadApp {
         if item(ui, "Select All", "Ctrl+A") {
             self.apply(Action::SelectAll);
         }
+        ui.menu_button("Copy to Clipboard", |ui| self.copy_to_clipboard_menu(ui));
         ui.separator();
         for (label, shortcut, action) in [
             ("Toggle Comment", "Ctrl+/", Action::ToggleLineComment),
@@ -1234,7 +1245,10 @@ impl OchrepadApp {
             }
         });
         ui.menu_button("Line Operations", |ui| self.line_operations_menu(ui));
+        ui.menu_button("Blank Operations", |ui| self.blank_operations_menu(ui));
         ui.menu_button("Text Tools", |ui| self.text_tools_menu(ui));
+        ui.separator();
+        self.column_editor_item(ui);
     }
 
     fn line_operations_menu(&mut self, ui: &mut Ui) {
@@ -1250,12 +1264,12 @@ impl OchrepadApp {
                 Action::MoveLinesDown,
             ),
             ("Join Lines", "Ctrl+J", Action::JoinLines),
-            ("Trim Trailing Space", "", Action::TrimTrailingWhitespace),
         ] {
             if item(ui, label, shortcut) {
                 self.apply(action);
             }
         }
+        self.more_line_operations(ui);
         ui.separator();
         for (label, action) in [
             (
@@ -1630,6 +1644,8 @@ impl OchrepadApp {
     }
 
     fn view_menu(&mut self, ui: &mut Ui) {
+        self.window_view_items(ui);
+        ui.separator();
         if ui
             .add(Button::new("Markdown Preview").shortcut_text("Ctrl+Shift+M"))
             .clicked()
@@ -2078,6 +2094,8 @@ impl TabViewer for Tabs<'_> {
         if ui.button("Clone to Other View").clicked() {
             self.commands.push(TabCommand::CloneToOtherView(*tab));
         }
+        ui.separator();
+        edit_tools::tab_menu(ui, *tab, self.editor, self.untitled, self.commands);
     }
 
     fn on_tab_button(&mut self, tab: &mut Tab, response: &egui::Response) {
