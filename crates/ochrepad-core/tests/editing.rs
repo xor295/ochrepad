@@ -329,7 +329,8 @@ fn tab_inserts_a_tab_or_spaces_to_the_next_stop() {
     t.apply(Action::InsertTab);
     assert_eq!(t.show(), "\t|x");
     let mut t = setup("|x\nab|y");
-    t.ed.settings.use_spaces = true;
+    let b = t.ed.view(t.view).unwrap().buffer();
+    t.ed.buffer_mut(b).unwrap().indent.use_spaces = true;
     t.apply(Action::InsertTab);
     // Column 0 gets four spaces; column 2 gets two.
     assert_eq!(t.show(), "    |x\nab  |y");

@@ -187,7 +187,7 @@ fn check(t: &util::T) -> Result<(), TestCaseError> {
             t.show()
         );
     }
-    let rows = ochrepad_core::DisplayMap::new(t.buffer(), view, 4);
+    let rows = ochrepad_core::DisplayMap::new(t.buffer(), view);
     // Folds do not apply to a padded (compare) view.
     let padded = view.padding.is_some();
     let visible: Vec<usize> = (0..doc.line_count())

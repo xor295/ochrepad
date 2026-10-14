@@ -88,7 +88,8 @@ pub struct DisplayMap<'a> {
 }
 
 impl<'a> DisplayMap<'a> {
-    pub fn new(buffer: &'a Buffer, view: &'a View, tab_width: usize) -> Self {
+    pub fn new(buffer: &'a Buffer, view: &'a View) -> Self {
+        let tab_width = buffer.indent.width;
         let padding = view.padding.as_deref();
         Self {
             doc: buffer.doc(),
@@ -437,7 +438,7 @@ mod tests {
         let view = ed.add_view(buffer).unwrap();
         ed.view_mut(view).unwrap().wrap_cols = wrap;
         let v = ed.view(view).unwrap();
-        f(DisplayMap::new(ed.buffer(buffer).unwrap(), v, 4));
+        f(DisplayMap::new(ed.buffer(buffer).unwrap(), v));
     }
 
     #[test]

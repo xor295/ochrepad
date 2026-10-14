@@ -1574,7 +1574,7 @@ impl OchrepadApp {
             return String::new();
         };
         let head = v.selections.primary().head;
-        let col = byte_to_visual_col(doc, head, self.editor.settings.tab_width);
+        let col = byte_to_visual_col(doc, head, self.buffer().indent.width);
         format!("Ln {}, Col {}", doc.line_of(head) + 1, col.0 + 1)
     }
 

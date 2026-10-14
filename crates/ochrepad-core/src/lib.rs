@@ -20,7 +20,7 @@ pub mod transform;
 pub mod view;
 
 pub use action::{Action, ActionError, Direction, Motion};
-pub use buffer::{Buffer, BufferId, CommentSyntax, FileMeta, LineEdit, LineEnding};
+pub use buffer::{Buffer, BufferId, CommentSyntax, FileMeta, Indent, LineEdit, LineEnding};
 pub use changeset::{Bias, ChangeSet, Edit};
 pub use display::{DisplayMap, Padding, RowPos};
 pub use editor::{Clock, Editor, ManualClock, Settings, SystemClock};

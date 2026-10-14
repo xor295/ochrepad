@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use crate::action::{Action, ActionError};
-use crate::buffer::{Buffer, BufferId, FileMeta, LineEdit};
+use crate::buffer::{Buffer, BufferId, FileMeta, Indent, LineEdit};
 use crate::changeset::{Bias, ChangeSet};
 use crate::display::DisplayMap;
 use crate::fold::{self, FoldSet};
@@ -56,11 +56,22 @@ impl Clock for ManualClock {
     }
 }
 
+/// Defaults for new buffers (each buffer has its own [`Indent`]).
 #[derive(Clone, Debug)]
 pub struct Settings {
     pub tab_width: usize,
     /// The Tab key inserts spaces instead of a tab character.
     pub use_spaces: bool,
+}
+
+impl Settings {
+    /// The indentation a new buffer starts with.
+    pub fn indent(&self) -> Indent {
+        Indent {
+            use_spaces: self.use_spaces,
+            width: self.tab_width,
+        }
+    }
 }
 
 impl Default for Settings {
@@ -111,7 +122,9 @@ impl Editor {
 
     pub fn add_buffer(&mut self, text: &str, meta: FileMeta) -> BufferId {
         let id = BufferId(self.fresh_id());
-        self.buffers.insert(id, Buffer::new(id, text, meta));
+        let mut buffer = Buffer::new(id, text, meta);
+        buffer.indent = self.settings.indent();
+        self.buffers.insert(id, buffer);
         id
     }
 
@@ -315,8 +328,8 @@ impl Editor {
                 resolved.ok_or(ActionError::NoCommentSyntax)
             }
             _ => {
-                let rows = DisplayMap::new(buffer, v, self.settings.tab_width);
-                Ok(resolve(action, &buffer.doc, sels, &self.settings, &rows))
+                let rows = DisplayMap::new(buffer, v);
+                Ok(resolve(action, &buffer.doc, sels, buffer.indent, &rows))
             }
         })
     }
@@ -524,13 +537,13 @@ impl Editor {
     /// Folds the region `line` heads in `view`; returns whether it did.
     /// Carets inside move to the end of the header line.
     pub fn fold_at(&mut self, view: ViewId, line: usize) -> bool {
-        let tab_width = self.settings.tab_width;
         let Some(v) = self.views.get_mut(&view) else {
             return false;
         };
         let Some(b) = self.buffers.get(&v.buffer()) else {
             return false;
         };
+        let tab_width = b.indent.width;
         let Some(last) = fold::region(&b.doc, line, b.fold_strategy, tab_width) else {
             return false;
         };
@@ -552,10 +565,10 @@ impl Editor {
     }
 
     fn fold_action(&mut self, view: ViewId, buffer: BufferId, action: &Action) {
-        let tab_width = self.settings.tab_width;
         let (Some(v), Some(b)) = (self.views.get_mut(&view), self.buffers.get(&buffer)) else {
             return;
         };
+        let tab_width = b.indent.width;
         let (doc, strategy) = (&b.doc, b.fold_strategy);
         let caret = doc.line_of(v.selections.primary().head);
         let around = || fold::enclosing(doc, caret, strategy, tab_width);

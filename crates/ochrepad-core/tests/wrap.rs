@@ -107,7 +107,7 @@ fn padding_rows_are_blank_and_carets_skip_them() {
         after_last: 1,
     }));
     let view = t.ed.view(t.view).unwrap();
-    let rows = ochrepad_core::DisplayMap::new(t.buffer(), view, 4);
+    let rows = ochrepad_core::DisplayMap::new(t.buffer(), view);
     let all: Vec<_> = rows.rows_from(rows.first_row(), 99).collect();
     assert_eq!(all.len(), 6);
     let blank: Vec<bool> = all.iter().map(|&r| rows.is_filler(r)).collect();

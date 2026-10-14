@@ -13,8 +13,8 @@ use crate::position::{
 };
 use std::ops::Range;
 
+use crate::buffer::Indent;
 use crate::display::DisplayMap;
-use crate::editor::Settings;
 use crate::search::{SearchQuery, Searcher};
 use crate::selection::{Rectangle, Selection, SelectionSet};
 use crate::text::Document;
@@ -36,15 +36,15 @@ pub(crate) fn resolve(
     action: &Action,
     doc: &Document,
     sels: &SelectionSet,
-    settings: &Settings,
+    indent: Indent,
     rows: &DisplayMap,
 ) -> Resolved {
-    let tab_width = settings.tab_width;
+    let tab_width = indent.width;
     match action {
-        Action::Indent => transform::indent(doc, sels, &indent_unit(settings)),
+        Action::Indent => transform::indent(doc, sels, &indent_unit(indent)),
         // Tab with a selection over several lines indents them.
         Action::InsertTab if transform::spans_lines(doc, sels) => {
-            transform::indent(doc, sels, &indent_unit(settings))
+            transform::indent(doc, sels, &indent_unit(indent))
         }
         Action::Unindent => transform::unindent(doc, sels, tab_width),
         Action::GoToLine { line, column } => {
@@ -77,7 +77,7 @@ pub(crate) fn resolve(
         Action::InsertTab => {
             // A tab character, or spaces up to the next tab stop.
             edit_each(doc, sels, EditKind::Other, |_, s| {
-                let text = if settings.use_spaces {
+                let text = if indent.use_spaces {
                     let tw = tab_width.max(1);
                     let col = byte_to_visual_col(doc, s.start(), tab_width).0;
                     " ".repeat(tw - col % tw)
@@ -172,7 +172,7 @@ pub(crate) fn resolve(
         }
         Action::PasteBlock(text) => {
             if sels.len() > 1 || !sels.primary().is_empty() {
-                return resolve(&Action::Paste(text.clone()), doc, sels, settings, rows);
+                return resolve(&Action::Paste(text.clone()), doc, sels, indent, rows);
             }
             paste_block(doc, sels.primary().head, text, tab_width)
         }
@@ -360,9 +360,9 @@ pub(crate) fn resolve_search(
 }
 
 /// One level of indentation: a tab, or `tab_width` spaces.
-fn indent_unit(settings: &Settings) -> String {
-    if settings.use_spaces {
-        " ".repeat(settings.tab_width.max(1))
+fn indent_unit(indent: Indent) -> String {
+    if indent.use_spaces {
+        " ".repeat(indent.width.max(1))
     } else {
         "\t".to_owned()
     }

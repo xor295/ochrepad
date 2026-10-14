@@ -193,11 +193,16 @@ impl Top {
     }
 }
 
+/// The tab width of `buffer` (each document has its own).
+fn tab_width_of(editor: &Editor, buffer: ochrepad_core::BufferId) -> usize {
+    editor.buffer(buffer).map_or(4, |b| b.indent.width)
+}
+
 /// The display rows of `view`.
 fn display_map(editor: &Editor, view: ViewId) -> DisplayMap<'_> {
     let v = editor.view(view).expect("view exists");
     let b = editor.buffer(v.buffer()).expect("view's buffer exists");
-    DisplayMap::new(b, v, editor.settings.tab_width)
+    DisplayMap::new(b, v)
 }
 
 enum Op {
@@ -922,12 +927,7 @@ fn fold_target(
     let folded = v.folds().is_folded(row.line);
     if in_margin {
         let header = folded
-            || ochrepad_core::fold::is_header(
-                b.doc(),
-                row.line,
-                b.fold_strategy,
-                editor.settings.tab_width,
-            );
+            || ochrepad_core::fold::is_header(b.doc(), row.line, b.fold_strategy, b.indent.width);
         return (row.sub == 0 && header).then_some(row.line);
     }
     if !folded || rows.row_range(row).end != b.doc().line_end(row.line) {
@@ -1133,7 +1133,7 @@ fn line_layout(
         (buffer, b.revision()),
         line,
         f.cell_w,
-        editor.settings.tab_width,
+        tab_width_of(editor, buffer),
         ui.visuals().text_color(),
         styling,
     )
@@ -1288,7 +1288,7 @@ fn paint(
         .is_empty()
         .then(|| ochrepad_core::brackets::bracket_at(doc, primary.head))
         .flatten();
-    let tab_width = editor.settings.tab_width;
+    let tab_width = tab_width_of(editor, buffer);
     let strategy = editor
         .buffer(buffer)
         .map(|b| b.fold_strategy)
@@ -1552,7 +1552,7 @@ fn paint(
             buffer,
             &|line| map_spans.get(&line).cloned(),
             &visuals,
-            editor.settings.tab_width,
+            tab_width_of(editor, buffer),
             hovered || state.map_drag.is_some(),
         );
     }

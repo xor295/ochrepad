@@ -11,6 +11,25 @@ use crate::text::Document;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct BufferId(pub u64);
 
+/// How a document is indented: the Tab key's character and the tab width
+/// (also how wide a tab character is drawn).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Indent {
+    /// The Tab key inserts spaces instead of a tab character.
+    pub use_spaces: bool,
+    /// Cells per indent level and per tab stop.
+    pub width: usize,
+}
+
+impl Default for Indent {
+    fn default() -> Self {
+        Self {
+            use_spaces: false,
+            width: 4,
+        }
+    }
+}
+
 /// A language's comment markers.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommentSyntax {
@@ -95,6 +114,8 @@ pub struct Buffer {
     /// The language's comment markers, for toggling comments; the app sets
     /// them from the language.
     pub comments: Option<CommentSyntax>,
+    /// Indentation and tab width (from the preferences, or detected).
+    pub indent: Indent,
     pub meta: FileMeta,
     /// Line edits since the last `take_line_edits`, for the highlighter.
     line_edits: Vec<LineEdit>,
@@ -113,6 +134,7 @@ impl Buffer {
             fold_strategy: FoldStrategy::Indent,
             read_only: false,
             comments: None,
+            indent: Indent::default(),
             meta,
             line_edits: Vec::new(),
         }
