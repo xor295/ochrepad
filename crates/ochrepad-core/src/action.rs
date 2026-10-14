@@ -6,6 +6,7 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 use crate::buffer::{BufferId, Indent};
+use crate::column_edit::ColumnInsert;
 use crate::position::VisualCol;
 use crate::search::SearchQuery;
 use crate::selection::SelectionSet;
@@ -141,6 +142,40 @@ pub enum Action {
     RemoveDuplicateLines {
         consecutive_only: bool,
     },
+    /// Delete the lines the selections touch (the caret's line), with their
+    /// line breaks: Notepad++'s Line Delete (Ctrl+Shift+L).
+    DeleteLine,
+    /// Swap each caret's line with the line above it (Ctrl+T); the caret
+    /// goes to the start of its line, as in Notepad++.
+    TransposeLines,
+    /// Insert a line above each caret's line (a selection's first line),
+    /// indented like it, and move the caret there (Ctrl+Alt+Enter).
+    InsertLineAbove,
+    /// Insert a line below each caret's line (a selection's last line),
+    /// indented like it, and move the caret there (Ctrl+Alt+Shift+Enter).
+    InsertLineBelow,
+    /// Reverse the order of the selected lines (every line when nothing is
+    /// selected).
+    ReverseLines,
+    /// Remove leading spaces and tabs from the selected lines (all lines
+    /// when nothing is selected).
+    TrimLeadingWhitespace,
+    /// Remove leading and trailing spaces and tabs from the selected lines
+    /// (all lines when nothing is selected).
+    TrimLeadingAndTrailingWhitespace,
+    /// Replace the line breaks between the selected lines (all lines) with
+    /// spaces, keeping the blanks around them.
+    EolToSpace,
+    /// Replace every tab on the selected lines (all lines) with spaces to
+    /// the same tab stop.
+    TabsToSpaces,
+    /// Replace spaces with tabs on the selected lines (all lines) wherever
+    /// the columns stay the same: the indentation, and runs of two or more
+    /// spaces reaching a tab stop.
+    SpacesToTabs,
+    /// The Column Editor: insert text or a number sequence at one column
+    /// on many lines (see [`ColumnInsert`]).
+    ColumnInsert(ColumnInsert),
     /// Fold the region holding the caret: the caret's line if it starts a
     /// region, else the innermost region around it. Fold actions change the
     /// view only (no undo step) and are not recorded in macros.

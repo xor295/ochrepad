@@ -1,6 +1,7 @@
 //! Text transforms: case conversion, line sorting, and line operations
-//! (trim, duplicate, move, join, remove empty or duplicate lines). Each
-//! resolves to one transaction.
+//! (trim, duplicate, move, join, delete, transpose, insert, reverse, remove
+//! empty or duplicate lines) and blank operations (trim, EOL to space, tabs
+//! and spaces). Each resolves to one transaction.
 
 use std::cmp::Ordering;
 use std::collections::{BTreeSet, HashSet};
@@ -10,7 +11,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::changeset::{Bias, ChangeSet, Edit};
 use crate::history::EditKind;
-use crate::position::{ByteOffset, visual_col_to_byte, visual_col_to_byte_ceil};
+use unicode_segmentation::UnicodeSegmentation;
+
+use crate::position::{ByteOffset, grapheme_width, visual_col_to_byte, visual_col_to_byte_ceil};
 use crate::resolve::Resolved;
 use crate::selection::{Selection, SelectionSet};
 use crate::text::Document;
@@ -717,6 +720,299 @@ pub(crate) fn remove_duplicates(
     remove_lines(doc, sels, &lines)
 }
 
+/// Deletes the lines the selections touch (the caret's line for a caret),
+/// with their line breaks: Notepad++'s Line Delete (Ctrl+Shift+L).
+pub(crate) fn delete_lines(doc: &Document, sels: &SelectionSet) -> Resolved {
+    let lines: Vec<usize> = touched_lines(doc, sels).into_iter().collect();
+    remove_lines(doc, sels, &lines)
+}
+
+/// Swaps each caret's line with the line above it (Ctrl+T). The caret goes
+/// to the start of its line, which now holds the text from above, as in
+/// Notepad++. A line next to one already swapped is left alone.
+pub(crate) fn transpose(doc: &Document, sels: &SelectionSet) -> Resolved {
+    let lines: BTreeSet<usize> = sels.ranges().iter().map(|s| doc.line_of(s.head)).collect();
+    let mut edits = Vec::new();
+    let mut swapped = BTreeSet::new();
+    for line in lines {
+        if line == 0 || swapped.contains(&(line - 1)) {
+            continue;
+        }
+        let above = doc.line_text(line - 1);
+        let this = doc.line_text(line);
+        edits.push(Edit::new(
+            doc.line_start(line - 1),
+            doc.line_end(line),
+            format!("{this}\n{above}"),
+        ));
+        swapped.insert(line);
+    }
+    let changes = ChangeSet::new(doc.len(), edits);
+    // A swap keeps the length of what it replaces, so positions outside the
+    // swaps stay; inside one, a position follows its text to its new line.
+    let follow = |pos: ByteOffset| {
+        for &line in &swapped {
+            let (above, this) = (doc.line_start(line - 1), doc.line_start(line));
+            let this_len = doc.line_end(line).0 - this.0;
+            if above <= pos && pos < this {
+                return ByteOffset(pos.0 + this_len + 1);
+            }
+            if this <= pos && pos <= doc.line_end(line) {
+                return ByteOffset(above.0 + pos.0 - this.0);
+            }
+        }
+        pos
+    };
+    let after = sels.map(|s| {
+        let line = doc.line_of(s.head);
+        if swapped.contains(&line) {
+            let this_len = doc.line_end(line).0 - doc.line_start(line).0;
+            Selection::caret(ByteOffset(doc.line_start(line - 1).0 + this_len + 1))
+        } else {
+            Selection::new(follow(s.anchor), follow(s.head))
+        }
+    });
+    edit_result(changes, after, sels)
+}
+
+/// Inserts a line above (or below) each caret's line, or above a
+/// selection's first line (below its last), indented like that line; the
+/// carets go to the new lines.
+pub(crate) fn insert_line(doc: &Document, sels: &SelectionSet, above: bool) -> Resolved {
+    let line_for = |s: &Selection| {
+        let (first, last) = lines_of(doc, s);
+        if above { first } else { last }
+    };
+    let lines: BTreeSet<usize> = sels.ranges().iter().map(line_for).collect();
+    // (line, where the text goes in, the caret's offset from there)
+    let mut spots = Vec::new();
+    let mut edits = Vec::new();
+    for line in lines {
+        let text = doc.line_text(line);
+        let indent = &text[..indent_len(&text)];
+        if above {
+            let at = doc.line_start(line);
+            edits.push(Edit::new(at, at, format!("{indent}\n")));
+            spots.push((line, at, indent.len()));
+        } else {
+            let at = doc.line_end(line);
+            edits.push(Edit::new(at, at, format!("\n{indent}")));
+            spots.push((line, at, indent.len() + 1));
+        }
+    }
+    let changes = ChangeSet::new(doc.len(), edits);
+    let primary_line = line_for(sels.primary());
+    let primary = spots
+        .iter()
+        .position(|(line, ..)| *line == primary_line)
+        .unwrap_or(0);
+    let carets = spots
+        .iter()
+        .map(|&(_, at, offset)| {
+            Selection::caret(ByteOffset(
+                changes.map_position(at, Bias::Before).0 + offset,
+            ))
+        })
+        .collect();
+    edit_result(changes, SelectionSet::new(carets, primary), sels)
+}
+
+/// Reverses the order of the selected lines (from the first to the last),
+/// the rectangle's lines, or every line when nothing is selected.
+pub(crate) fn reverse(doc: &Document, sels: &SelectionSet) -> Resolved {
+    let rect = sels.rect().cloned();
+    let any_selected = sels.ranges().iter().any(|s| !s.is_empty());
+    let (first, mut last) = if let Some(r) = &rect {
+        (r.top(), r.bottom())
+    } else if any_selected {
+        let spans: Vec<_> = sels.ranges().iter().map(|s| lines_of(doc, s)).collect();
+        let first = spans.iter().map(|s| s.0).min().unwrap_or(0);
+        let last = spans.iter().map(|s| s.1).max().unwrap_or(0);
+        (first, last)
+    } else {
+        (0, doc.line_count() - 1)
+    };
+    // A trailing newline's empty last line is not a line to move.
+    if last > first && last + 1 == doc.line_count() && doc.line_text(last).is_empty() {
+        last -= 1;
+    }
+    if last <= first {
+        return Resolved::Selections(sels.clone());
+    }
+    let mut lines: Vec<String> = (first..=last).map(|l| doc.line_text(l)).collect();
+    lines.reverse();
+    let new = lines.join("\n");
+    let (start, end) = (doc.line_start(first), doc.line_end(last));
+    if doc.slice(start..end) == new {
+        return Resolved::Selections(sels.clone());
+    }
+    let changes = ChangeSet::new(doc.len(), vec![Edit::new(start, end, new.as_str())]);
+    let after = if any_selected || rect.is_some() {
+        SelectionSet::single(Selection::new(start, ByteOffset(start.0 + new.len())))
+    } else {
+        SelectionSet::caret(start)
+    };
+    edit_result(changes, after, sels)
+}
+
+/// Removes leading spaces and tabs (and with `trailing`, trailing ones too)
+/// from the selected lines, or from every line when nothing is selected.
+pub(crate) fn trim_lines(doc: &Document, sels: &SelectionSet, trailing: bool) -> Resolved {
+    let mut edits = Vec::new();
+    for line in selected_lines(doc, sels) {
+        let text = doc.line_text(line);
+        let start = doc.line_start(line).0;
+        let lead = indent_len(&text);
+        // A blank line is all lead; nothing is left to trim at its end.
+        let keep_end = if trailing {
+            text.trim_end_matches([' ', '\t']).len().max(lead)
+        } else {
+            text.len()
+        };
+        if lead > 0 {
+            edits.push(Edit::new(ByteOffset(start), ByteOffset(start + lead), ""));
+        }
+        if keep_end < text.len() {
+            edits.push(Edit::new(
+                ByteOffset(start + keep_end),
+                ByteOffset(start + text.len()),
+                "",
+            ));
+        }
+    }
+    let changes = ChangeSet::new(doc.len(), edits);
+    let after = map_before(sels, &changes);
+    edit_result(changes, after, sels)
+}
+
+/// Replaces each line break between the target lines with a space, joining
+/// each run of them into one line (Notepad++'s EOL to Space). Unlike Join
+/// Lines, the spaces and tabs around the breaks stay.
+pub(crate) fn eol_to_space(doc: &Document, sels: &SelectionSet) -> Resolved {
+    let lines = target_lines(doc, sels);
+    let edits = lines
+        .windows(2)
+        .filter(|w| w[1] == w[0] + 1)
+        .map(|w| Edit::new(doc.line_end(w[0]), doc.line_start(w[1]), " "))
+        .collect();
+    let changes = ChangeSet::new(doc.len(), edits);
+    let after = map_before(sels, &changes);
+    edit_result(changes, after, sels)
+}
+
+/// Replaces every tab on the selected lines (every line when nothing is
+/// selected) with the spaces that reach the same tab stop.
+pub(crate) fn tabs_to_spaces(doc: &Document, sels: &SelectionSet, tab_width: usize) -> Resolved {
+    let width = tab_width.max(1);
+    let mut edits = Vec::new();
+    for line in selected_lines(doc, sels) {
+        let text = doc.line_text(line);
+        if !text.contains('\t') {
+            continue;
+        }
+        let start = doc.line_start(line).0;
+        let mut col = 0;
+        for (i, g) in text.grapheme_indices(true) {
+            let w = grapheme_width(g, col, width);
+            if g == "\t" {
+                edits.push(Edit::new(
+                    ByteOffset(start + i),
+                    ByteOffset(start + i + 1),
+                    " ".repeat(w),
+                ));
+            }
+            col += w;
+        }
+    }
+    let changes = ChangeSet::new(doc.len(), edits);
+    let after = map_before(sels, &changes);
+    edit_result(changes, after, sels)
+}
+
+/// The tabs (and spaces) for `n` spaces starting at visual column `col`,
+/// keeping every column: each stretch of two or more spaces that reaches a
+/// tab stop becomes a tab. `None` when nothing would change.
+fn spaces_as_tabs(col: usize, n: usize, width: usize) -> Option<String> {
+    let end = col + n;
+    let mut out = String::new();
+    let mut c = col;
+    let mut changed = false;
+    while c < end {
+        let stop = (c / width + 1) * width;
+        if stop > end {
+            out.push_str(&" ".repeat(end - c));
+            break;
+        }
+        if stop - c >= 2 {
+            out.push('\t');
+            changed = true;
+        } else {
+            out.push(' ');
+        }
+        c = stop;
+    }
+    changed.then_some(out)
+}
+
+/// Replaces spaces with tabs on the selected lines (every line when nothing
+/// is selected) wherever that keeps every column: Notepad++'s Space to TAB
+/// (All). Leading whitespace becomes tabs and then spaces narrower than a
+/// tab, as Convert Indentation does; after it, each run of two or more
+/// spaces reaching a tab stop becomes a tab.
+pub(crate) fn spaces_to_tabs(doc: &Document, sels: &SelectionSet, tab_width: usize) -> Resolved {
+    let width = tab_width.max(1);
+    let mut edits = Vec::new();
+    for line in selected_lines(doc, sels) {
+        let text = doc.line_text(line);
+        if !text.contains(' ') {
+            continue;
+        }
+        let start = doc.line_start(line).0;
+        let lead = indent_len(&text);
+        let mut col = 0;
+        for b in text[..lead].bytes() {
+            col = if b == b'\t' {
+                col + width - col % width
+            } else {
+                col + 1
+            };
+        }
+        let indent = format!("{}{}", "\t".repeat(col / width), " ".repeat(col % width));
+        if indent != text[..lead] {
+            edits.push(Edit::new(
+                ByteOffset(start),
+                ByteOffset(start + lead),
+                indent,
+            ));
+        }
+        // Runs of spaces after the indentation: (byte, column) of the first.
+        let mut run: Option<(usize, usize)> = None;
+        let flush = |run: &mut Option<(usize, usize)>, col: usize, edits: &mut Vec<Edit>| {
+            if let Some((byte, from)) = run.take()
+                && let Some(tabs) = spaces_as_tabs(from, col - from, width)
+            {
+                edits.push(Edit::new(
+                    ByteOffset(start + byte),
+                    ByteOffset(start + byte + col - from),
+                    tabs,
+                ));
+            }
+        };
+        for (i, g) in text[lead..].grapheme_indices(true) {
+            if g == " " {
+                run.get_or_insert((lead + i, col));
+            } else {
+                flush(&mut run, col, &mut edits);
+            }
+            col += grapheme_width(g, col, width);
+        }
+        flush(&mut run, col, &mut edits);
+    }
+    let changes = ChangeSet::new(doc.len(), edits);
+    let after = map_before(sels, &changes);
+    edit_result(changes, after, sels)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -740,6 +1036,18 @@ mod tests {
             convert_case(s, CaseMode::Invert),
             "HELLO world, DON'T STRASSE"
         );
+    }
+
+    #[test]
+    fn spaces_become_tabs_only_where_columns_stay() {
+        assert_eq!(spaces_as_tabs(1, 3, 4), Some("\t".to_owned()));
+        assert_eq!(
+            spaces_as_tabs(3, 1, 4),
+            None,
+            "one space before a stop stays"
+        );
+        assert_eq!(spaces_as_tabs(2, 8, 4), Some("\t\t  ".to_owned()));
+        assert_eq!(spaces_as_tabs(0, 3, 4), None);
     }
 
     #[test]

@@ -192,6 +192,14 @@ impl Default for Keymap {
                 act(Action::MoveLinesDown),
             ),
             (Chord::new(J).cmd(), act(Action::JoinLines)),
+            // Notepad++'s (Scintilla's) line commands.
+            (Chord::new(L).cmd().shift(), act(Action::DeleteLine)),
+            (Chord::new(T).cmd(), act(Action::TransposeLines)),
+            (Chord::new(Enter).cmd().alt(), act(Action::InsertLineAbove)),
+            (
+                Chord::new(Enter).cmd().alt().shift(),
+                act(Action::InsertLineBelow),
+            ),
             (Chord::new(ArrowUp).cmd().alt(), act(Action::AddCursorAbove)),
             (
                 Chord::new(ArrowDown).cmd().alt(),

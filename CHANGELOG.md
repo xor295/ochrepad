@@ -44,6 +44,19 @@ people downloading the release.
   selection or the document. They work on each selection, or on the whole
   document when nothing is selected, and can be bound to keys and recorded
   in macros.
+- Notepad++'s line commands: Delete Line (Ctrl+Shift+L), Transpose Line
+  (Ctrl+T), Insert Blank Line Above and Below Current (Ctrl+Alt+Enter,
+  Ctrl+Alt+Shift+Enter, indented like the line) and Reverse Line Order.
+- Edit > Blank Operations: trim leading, trailing or both, EOL to Space, TAB
+  to Space, and Space to TAB (all, or only the indentation).
+- Edit > Column Editor (Alt+C): text, or a number sequence (initial value,
+  step, repeat, zeros or spaces for padding, decimal, hex, octal or binary),
+  inserted at one column down many lines or a column selection.
+- The tab menu: Close All to the Left and to the Right, Close All
+  Unchanged, Copy Full File Path, Copy File Name, Copy Folder Path, Reveal
+  in File Manager and Reload from Disk. The same copies are in Edit > Copy
+  to Clipboard.
+- View > Full Screen (F11) and Always on Top.
 
 ### Fixed
 

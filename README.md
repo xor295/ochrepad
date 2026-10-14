@@ -55,7 +55,10 @@ A fast, native text editor in the spirit of Notepad++, written in Rust with
   move, join lines, trim trailing whitespace, and remove empty or duplicate
   lines. JSON format, minify and validate (key order and numbers kept),
   Base64 and URL encoding, and MD5, SHA-1 and SHA-256 hashes
-  ([more](docs/text-tools.md)).
+  ([more](docs/text-tools.md)). Notepad++'s line and blank operations
+  (delete, transpose, reverse, trim, EOL to space, tabs and spaces) and its
+  Column Editor for text or number sequences down a column
+  ([more](docs/editing.md)).
 - **Faithful file handling**: UTF-8, UTF-16 and legacy encodings are detected,
   and files are saved back with the same encoding, BOM and line endings
   (CRLF, LF or CR). Saves are atomic, so a crash never leaves a half-written
@@ -139,12 +142,16 @@ Windows and Linux. macOS is not supported.
 | Toggle comment, block comment | Ctrl+/, Ctrl+Shift+/ |
 | Matching bracket: go, select | Ctrl+B, Ctrl+Alt+B |
 | Duplicate, move, join lines | Ctrl+D, Ctrl+Shift+Up/Down, Ctrl+J |
+| Delete line, swap with the line above | Ctrl+Shift+L, Ctrl+T |
+| New line above, below | Ctrl+Alt+Enter, Ctrl+Alt+Shift+Enter |
+| Column Editor (text or numbers down a column) | Alt+C |
 | Fold, unfold the block at the caret | Ctrl+Alt+F, Ctrl+Alt+Shift+F |
 | Fold all, unfold all, fold a level | Alt+0, Alt+Shift+0, Alt+1 … Alt+8 |
 | UPPERCASE, lowercase | Ctrl+Shift+U, Ctrl+U |
 | Title Case, iNVERT cASE | Alt+U, Ctrl+Alt+U |
 | Record/stop macro, play macro | Ctrl+Shift+R, Ctrl+Shift+P |
 | Markdown preview | Ctrl+Shift+M |
+| Full screen | F11 |
 | Zoom in, out, back to 100% | Ctrl+plus, Ctrl+minus, Ctrl+0 (or Ctrl+wheel) |
 | Show all characters | Ctrl+Shift+8 |
 | Show or hide the sidebar | Ctrl+Shift+E |
