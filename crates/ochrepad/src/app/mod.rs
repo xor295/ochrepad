@@ -2182,7 +2182,8 @@ impl OchrepadApp {
     }
 
     /// "12 selected, 3 lines": the characters selected and the lines they
-    /// are on, as in Notepad++'s status bar; `None` with nothing selected.
+    /// are on, as in Notepad++'s status bar; with several selections, how
+    /// many there are ("4 selections, 20 selected"). `None` for one caret.
     pub fn selection_status(&self) -> Option<String> {
         let v = self.editor.view(self.active)?;
         let doc = self.buffer().doc();
@@ -2196,10 +2197,13 @@ impl OchrepadApp {
             }
             lines += last + 1 - first;
         }
-        match (chars, lines) {
-            (0, _) => None,
-            (c, 1) => Some(format!("{c} selected")),
-            (c, l) => Some(format!("{c} selected, {l} lines")),
+        let count = v.selections.len();
+        match (count, chars, lines) {
+            (1, 0, _) => None,
+            (1, c, 1) => Some(format!("{c} selected")),
+            (1, c, l) => Some(format!("{c} selected, {l} lines")),
+            (n, 0, _) => Some(format!("{n} selections")),
+            (n, c, _) => Some(format!("{n} selections, {c} selected")),
         }
     }
 
@@ -2279,10 +2283,6 @@ impl OchrepadApp {
             }
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                 ui.label(self.caret_status());
-                if let Some(selected) = self.selection_status() {
-                    ui.separator();
-                    ui.label(selected);
-                }
                 if let Some((note, until)) = &self.status_note {
                     if self.now < *until {
                         ui.separator();
@@ -2307,9 +2307,9 @@ impl OchrepadApp {
                     ui.add(
                         egui::Label::new(format!("Column selection, {carets} lines")).truncate(),
                     );
-                } else if carets > 1 {
+                } else if let Some(selected) = self.selection_status() {
                     ui.separator();
-                    ui.add(egui::Label::new(format!("{carets} selections")).truncate());
+                    ui.add(egui::Label::new(selected).truncate());
                 }
             });
         });
