@@ -96,7 +96,7 @@ impl EditTools {
 
 /// A file command from the tab context menu.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum TabFileCommand {
+pub enum TabFileCommand {
     CloseLeft,
     CloseRight,
     CloseUnchanged,

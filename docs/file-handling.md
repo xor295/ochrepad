@@ -111,6 +111,19 @@ tab's `*` goes away when the write has finished. If you close a tab or exit
 while its save is still running, ochrepad waits for it, and if the save
 fails, the close or exit is cancelled so you can deal with it.
 
+The File menu also has:
+
+- **Save All**: saves every document that has a file and unsaved changes.
+  New documents that were never saved are left for Save As; the status bar
+  says how many.
+- **Save a Copy As…**: writes the document to another file, in its encoding
+  and line endings. The tab stays on its own file, still unsaved if it was.
+- **Reload from Disk**: reads the file again (asking first if there are
+  unsaved changes; Undo brings them back).
+- **Rename…**: renames the document's file in its folder. An existing file
+  of that name is never replaced. The tab, the sidebar and the session
+  follow the new name.
+
 ## Pasted text
 
 Text pasted from the clipboard has its line endings converted to the

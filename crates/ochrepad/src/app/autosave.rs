@@ -108,6 +108,8 @@ pub(super) enum PendingJob {
         path: PathBuf,
         matches: usize,
     },
+    /// File > Save a Copy As.
+    Copy(PathBuf),
     Other,
 }
 
@@ -229,6 +231,7 @@ impl OchrepadApp {
                 Some(PendingJob::ReplaceInFiles { path, matches }) => {
                     self.replace_in_files_saved(&path, matches, d.result);
                 }
+                Some(PendingJob::Copy(path)) => self.copy_saved(&path, d.result),
                 Some(PendingJob::Other) | None => {
                     if let Err(e) = d.result {
                         self.message = Some(format!("Could not write a backup:\n{e}"));

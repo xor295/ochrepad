@@ -147,7 +147,7 @@ Windows and Linux. macOS is not supported.
 | | |
 |---|---|
 | New, Open, Save, Save As | Ctrl+N, Ctrl+O, Ctrl+S, Ctrl+Shift+S |
-| Close tab, next/previous tab | Ctrl+W (or middle click), Ctrl+Tab, Ctrl+Shift+Tab |
+| Close tab, next/previous tab | Ctrl+W (or middle click), Ctrl+Tab or Ctrl+PageDown, Ctrl+Shift+Tab or Ctrl+PageUp |
 | Reopen the file closed last | Ctrl+Shift+T |
 | Undo, Redo | Ctrl+Z, Ctrl+Y (or Ctrl+Shift+Z) |
 | Find, Replace | Ctrl+F, Ctrl+H |
@@ -161,7 +161,7 @@ Windows and Linux. macOS is not supported.
 | Go to line | Ctrl+G |
 | Bookmark a line, next, previous | Ctrl+F2, F2, Shift+F2 |
 | Indent, unindent | Tab (with lines selected), Shift+Tab |
-| Toggle comment, block comment | Ctrl+/, Ctrl+Shift+/ |
+| Toggle comment, block comment | Ctrl+/ or Ctrl+Q, Ctrl+Shift+/ or Ctrl+Shift+Q |
 | Matching bracket: go, select | Ctrl+B, Ctrl+Alt+B |
 | Duplicate, move, join lines | Ctrl+D, Ctrl+Shift+Up/Down, Ctrl+J |
 | Delete line, swap with the line above | Ctrl+Shift+L, Ctrl+T |

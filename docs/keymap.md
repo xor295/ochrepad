@@ -49,7 +49,8 @@ For example `Ctrl+Shift+Up`, `alt+f5`, `Ctrl+OpenBracket`.
 - **Application shortcuts** are fixed and are handled before the keymap,
   so binding them here has no effect: Ctrl+N, Ctrl+O, Ctrl+S, Ctrl+Shift+S,
   Ctrl+W, Ctrl+Tab, Ctrl+Shift+Tab, Ctrl+F, Ctrl+Shift+F, Ctrl+H, Ctrl+G, F3,
-  Shift+F3, Ctrl+F3, Ctrl+Shift+F3, Ctrl+Shift+T, Ctrl+Shift+R,
+  Shift+F3, Ctrl+F3, Ctrl+Shift+F3, Ctrl+Shift+T, Ctrl+PageUp,
+  Ctrl+PageDown, Ctrl+Shift+R,
   Ctrl+Shift+P, Ctrl+Shift+M, Ctrl+Shift+E, F8,
   Shift+F8, Ctrl+plus, Ctrl+=, Ctrl+minus, Ctrl+0, Ctrl+Shift+8,
   Alt+Shift+L, Alt+C (Column Editor) and F11 (Full Screen).
@@ -144,8 +145,8 @@ Motions for `MoveCursor`:
 | `{"Action": "Indent"}` | Indents the selected lines, or the caret's line, by one level (a tab, or spaces when the editor indents with spaces). Tab does this when a selection spans lines. |
 | `{"Action": "Unindent"}` | Removes one level of indentation from the selected lines, or the caret's line (Shift+Tab). |
 | `{"Action": {"ConvertIndentation": {"to_spaces": true}}}` | Rewrites every line's leading whitespace as spaces (or with `false`, tabs), keeping its width, and indents the document that way from now on. One undo step. Also in the status bar's indentation menu. |
-| `{"Action": "ToggleLineComment"}` | Comments the selected lines, or the caret's line, at their common indent, or uncomments them if they all are (Ctrl+/). For a language with only block comments, wraps the lines in one. |
-| `{"Action": "ToggleBlockComment"}` | Wraps each selection, or the caret's line, in a block comment, or unwraps it (Ctrl+Shift+/). |
+| `{"Action": "ToggleLineComment"}` | Comments the selected lines, or the caret's line, at their common indent, or uncomments them if they all are (Ctrl+/, or Notepad++'s Ctrl+Q). For a language with only block comments, wraps the lines in one. |
+| `{"Action": "ToggleBlockComment"}` | Wraps each selection, or the caret's line, in a block comment, or unwraps it (Ctrl+Shift+/ or Ctrl+Shift+Q). |
 | `{"Action": "GoToMatchingBracket"}` | Moves the caret to the bracket matching the one beside it (Ctrl+B). |
 | `{"Action": "SelectToMatchingBracket"}` | Selects from the bracket beside the caret to its match, both included (Ctrl+Alt+B). |
 | `{"Action": {"GoToLine": {"line": 10, "column": 1}}}` | Moves the caret to a line and column, both counted from 1 as in the status bar. Ctrl+G asks for them. |

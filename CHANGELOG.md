@@ -47,6 +47,10 @@ people downloading the release.
   this session, the latest first. A middle click on a tab closes it.
 - Edit > Paste from History offers the last ten texts copied in ochrepad.
 - Edit > Read-Only refuses edits to a document until turned off.
+- File > Save All, Save a Copy As…, Reload from Disk and Rename….
+- Ctrl+PageUp and Ctrl+PageDown switch tabs, and Ctrl+Q and Ctrl+Shift+Q
+  toggle comments, as in Notepad++. Clicking the caret's position in the
+  status bar opens Go to Line.
 - View > Summary: the document's path, file times, size, and characters,
   words and lines (and the selection's).
 - Edit > Line Operations: Sort Lines by Length, and Randomize Line Order.

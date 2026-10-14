@@ -24,6 +24,7 @@ mod autosave;
 mod document;
 mod edit_tools;
 mod external;
+mod file_extras;
 mod history_store;
 mod prefs;
 mod replace_in_files;
@@ -70,6 +71,8 @@ const RECORD_MACRO: KeyboardShortcut =
 const PLAY_MACRO: KeyboardShortcut =
     KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::P);
 const NEXT_TAB: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::Tab);
+const NEXT_TAB_PAGE: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::PageDown);
+const PREV_TAB_PAGE: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::PageUp);
 const PREV_TAB: KeyboardShortcut =
     KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::Tab);
 
@@ -167,6 +170,8 @@ pub struct OchrepadApp {
     pub token_styles: crate::token_styles::TokenStyles,
     /// The View > Summary dialog, while it is open.
     summary: Option<summary::SummaryDialog>,
+    /// The File > Rename… prompt, while it is open.
+    rename: Option<file_extras::RenameDialog>,
     /// Replace in Files, while it counts, asks or writes.
     replace_in_files: replace_in_files::Stage,
     /// Saves Replace in Files made that the worker finished: whether it
@@ -250,6 +255,7 @@ impl OchrepadApp {
             function_list: Default::default(),
             token_styles: Default::default(),
             summary: None,
+            rename: None,
             replace_in_files: Default::default(),
             replace_saves: Vec::new(),
             closed_files: Vec::new(),
@@ -1077,6 +1083,7 @@ impl OchrepadApp {
         self.open_as_editable_dialog(ui);
         self.hash_dialog(ui);
         self.summary_dialog(ui);
+        self.rename_dialog(ui);
         self.replace_in_files_frame(ui);
         self.edit_tools_frame(ui);
         self.external_dialog(ui);
@@ -1296,6 +1303,13 @@ impl OchrepadApp {
         if pressed(ui, &NEXT_TAB) {
             self.cycle_tab(true);
         }
+        // Notepad++'s and browsers' other keys for the same.
+        if pressed(ui, &PREV_TAB_PAGE) {
+            self.cycle_tab(false);
+        }
+        if pressed(ui, &NEXT_TAB_PAGE) {
+            self.cycle_tab(true);
+        }
         self.edit_tools_shortcuts(ui);
     }
 
@@ -1399,6 +1413,26 @@ impl OchrepadApp {
         }
         if save(ui, "Save As…", "Ctrl+Shift+S") {
             self.save_as();
+        }
+        if ui
+            .add_enabled(editing, Button::new("Save a Copy As…"))
+            .on_hover_text("Write the document to another file; its tab keeps its own")
+            .clicked()
+        {
+            self.save_copy_as();
+        }
+        if ui.add_enabled(editing, Button::new("Save All")).clicked() {
+            self.save_all();
+        }
+        let named = editing && self.buffer().meta.path.is_some();
+        if ui
+            .add_enabled(named, Button::new("Reload from Disk"))
+            .clicked()
+        {
+            self.tab_file_command(edit_tools::TabFileCommand::Reload, self.active);
+        }
+        if ui.add_enabled(named, Button::new("Rename…")).clicked() {
+            self.open_rename();
         }
         ui.separator();
         if item(ui, "Close", "Ctrl+W") {
@@ -2496,7 +2530,13 @@ impl OchrepadApp {
                 ui.add(egui::Label::new(problem).truncate());
             }
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                ui.label(self.caret_status());
+                if ui
+                    .add(egui::Label::new(self.caret_status()).sense(egui::Sense::click()))
+                    .on_hover_text("Go to Line (Ctrl+G)")
+                    .clicked()
+                {
+                    self.go_to_line = Some(String::new());
+                }
                 if let Some((note, until)) = &self.status_note {
                     if self.now < *until {
                         ui.separator();
