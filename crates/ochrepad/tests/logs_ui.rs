@@ -100,13 +100,56 @@ fn edits_filter_again_after_a_pause() {
     key(&mut h, Modifiers::COMMAND, Key::Home);
     h.event(Event::Paste("ERROR new\n".into()));
     h.run();
+    // The new error line shows; so does the line the caret is on now (the
+    // INFO line the paste pushed down), which the filter leaves alone.
+    wait_for(&mut h, |a| {
+        !a.filter.is_busy(a.active_view())
+            && a.editor
+                .view(a.active_view())
+                .is_some_and(|v| v.folds().filter_hidden_count() == 4)
+    });
+    h.get_by_label("4 of 8 lines");
+}
+
+#[test]
+fn the_line_being_written_stays_when_the_filter_is_applied_again() {
+    let mut h = harness(Vec2::new(900.0, 400.0));
+    h.event(Event::Paste(LOG.into()));
+    h.run();
+    key(&mut h, Modifiers::ALT | Modifiers::SHIFT, Key::L);
+    h.event(Event::Text("ERROR".into()));
     wait_for(&mut h, |a| {
         !a.filter.is_busy(a.active_view())
             && a.editor
                 .view(a.active_view())
                 .is_some_and(|v| v.folds().filter_hidden_count() == 5)
     });
-    h.get_by_label("3 of 8 lines");
+    // A note under the first error: End, Enter, and some typing.
+    h.get_by_label("Editor: new 1").click();
+    h.run();
+    let view = h.state().active_view();
+    h.state_mut()
+        .editor
+        .apply(view, ochrepad_core::Action::GoToLine { line: 2, column: 1 })
+        .unwrap();
+    key(&mut h, Modifiers::NONE, Key::End);
+    key(&mut h, Modifiers::NONE, Key::Enter);
+    h.event(Event::Text("note: ret".into()));
+    h.run();
+    // The filter runs again after the pause; the note doesn't match, but
+    // the caret stays on it and the typing goes on there.
+    let revision = h.state().buffer().revision();
+    wait_for(&mut h, |a| {
+        !a.filter.is_busy(a.active_view()) && a.filter_applied_at(a.active_view()) == Some(revision)
+    });
+    h.event(Event::Text("ried later".into()));
+    h.run();
+    assert_eq!(
+        text(&h).lines().nth(2),
+        Some("note: retried later"),
+        "{}",
+        text(&h)
+    );
 }
 
 fn append(path: &std::path::Path, bytes: &[u8]) {
@@ -160,11 +203,83 @@ fn follow_mode_appends_what_the_file_gains() {
     });
     assert_eq!(text(&h), "line 1\nline 2\nline 3 part end\n");
 
-    // Rotated (shorter): reloaded, without asking.
+    // Rotated (shorter): reloaded, without asking, and not as an undo step
+    // (a log rewritten all the time would pile them up).
     std::fs::write(&file, "fresh\n").unwrap();
     wait_for(&mut h, |a| a.buffer().doc().to_string() == "fresh\n");
     assert!(h.state().pending_disk_changes().is_empty());
     assert!(!h.state().buffer().is_dirty());
+    assert!(!h.state().buffer().history().can_undo());
+}
+
+#[test]
+fn follow_reads_what_a_utf16_file_gains_without_reloading_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("ps.log");
+    let utf16 = |s: &str| -> Vec<u8> { s.encode_utf16().flat_map(u16::to_le_bytes).collect() };
+    let mut bytes = vec![0xFF, 0xFE];
+    bytes.extend(utf16("top\r\n  a\r\n  b\r\n"));
+    std::fs::write(&file, &bytes).unwrap();
+    let mut h = harness(Vec2::new(800.0, 300.0));
+    h.state_mut().open_path(&file);
+    h.run();
+    assert_eq!(h.state().buffer().meta.encoding, "UTF-16LE");
+    let b = h.state().buffer_id();
+    // A fold over the top: an append leaves it, a reload would drop it.
+    let view = h.state().active_view();
+    assert!(h.state_mut().editor.fold_at(view, 0));
+    h.state_mut().set_following(b, true);
+    h.run();
+
+    append(&file, &utf16("next \u{263A}\r"));
+    append(&file, &utf16("\n"));
+    wait_for(&mut h, |a| {
+        a.buffer().doc().to_string().ends_with("next \u{263A}\n")
+    });
+    assert_eq!(text(&h), "top\n  a\n  b\nnext \u{263A}\n");
+    let folded = h.state().editor.view(view).unwrap().folds().is_folded(0);
+    assert!(folded, "appended, not reloaded");
+    assert!(!h.state().buffer().is_dirty());
+}
+
+#[test]
+fn a_followed_log_is_filtered_as_it_grows() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("app.log");
+    std::fs::write(&file, LOG).unwrap();
+    let mut h = harness(Vec2::new(900.0, 400.0));
+    h.state_mut().open_path(&file);
+    h.run();
+    let b = h.state().buffer_id();
+    h.state_mut().set_following(b, true);
+    h.run();
+    key(&mut h, Modifiers::ALT | Modifiers::SHIFT, Key::L);
+    h.event(Event::Text("ERROR".into()));
+    // The two error lines, and the end the caret follows (empty line 6).
+    wait_for(&mut h, |a| {
+        !a.filter.is_busy(a.active_view())
+            && a.editor
+                .view(a.active_view())
+                .is_some_and(|v| v.folds().filter_hidden_count() == 4)
+    });
+    // Lines arrive faster than the filter's pause, so it never pauses;
+    // what they bring is filtered as it comes.
+    for i in 0..12 {
+        let level = if i % 4 == 3 { "ERROR" } else { "INFO " };
+        append(&file, format!("2026-10-14 {level} event {i}\n").as_bytes());
+        for _ in 0..6 {
+            h.step();
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+    wait_for(&mut h, |a| a.buffer().doc().line_count() == 19);
+    let view = h.state().active_view();
+    let v = h.state().editor.view(view).unwrap();
+    let shown: Vec<usize> = (0..19).filter(|&l| !v.folds().filter_hides(l)).collect();
+    // The old errors, the three new ones, and the end.
+    assert_eq!(shown, vec![1, 4, 9, 13, 17, 18]);
+    let end = h.state().buffer().doc().len();
+    assert_eq!(v.selections.primary().head, end, "still following the end");
 }
 
 #[test]

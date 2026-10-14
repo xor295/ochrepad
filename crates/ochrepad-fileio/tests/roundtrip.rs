@@ -2,8 +2,8 @@ use std::path::{Path, PathBuf};
 
 use ochrepad_core::{Action, Editor, LineEnding};
 use ochrepad_fileio::{
-    LoadError, SaveError, decode, default_line_ending, encode, load, normalize_line_endings,
-    open_into, save, save_buffer, save_buffer_as,
+    LoadError, SaveError, decode, decode_appended, default_line_ending, encode, load,
+    normalize_line_endings, open_into, save, save_buffer, save_buffer_as,
 };
 use proptest::prelude::*;
 
@@ -369,4 +369,48 @@ fn reopening_with_an_encoding_decodes_strictly() {
         let e = encoding_rs::Encoding::for_label(name.as_bytes());
         assert_eq!(e.map(|e| e.name()), Some(*name));
     }
+}
+
+#[test]
+fn appended_bytes_decode_as_far_as_whole_characters_go() {
+    // UTF-8: a character cut in two waits for the rest; a final CR waits
+    // for a possible LF.
+    assert_eq!(
+        decode_appended("UTF-8", "ab\u{e9}".as_bytes()),
+        Some(("ab\u{e9}".to_owned(), 4))
+    );
+    assert_eq!(
+        decode_appended("UTF-8", &"x\u{e9}".as_bytes()[..2]),
+        Some(("x".to_owned(), 1))
+    );
+    assert_eq!(
+        decode_appended("UTF-8", b"line\r"),
+        Some(("line".to_owned(), 4))
+    );
+    assert_eq!(decode_appended("UTF-8", b"\xff\xfe"), None);
+    assert_eq!(decode_appended("UTF-8", b"a\0b"), None);
+
+    // UTF-16: whole units, and not the first half of a surrogate pair.
+    let le: Vec<u8> = "hi\u{1F600}"
+        .encode_utf16()
+        .flat_map(u16::to_le_bytes)
+        .collect();
+    assert_eq!(
+        decode_appended("UTF-16LE", &le),
+        Some(("hi\u{1F600}".to_owned(), 8))
+    );
+    assert_eq!(
+        decode_appended("UTF-16LE", &le[..7]),
+        Some(("hi".to_owned(), 4))
+    );
+    let be: Vec<u8> = "ok\r".encode_utf16().flat_map(u16::to_be_bytes).collect();
+    assert_eq!(decode_appended("UTF-16BE", &be), Some(("ok".to_owned(), 4)));
+
+    // Single-byte encodings decode every byte.
+    assert_eq!(
+        decode_appended("windows-1252", b"caf\xe9\r\n"),
+        Some(("caf\u{e9}\r\n".to_owned(), 6))
+    );
+    // Multi-byte legacy encodings are reloaded instead.
+    assert_eq!(decode_appended("Shift_JIS", b"abc"), None);
 }

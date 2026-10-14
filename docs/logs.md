@@ -29,8 +29,9 @@ it is filtered; the old filter stays until the new one is ready.
 
 **Editing while filtered.** You can edit a filtered document. Lines you
 change, add or paste stay visible while you work, and a moment after you
-stop typing the filter is applied again. Going to a hidden line (Go to
-Line, Find Next) shows that line.
+stop typing the filter is applied again. The lines with a caret stay
+visible then too, so a line you are writing never disappears under you.
+Going to a hidden line (Go to Line, Find Next) shows that line.
 
 Each tab has its own filter, and the bar shows the one of the tab you are
 in. Filters are not kept when you close ochrepad. Folding works as usual on
@@ -74,13 +75,18 @@ writes to it, like `tail -f` or Notepad++'s monitoring mode:
 - A line written in several pieces appears as it is written; a Windows line
   ending split between two writes is joined.
 - If the file gets shorter or changes before its end (a log that is
-  rotated or truncated), it is reloaded instead.
+  rotated or truncated), it is reloaded instead. The reload isn't an undo
+  step, and it clears the undo history.
+- A filtered document is filtered as lines arrive, and its last line stays
+  shown while the caret is there, so the view keeps following.
 - If you edit the document, following pauses: changes to the file then ask
   what to do, as for any file.
 - The status bar shows **Following** while it is on; click it to stop.
 
-Follow mode works on UTF-8 files (plain ASCII included). Files in other
-encodings are reloaded whole on each change instead.
+Follow mode reads what a file gains in UTF-8 (plain ASCII included),
+UTF-16 and the single-byte encodings (Windows-1252 and the like). Files in
+the multi-byte legacy encodings (Shift_JIS, GBK, …) are reloaded whole on
+each change instead.
 
 ## Large files: the viewer
 
@@ -140,8 +146,8 @@ in all open documents, backups or comparisons. The session remembers it
 
 If another program adds to the file (a log being written), the viewer
 indexes the new part and the line count grows. If the file gets shorter (a
-log that was truncated or rewritten), it is read again from the start, with
-a note in the status bar. On Windows, a file open in the viewer can't be
+log that was truncated), or is rewritten at the same length, it is read
+again from the start, with a note in the status bar. On Windows, a file open in the viewer can't be
 truncated by another program (Windows refuses while the file is mapped into
 memory); it can still be appended to, renamed or deleted.
 
@@ -157,5 +163,6 @@ The filter, the highlight rules and following work in the viewer too:
   grows, the new part is searched too.
 - **Highlight rules** colour and dim the lines on screen, as in the editor.
 - **View > Follow (tail -f)** keeps the end of the file in view as it grows.
+  Scroll up to read in peace; scroll back to the end to follow again.
   (The viewer always reads what a file gains; following only scrolls.) The
   status bar shows **Following**; click it to stop.

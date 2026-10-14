@@ -13,6 +13,7 @@ pub mod highlight;
 pub mod invisible;
 pub mod keymap;
 pub mod layout;
+pub mod line_set;
 pub mod log_rules;
 pub mod logo;
 pub mod macro_ui;

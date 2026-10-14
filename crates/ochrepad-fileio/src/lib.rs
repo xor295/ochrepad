@@ -254,6 +254,52 @@ pub fn decode(bytes: &[u8]) -> Result<Decoded, LoadError> {
     })
 }
 
+/// Decodes bytes appended to a file in `encoding` (an encoding_rs name) as
+/// far as they make whole characters, keeping back a final CR whose LF may
+/// still come: follow mode reads a log while it is written. Returns the
+/// text (line endings as they are) and how many bytes it used. `None` when
+/// the bytes are not text in that encoding, or the encoding is one of the
+/// multi-byte legacy ones, where a character cut in two cannot be told
+/// apart reliably; the file is reloaded instead.
+pub fn decode_appended(encoding: &str, new: &[u8]) -> Option<(String, usize)> {
+    let encoding = Encoding::for_label(encoding.as_bytes())?;
+    let utf16 = encoding == UTF_16LE || encoding == UTF_16BE;
+    let (text, mut take) = if encoding == UTF_8 {
+        let take = match std::str::from_utf8(new) {
+            Ok(_) => new.len(),
+            // Cut inside the last character: the rest is still coming.
+            Err(e) if e.error_len().is_none() => e.valid_up_to(),
+            Err(_) => return None,
+        };
+        (std::str::from_utf8(&new[..take]).ok()?.to_owned(), take)
+    } else if utf16 {
+        let mut take = new.len() & !1;
+        if take >= 2 {
+            let pair = [new[take - 2], new[take - 1]];
+            let unit = if encoding == UTF_16LE {
+                u16::from_le_bytes(pair)
+            } else {
+                u16::from_be_bytes(pair)
+            };
+            // The first half of a surrogate pair.
+            if (0xD800..0xDC00).contains(&unit) {
+                take -= 2;
+            }
+        }
+        (decode_strict(encoding, &new[..take]).ok()?, take)
+    } else if encoding.is_single_byte() {
+        (decode_strict(encoding, new).ok()?, new.len())
+    } else {
+        return None;
+    };
+    let mut text = text;
+    if text.ends_with('\r') {
+        text.pop();
+        take -= if utf16 { 2 } else { 1 };
+    }
+    (!text.contains('\0')).then_some((text, take))
+}
+
 fn decode_strict(encoding: &'static Encoding, bytes: &[u8]) -> Result<String, LoadError> {
     encoding
         .decode_without_bom_handling_and_without_replacement(bytes)

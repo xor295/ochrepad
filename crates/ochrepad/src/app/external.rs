@@ -11,7 +11,9 @@
 //! followed file grows, the new text is appended to its clean document
 //! without asking (and without an undo step), after checking that the end
 //! it had is still there; a file that shrank or changed before its end is
-//! reloaded. Views whose caret was at the end keep showing it.
+//! reloaded, and that reload is not an undo step either (a log rewritten
+//! all the time would fill memory with them). Views whose caret was at the
+//! end keep showing it.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{Read, Seek, SeekFrom};
@@ -101,22 +103,6 @@ fn read_range(path: &Path, from: u64, to: u64) -> Option<Vec<u8>> {
     let mut out = Vec::new();
     f.take(to - from).read_to_end(&mut out).ok()?;
     (out.len() as u64 == to - from).then_some(out)
-}
-
-/// How much of `new` (appended UTF-8 bytes) can be taken now: whole
-/// characters, keeping back a final CR whose LF may still come. `None` if
-/// it is not UTF-8 text.
-fn takeable(new: &[u8]) -> Option<usize> {
-    let mut take = match std::str::from_utf8(new) {
-        Ok(_) => new.len(),
-        // Cut inside the last character: the rest is still being written.
-        Err(e) if e.error_len().is_none() => e.valid_up_to(),
-        Err(_) => return None,
-    };
-    if take > 0 && new[take - 1] == b'\r' {
-        take -= 1;
-    }
-    (!new[..take].contains(&0)).then_some(take)
 }
 
 impl OchrepadApp {
@@ -301,7 +287,7 @@ impl OchrepadApp {
             return false;
         }
         let end = b.doc().len();
-        let utf8 = b.meta.encoding == "UTF-8";
+        let encoding = b.meta.encoding.clone();
         // The views watching the end keep watching it.
         let at_end: Vec<ochrepad_core::ViewId> = self
             .editor
@@ -309,9 +295,14 @@ impl OchrepadApp {
             .filter(|v| v.selections.primary().head == end)
             .map(|v| v.id())
             .collect();
-        let appended = self.follow_append(buffer, &path, utf8);
+        let appended = self.follow_append(buffer, &path, &encoding);
         if !appended {
             self.reload_from_disk(buffer);
+            // Following, the document mirrors the file: the reload is not
+            // an undo step (nor are the steps before it, which it replaced).
+            if let Some(b) = self.editor.buffer_mut(buffer) {
+                b.clear_history();
+            }
             if let Some(t) = read_tail(&path) {
                 self.external.tails.insert(buffer, t);
             }
@@ -335,14 +326,14 @@ impl OchrepadApp {
 
     /// Appends the bytes the file gained since the remembered end, if that
     /// end is still there. False when it must be reloaded instead.
-    fn follow_append(&mut self, buffer: BufferId, path: &Path, utf8: bool) -> bool {
+    fn follow_append(&mut self, buffer: BufferId, path: &Path, encoding: &str) -> bool {
         let Some((had, tail)) = self.external.tails.get(&buffer).cloned() else {
             return false;
         };
         let Some(len) = std::fs::metadata(path).ok().map(|m| m.len()) else {
             return false;
         };
-        if !utf8 || len < had || len - had > FOLLOW_MAX_APPEND {
+        if len < had || len - had > FOLLOW_MAX_APPEND {
             return false;
         }
         let from = had - tail.len() as u64;
@@ -353,15 +344,23 @@ impl OchrepadApp {
             return false;
         }
         let new = &bytes[tail.len()..];
-        let Some(take) = takeable(new) else {
+        let Some((text, take)) = fileio::decode_appended(encoding, new) else {
             return false;
         };
-        let Ok(text) = std::str::from_utf8(&new[..take]) else {
+        let text = fileio::normalize_line_endings(&text);
+        let Some((from, before)) = self
+            .editor
+            .buffer(buffer)
+            .map(|b| (b.doc().line_count() - 1, b.revision()))
+        else {
             return false;
         };
-        let text = fileio::normalize_line_endings(text);
         if self.editor.append_unrecorded(buffer, &text).is_err() {
             return false;
+        }
+        if let Some(after) = self.editor.buffer(buffer).map(|b| b.revision()) {
+            self.filter
+                .appended(&mut self.editor, buffer, from, before, after);
         }
         let kept = &bytes[..tail.len() + take];
         let keep_from = kept.len().saturating_sub(FOLLOW_TAIL as usize);

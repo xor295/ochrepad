@@ -91,6 +91,10 @@ impl SavedHistory {
     /// later ones by redoing). A damaged or mismatched file fails here
     /// instead of corrupting the document or crashing later.
     pub fn check(&self, doc: &Document) -> Result<(), String> {
+        // Revisions only ever count up from 0 by one per edit.
+        if self.next_revision > Revision::MAX / 2 || self.revision >= self.next_revision {
+            return Err("a revision is out of range".into());
+        }
         let all = self.undo.iter().chain(&self.redo);
         if all
             .clone()

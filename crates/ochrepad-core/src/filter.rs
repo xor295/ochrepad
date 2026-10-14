@@ -19,10 +19,23 @@ pub fn shown_lines(
     keep_matching: bool,
     cancel: &dyn Fn() -> bool,
 ) -> Option<Vec<usize>> {
+    shown_lines_from(doc, searcher, keep_matching, 0, cancel)
+}
+
+/// [`shown_lines`] among the lines from `from` on (the lines a followed
+/// file just gained).
+pub fn shown_lines_from(
+    doc: &Document,
+    searcher: &Searcher,
+    keep_matching: bool,
+    from: usize,
+    cancel: &dyn Fn() -> bool,
+) -> Option<Vec<usize>> {
     let lines = doc.line_count();
-    let mut matched = vec![false; lines];
-    let mut line = 0;
-    let mut checked = 0;
+    let from = from.min(lines);
+    let mut matched = vec![false; lines - from];
+    let mut line = from;
+    let mut checked = from;
     while line < lines {
         // One search per line with a match at most: after a match, go on
         // from the start of the line after it.
@@ -35,7 +48,7 @@ pub fn shown_lines(
         } else {
             m.start
         });
-        for flag in &mut matched[first..=last] {
+        for flag in &mut matched[first.max(from) - from..=last - from] {
             *flag = true;
         }
         if last / CANCEL_EVERY != checked / CANCEL_EVERY && cancel() {
@@ -45,8 +58,8 @@ pub fn shown_lines(
         line = last + 1;
     }
     Some(
-        (0..lines)
-            .filter(|&l| matched[l] == keep_matching)
+        (from..lines)
+            .filter(|&l| matched[l - from] == keep_matching)
             .collect(),
     )
 }
@@ -79,6 +92,22 @@ mod tests {
         // every line (empty at each start) shows them all.
         assert_eq!(lines(log, r"b ERROR\nINFO", true, true), vec![1, 2]);
         assert_eq!(lines(log, "^", true, true), vec![0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn searching_from_a_line_looks_at_the_lines_after_it() {
+        let q = SearchQuery::new("ERROR", SearchOptions::default());
+        let s = Searcher::new(&q).unwrap();
+        let doc = Document::new("ERROR a\nINFO b\nERROR c\nINFO d");
+        assert_eq!(
+            shown_lines_from(&doc, &s, true, 1, &|| false),
+            Some(vec![2])
+        );
+        assert_eq!(
+            shown_lines_from(&doc, &s, false, 1, &|| false),
+            Some(vec![1, 3])
+        );
+        assert_eq!(shown_lines_from(&doc, &s, true, 9, &|| false), Some(vec![]));
     }
 
     #[test]

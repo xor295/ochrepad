@@ -226,7 +226,17 @@ impl<'a> LogStyle<'a> {
             return look.clone();
         }
         let look = if line < self.doc.line_count() {
-            self.rules.look_text(&self.doc.line_text(line), self.dark)
+            // A very long line (a JSON payload) is looked at in its first
+            // part only, as syntax highlighting does: every frame scans it.
+            let start = self.doc.line_start(line);
+            let mut end = self.doc.line_end(line);
+            if end.0 - start.0 > ochrepad_syntax::MAX_HIGHLIGHT_LINE {
+                end = ochrepad_core::ByteOffset(start.0 + ochrepad_syntax::MAX_HIGHLIGHT_LINE);
+                while !self.doc.is_char_boundary(end) {
+                    end.0 -= 1;
+                }
+            }
+            self.rules.look_text(&self.doc.slice(start..end), self.dark)
         } else {
             LineLook::default()
         };

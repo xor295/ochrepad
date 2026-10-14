@@ -23,17 +23,19 @@ people downloading the release.
 - Log tools, for any file ([docs/logs.md](docs/logs.md)):
   - Search > Filter Lines (Alt+Shift+L) shows only the lines that match a
     pattern, or hides them. The gutter keeps the real line numbers, the
-    search runs in the background, and edits filter again after a pause.
+    search runs in the background, and edits filter again after a pause
+    (the line you are writing stays).
   - Highlight rules colour whole lines or matches, or dim lines, in files
     named `*.log` and `*.log.*` by default: errors red, warnings amber,
     debug output dimmed. They are edited in Preferences.
   - View > Follow (tail -f) adds what another program appends to the
-    file as it grows, without asking and without an undo step; a rotated
-    or truncated file is reloaded.
+    file as it grows, without asking and without an undo step, in UTF-8,
+    UTF-16 and single-byte encodings; a rotated or truncated file is
+    reloaded. A filtered file is filtered as lines arrive.
   - The same tools in the viewer for large files: the filter searches the
     whole file in the background and fills the view in as it goes (and
     goes on as the file grows), highlight rules colour the lines on screen,
-    and Follow keeps the end in view.
+    and Follow keeps the end in view until you scroll away from it.
 - Undo survives closing a file and restarting ochrepad: each file's undo
   history (up to about 2 MB of the newest changes) is kept and comes back
   when the file is opened again unchanged, and with unsaved work restored

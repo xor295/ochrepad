@@ -29,6 +29,7 @@ use unicode_segmentation::UnicodeSegmentation;
 
 use crate::editor_view::{Look, paint_line_text};
 use crate::layout::LineLayout;
+use crate::line_set::LineSet;
 
 /// Bytes of a line that are shown; a longer line is cut, with a marker.
 pub const MAX_LINE_BYTES: u64 = 10_000;
@@ -49,13 +50,13 @@ pub enum Shown {
     /// Every line.
     #[default]
     All,
-    /// These lines, in order (a filter showing what matches).
-    Lines(Arc<Vec<u64>>),
-    /// Every line but these, in order (a filter hiding what matches), up to
-    /// line `decided` while the search is still going (all lines once it
-    /// is done: `None`).
+    /// These lines (a filter showing what matches).
+    Lines(Arc<LineSet>),
+    /// Every line but these (a filter hiding what matches), up to line
+    /// `decided` while the search is still going (all lines once it is
+    /// done: `None`).
     AllExcept {
-        excluded: Arc<Vec<u64>>,
+        excluded: Arc<LineSet>,
         decided: Option<u64>,
     },
 }
@@ -65,10 +66,10 @@ impl Shown {
     pub fn rows(&self, lines: u64) -> u64 {
         match self {
             Shown::All => lines,
-            Shown::Lines(v) => v.len() as u64,
+            Shown::Lines(v) => v.len(),
             Shown::AllExcept { excluded, decided } => {
                 let limit = decided.map_or(lines, |d| d.min(lines));
-                limit - excluded.partition_point(|&l| l < limit) as u64
+                limit - excluded.rank(limit)
             }
         }
     }
@@ -77,21 +78,8 @@ impl Shown {
     pub fn line(&self, row: u64) -> Option<u64> {
         match self {
             Shown::All => Some(row),
-            Shown::Lines(v) => v.get(row as usize).copied(),
-            Shown::AllExcept { excluded, .. } => {
-                // Row `row` is line `row + j`, where `j` lines before it are
-                // excluded: the first `j` with `excluded[j] - j > row`.
-                let (mut lo, mut hi) = (0, excluded.len());
-                while lo < hi {
-                    let mid = (lo + hi) / 2;
-                    if excluded[mid] - mid as u64 <= row {
-                        lo = mid + 1;
-                    } else {
-                        hi = mid;
-                    }
-                }
-                Some(row + lo as u64)
-            }
+            Shown::Lines(v) => v.select(row),
+            Shown::AllExcept { excluded, .. } => Some(excluded.select_out(row)),
         }
     }
 
@@ -99,11 +87,10 @@ impl Shown {
     pub fn row_of(&self, line: u64) -> u64 {
         match self {
             Shown::All => line,
-            Shown::Lines(v) => v.partition_point(|&l| l <= line).saturating_sub(1) as u64,
+            Shown::Lines(v) => v.rank(line + 1).saturating_sub(1),
             Shown::AllExcept { excluded, .. } => {
-                let before = excluded.partition_point(|&l| l < line);
-                let hidden = excluded.get(before) == Some(&line);
-                (line - before as u64).saturating_sub(u64::from(hidden))
+                let hidden = excluded.contains(line);
+                (line - excluded.rank(line)).saturating_sub(u64::from(hidden))
             }
         }
     }
@@ -289,6 +276,10 @@ pub struct ViewerState {
     pub filter: Option<ViewerFilter>,
     /// Follow (tail -f): when the file grows, scroll to its end.
     pub follow: bool,
+    /// Following keeps the view at the end: on while it is there (turning
+    /// Follow on goes there), off once it is scrolled away.
+    pinned: bool,
+    was_following: bool,
     /// The top row, with the fraction of it scrolled past.
     top: f64,
     x_off: f32,
@@ -310,6 +301,9 @@ pub struct ViewerState {
     pending_select: Option<(Range<u64>, bool)>,
     /// Go to Line waiting for the index: (line, column).
     pending_go_to: Option<(u64, usize)>,
+    /// A line to scroll to the top once the index reaches it (a session
+    /// restored far down a file).
+    pending_top: Option<u64>,
     pub events: Vec<ViewerEvent>,
 }
 
@@ -319,6 +313,8 @@ impl Default for ViewerState {
             shown: Shown::All,
             filter: None,
             follow: false,
+            pinned: false,
+            was_following: false,
             top: 0.0,
             x_off: 0.0,
             anchor: Pos::default(),
@@ -336,6 +332,7 @@ impl Default for ViewerState {
             task: None,
             pending_select: None,
             pending_go_to: None,
+            pending_top: None,
             events: Vec::new(),
         }
     }
@@ -419,9 +416,11 @@ impl ViewerState {
         self.shown.line(self.top as u64).unwrap_or(0)
     }
 
-    /// Scrolls so `line` is at the top (session restore).
+    /// Scrolls so `line` is at the top (session restore), as soon as the
+    /// index has reached it.
     pub fn scroll_to_line(&mut self, line: u64) {
         self.top = self.shown.row_of(line) as f64;
+        self.pending_top = Some(line);
     }
 
     /// Whether a search started here is still running.
@@ -526,6 +525,8 @@ impl ViewerState {
         else {
             return;
         };
+        // In order even if a line on disk got shorter since it was shown.
+        let (start, end) = (start.min(end), start.max(end));
         let truncated = end - start > MAX_COPY;
         let bytes = file.read(start..end.min(start + MAX_COPY));
         let text = file.decode(&bytes);
@@ -794,6 +795,14 @@ impl ViewerState {
             self.reveal = true;
             self.events.push(ViewerEvent::Found { wrapped });
         }
+        if let Some(line) = self.pending_top {
+            let progress = file.progress();
+            if file.line_start(line).is_some() || progress.done {
+                self.pending_top = None;
+                let line = line.min(progress.lines.saturating_sub(1));
+                self.top = self.shown.row_of(line) as f64;
+            }
+        }
         if let Some((line, column)) = self.pending_go_to {
             let progress = file.progress();
             let line = if progress.done {
@@ -883,6 +892,7 @@ pub fn viewer_ui(
         Change::Reloaded => {
             state.lines.clear();
             state.task = None;
+            state.pending_select = None;
             state.events.push(ViewerEvent::Reloaded);
         }
     }
@@ -899,7 +909,11 @@ pub fn viewer_ui(
     let known = progress.lines;
     let rows = state.shown.rows(known);
     state.poll(file, rows);
-    if state.task.is_some() || state.pending_select.is_some() || state.pending_go_to.is_some() {
+    if state.task.is_some()
+        || state.pending_select.is_some()
+        || state.pending_go_to.is_some()
+        || state.pending_top.is_some()
+    {
         ui.ctx()
             .request_repaint_after(std::time::Duration::from_millis(30));
     }
@@ -942,8 +956,13 @@ pub fn viewer_ui(
     };
     let color = ui.visuals().text_color();
     let max_top = rows.saturating_sub(f.rows_full as u64) as f64;
-    // Follow (tail -f): a file that grew shows its end.
-    if state.follow && change == Change::Grew {
+    // Follow (tail -f): while the view is at the end it stays there, every
+    // frame, as the index of what the file gained grows.
+    if state.follow && !state.was_following {
+        state.pinned = true;
+    }
+    state.was_following = state.follow;
+    if state.follow && state.pinned {
         state.top = max_top;
     }
 
@@ -1111,6 +1130,7 @@ pub fn viewer_ui(
         }
     }
     state.top = state.top.clamp(0.0, max_top);
+    state.pinned = state.top >= max_top - 0.5;
     state.x_off = state
         .x_off
         .clamp(0.0, h_max.max(state.x_off.min(state.max_width)));
@@ -1579,7 +1599,7 @@ mod tests {
     fn shown_lists_map_rows_and_lines() {
         let all = Shown::All;
         assert_eq!((all.rows(10), all.line(3), all.row_of(7)), (10, Some(3), 7));
-        let some = Shown::Lines(Arc::new(vec![2, 5, 9]));
+        let some = Shown::Lines(Arc::new([2, 5, 9].into_iter().collect()));
         assert_eq!(some.rows(100), 3);
         assert_eq!(some.line(1), Some(5));
         assert_eq!(some.line(3), None);
@@ -1596,7 +1616,7 @@ mod tests {
     fn all_but_some_lines_map_rows_and_lines() {
         // Lines 0..10 without 2, 3 and 7: rows show 0 1 4 5 6 8 9.
         let shown = Shown::AllExcept {
-            excluded: Arc::new(vec![2, 3, 7]),
+            excluded: Arc::new([2, 3, 7].into_iter().collect()),
             decided: None,
         };
         assert_eq!(shown.rows(10), 7);
@@ -1609,7 +1629,7 @@ mod tests {
         assert_eq!(shown.row_of(7), 4);
         // While the search is going, only the decided lines count.
         let partial = Shown::AllExcept {
-            excluded: Arc::new(vec![2, 3]),
+            excluded: Arc::new([2, 3].into_iter().collect()),
             decided: Some(5),
         };
         assert_eq!(partial.rows(10), 3);

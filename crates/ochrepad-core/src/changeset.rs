@@ -74,8 +74,9 @@ impl ChangeSet {
     }
 
     /// Whether this applies to `doc`: its length matches, and the edits are
-    /// in order, inside the text and on character boundaries. A change set
-    /// read back from disk is checked with this before it is used.
+    /// in order and apart (as [`ChangeSet::new`] leaves them), inside the
+    /// text and on character boundaries. A change set read back from disk
+    /// is checked with this before it is used.
     pub fn fits(&self, doc: &Document) -> bool {
         let char_boundary = |p: ByteOffset| p <= doc.len() && doc.is_char_boundary(p);
         self.base_len == doc.len()
@@ -83,7 +84,7 @@ impl ChangeSet {
                 .edits
                 .iter()
                 .all(|e| e.start <= e.end && char_boundary(e.start) && char_boundary(e.end))
-            && self.edits.windows(2).all(|w| w[0].end <= w[1].start)
+            && self.edits.windows(2).all(|w| w[0].end < w[1].start)
     }
 
     pub fn is_empty(&self) -> bool {

@@ -105,6 +105,31 @@ fn a_history_that_does_not_fit_the_text_is_refused() {
             .restore_history(unlinked, true)
             .is_err()
     );
+    // A revision at the end of the range would overflow on the next edit.
+    let mut overflowing = saved.clone();
+    overflowing.next_revision = u64::MAX;
+    assert!(
+        ed2.buffer_mut(b2)
+            .unwrap()
+            .restore_history(overflowing, true)
+            .is_err()
+    );
+    // A rectangle on lines the text doesn't have (Delete Line would make a
+    // list of them all).
+    let mut json: serde_json::Value = serde_json::to_value(&saved).unwrap();
+    json["undo"][0]["txns"][0]["before"]["rect"] = serde_json::json!({
+        "start_line": 0,
+        "end_line": 1_000_000_000u64,
+        "start_col": 0,
+        "end_col": 1,
+    });
+    let far: SavedHistory = serde_json::from_value(json).unwrap();
+    assert!(
+        ed2.buffer_mut(b2)
+            .unwrap()
+            .restore_history(far, true)
+            .is_err()
+    );
     // The intact one still restores.
     assert!(
         ed2.buffer_mut(b2)

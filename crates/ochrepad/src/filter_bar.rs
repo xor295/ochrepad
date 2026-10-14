@@ -5,9 +5,11 @@
 //! editor the lines are found on a background thread over a copy of the
 //! text (`ochrepad_core::filter::shown_lines`); the view keeps its old
 //! filter until the new one is ready. Edits shift the filter at once (lines
-//! an edit touches show), and filter again after a pause. In a viewer the
-//! viewer searches the file itself and fills its view in as lines are found
-//! (`ViewerState::set_filter`).
+//! an edit touches show), and filter again after a pause; the lines with a
+//! caret stay shown then, so the line being written never vanishes. Text a
+//! followed file gains is filtered as it arrives ([`FilterBar::appended`]).
+//! In a viewer the viewer searches the file itself and fills its view in as
+//! lines are found (`ViewerState::set_filter`).
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -16,7 +18,7 @@ use std::sync::mpsc::{Receiver, channel};
 
 use egui::text::{CCursor, CCursorRange};
 use egui::{Id, Key, RichText, TextEdit, Ui};
-use ochrepad_core::{Editor, SearchOptions, SearchQuery, Searcher, ViewId};
+use ochrepad_core::{BufferId, Editor, SearchOptions, SearchQuery, Searcher, ViewId};
 
 use crate::viewer::{ViewerId, Viewers};
 
@@ -59,6 +61,13 @@ struct Job {
     rx: Receiver<Option<Vec<usize>>>,
 }
 
+impl Drop for Job {
+    fn drop(&mut self) {
+        // A job given up (its tab closed, a newer query) stops searching.
+        self.cancel.store(true, Ordering::Relaxed);
+    }
+}
+
 /// One tab's filter.
 struct TabFilter {
     pattern: String,
@@ -72,6 +81,10 @@ struct TabFilter {
     /// What the filter was made from (the revision is 0 for a viewer).
     applied: Option<(SearchQuery, bool, u64)>,
     job: Option<Job>,
+    /// Since the search started, the document only grew at its end (a
+    /// followed file): from the revision it started at, by appends from
+    /// this line on. Its result then holds for the lines before that.
+    appends: Option<(u64, usize)>,
     error: Option<String>,
     focus_field: bool,
 }
@@ -86,6 +99,7 @@ impl TabFilter {
             seen: (revision, now),
             applied: None,
             job: None,
+            appends: None,
             error: None,
             focus_field: true,
         }
@@ -114,6 +128,14 @@ impl FilterBar {
     /// The pattern of the tab's filter.
     pub fn pattern(&self, target: impl Into<FilterTarget>) -> Option<&str> {
         self.tabs.get(&target.into()).map(|t| t.pattern.as_str())
+    }
+
+    /// The document revision an editor tab's filter was made for.
+    pub fn applied_revision(&self, view: ViewId) -> Option<u64> {
+        self.tabs
+            .get(&FilterTarget::Editor(view))
+            .and_then(|t| t.applied.as_ref())
+            .map(|a| a.2)
     }
 
     /// Whether a search is still running for an editor tab.
@@ -158,11 +180,8 @@ impl FilterBar {
 
     /// Removes the tab's filter and closes its bar.
     pub fn close(&mut self, editor: &mut Editor, viewers: &mut Viewers, target: FilterTarget) {
-        if let Some(tab) = self.tabs.remove(&target)
-            && let Some(job) = tab.job
-        {
-            job.cancel.store(true, Ordering::Relaxed);
-        }
+        // Dropping its job stops the search.
+        self.tabs.remove(&target);
         match target {
             FilterTarget::Editor(view) => editor.set_filter(view, None),
             FilterTarget::Viewer(id) => {
@@ -173,10 +192,60 @@ impl FilterBar {
         }
     }
 
+    /// Text was appended to `buffer` (follow mode): the lines from `from` on
+    /// are new or longer, and the document went from revision `before` to
+    /// `after`. An up-to-date filter filters them now; the appends do not
+    /// count as edits, so a log written all the time still gets filtered.
+    pub fn appended(
+        &mut self,
+        editor: &mut Editor,
+        buffer: BufferId,
+        from: usize,
+        before: u64,
+        after: u64,
+    ) {
+        for (&target, tab) in &mut self.tabs {
+            let FilterTarget::Editor(view) = target else {
+                continue;
+            };
+            if editor.view(view).map(|v| v.buffer()) != Some(buffer) {
+                continue;
+            }
+            if tab.seen.0 != before {
+                // An edit came first: filtering waits for the pause.
+                tab.appends = None;
+                continue;
+            }
+            tab.seen.0 = after;
+            tab.appends = Some(match tab.appends {
+                Some((base, f)) => (base, f.min(from)),
+                None => (before, from),
+            });
+            let up_to_date = tab.job.is_none()
+                && tab
+                    .applied
+                    .as_ref()
+                    .is_some_and(|(_, _, rev)| *rev == before);
+            if up_to_date && let Some((query, keep, rev)) = &mut tab.applied {
+                filter_tail(editor, view, query, *keep, from);
+                *rev = after;
+                tab.appends = None;
+            }
+        }
+    }
+
     /// Per frame: starts searches when the query or the text changed and
     /// things went quiet, and applies finished ones. Returns whether a
     /// search is running (the app keeps repainting).
-    pub fn tick(&mut self, editor: &mut Editor, viewers: &mut Viewers, now: f64) -> bool {
+    /// `following`: the followed documents, whose end stays shown for a
+    /// caret there.
+    pub fn tick(
+        &mut self,
+        editor: &mut Editor,
+        viewers: &mut Viewers,
+        following: &std::collections::HashSet<BufferId>,
+        now: f64,
+    ) -> bool {
         self.tabs.retain(|target, _| match *target {
             FilterTarget::Editor(view) => editor.view(view).is_some(),
             FilterTarget::Viewer(id) => viewers.get(id).is_some(),
@@ -184,7 +253,12 @@ impl FilterBar {
         let mut busy = false;
         for (&target, tab) in &mut self.tabs {
             busy |= match target {
-                FilterTarget::Editor(view) => tick_editor(tab, editor, view, now),
+                FilterTarget::Editor(view) => {
+                    let follow = editor
+                        .view(view)
+                        .is_some_and(|v| following.contains(&v.buffer()));
+                    tick_editor(tab, editor, view, follow, now)
+                }
                 FilterTarget::Viewer(id) => tick_viewer(tab, viewers, id, now),
             };
         }
@@ -282,7 +356,13 @@ impl FilterBar {
 }
 
 /// An editor tab's filter, per frame (see [`FilterBar::tick`]).
-fn tick_editor(tab: &mut TabFilter, editor: &mut Editor, view: ViewId, now: f64) -> bool {
+fn tick_editor(
+    tab: &mut TabFilter,
+    editor: &mut Editor,
+    view: ViewId,
+    follow: bool,
+    now: f64,
+) -> bool {
     let Some(buffer) = editor.view(view).map(|v| v.buffer()) else {
         return false;
     };
@@ -291,17 +371,41 @@ fn tick_editor(tab: &mut TabFilter, editor: &mut Editor, view: ViewId, now: f64)
     };
     if tab.seen.0 != revision {
         tab.seen = (revision, now);
+        tab.appends = None;
     }
     // A finished search.
     if let Some(job) = &tab.job
         && let Ok(result) = job.rx.try_recv()
     {
         let job = tab.job.take().expect("checked above");
-        if let Some(shown) = result
-            && job.revision == revision
+        // Its lines still hold up to where a followed file grew since.
+        let valid = if job.revision == revision {
+            Some(usize::MAX)
+        } else {
+            tab.appends
+                .filter(|(base, _)| *base == job.revision)
+                .map(|(_, from)| from)
+        };
+        if let Some(valid) = valid
+            && let Some(mut shown) = result
         {
+            shown.truncate(shown.partition_point(|&l| l < valid));
+            // After an edit (the same query), the lines with a caret stay,
+            // so the line being written does not vanish under the caret;
+            // and a caret at the end stays there, to follow a file.
+            let refilter = tab
+                .applied
+                .as_ref()
+                .is_some_and(|(q, k, _)| *q == job.query && *k == job.keep);
+            shown.extend(carets_to_keep(editor, view, refilter, follow));
+            shown.sort_unstable();
+            shown.dedup();
             editor.set_filter(view, Some(&shown));
-            tab.applied = Some((job.query, job.keep, revision));
+            if valid != usize::MAX {
+                filter_tail(editor, view, &job.query, job.keep, valid);
+            }
+            tab.applied = Some((job.query.clone(), job.keep, revision));
+            tab.appends = None;
         }
     }
     let query = tab.query();
@@ -314,10 +418,12 @@ fn tick_editor(tab: &mut TabFilter, editor: &mut Editor, view: ViewId, now: f64)
     }
     let wanted = (query.clone(), tab.keep, revision);
     let quiet = now - tab.changed_at >= PAUSE_SECS && now - tab.seen.1 >= PAUSE_SECS;
-    let stale_job = tab
-        .job
-        .as_ref()
-        .is_some_and(|j| (&j.query, j.keep, j.revision) != (&wanted.0, wanted.1, wanted.2));
+    // A search for an older revision still counts while the document only
+    // grew at its end since (its result is completed then).
+    let grown_since = |j: &Job| tab.appends.is_some_and(|(base, _)| base == j.revision);
+    let stale_job = tab.job.as_ref().is_some_and(|j| {
+        (&j.query, j.keep) != (&wanted.0, wanted.1) || (j.revision != wanted.2 && !grown_since(j))
+    });
     if stale_job
         && quiet
         && let Some(job) = tab.job.take()
@@ -337,6 +443,7 @@ fn tick_editor(tab: &mut TabFilter, editor: &mut Editor, view: ViewId, now: f64)
         let cancel = Arc::new(AtomicBool::new(false));
         let stop = cancel.clone();
         let (q, keep) = (query.clone(), tab.keep);
+        tab.appends = None;
         std::thread::spawn(move || {
             let result = Searcher::new(&q).ok().and_then(|s| {
                 ochrepad_core::filter::shown_lines(&doc, &s, keep, &|| stop.load(Ordering::Relaxed))
@@ -352,6 +459,49 @@ fn tick_editor(tab: &mut TabFilter, editor: &mut Editor, view: ViewId, now: f64)
         });
     }
     tab.job.is_some() || tab.applied.as_ref() != Some(&wanted)
+}
+
+/// The lines with a caret that a new filter keeps shown: every caret's
+/// line when the filter is applied again after an edit, else in a followed
+/// document a caret at its end (which follows the file).
+fn carets_to_keep(editor: &Editor, view: ViewId, refilter: bool, follow: bool) -> Vec<usize> {
+    if refilter {
+        return editor.caret_lines(view);
+    }
+    if !follow {
+        return Vec::new();
+    }
+    let Some(v) = editor.view(view) else {
+        return Vec::new();
+    };
+    let Some(doc) = editor.buffer(v.buffer()).map(|b| b.doc()) else {
+        return Vec::new();
+    };
+    if v.selections.primary().head == doc.len() {
+        vec![doc.line_count() - 1]
+    } else {
+        Vec::new()
+    }
+}
+
+/// Filters the lines of `view` from `from` on (what a followed file
+/// gained) with the filter's query, now.
+fn filter_tail(editor: &mut Editor, view: ViewId, query: &SearchQuery, keep: bool, from: usize) {
+    let Ok(searcher) = Searcher::new(query) else {
+        return;
+    };
+    let Some(doc) = editor
+        .view(view)
+        .and_then(|v| editor.buffer(v.buffer()))
+        .map(|b| b.doc().clone())
+    else {
+        return;
+    };
+    if let Some(shown) =
+        ochrepad_core::filter::shown_lines_from(&doc, &searcher, keep, from, &|| false)
+    {
+        editor.filter_appended(view, from, &shown);
+    }
 }
 
 /// A viewer tab's filter, per frame: the viewer searches by itself once

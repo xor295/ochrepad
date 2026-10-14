@@ -341,6 +341,33 @@ impl FoldSet {
         self.rebuild();
     }
 
+    /// Hides every line from `from` on but `shown` (sorted), leaving the
+    /// lines before `from` as they are: the lines a followed file gained.
+    pub(crate) fn set_filter_from(&mut self, from: usize, shown: &[usize], line_count: usize) {
+        let Some(f) = &mut self.filter else {
+            return;
+        };
+        f.retain_mut(|r| {
+            r.1 = r.1.min(from.saturating_sub(1));
+            r.0 < from
+        });
+        let mut next = from;
+        let mut push = |a: usize, b: usize| match f.last_mut() {
+            Some(last) if last.1 + 1 == a => last.1 = b,
+            _ => f.push((a, b)),
+        };
+        for &l in shown.iter().filter(|&&l| l >= from && l < line_count) {
+            if l > next {
+                push(next, l - 1);
+            }
+            next = next.max(l + 1);
+        }
+        if next < line_count {
+            push(next, line_count - 1);
+        }
+        self.rebuild();
+    }
+
     /// Shows the filter's hidden lines among `lines` again.
     pub(crate) fn unfilter(&mut self, lines: &[usize]) {
         let Some(f) = &mut self.filter else {

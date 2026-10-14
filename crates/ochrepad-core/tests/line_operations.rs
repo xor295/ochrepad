@@ -302,3 +302,17 @@ fn new_actions_round_trip_through_json() {
         "increase 1, repeat 1, no padding, decimal"
     );
 }
+
+#[test]
+fn column_editor_refuses_padding_out_to_an_absurd_column() {
+    // A hand-written macro: a rectangle a trillion columns wide.
+    let mut t = setup("|a\nb\nc");
+    t.apply(Action::ColumnSelect {
+        anchor_line: 0,
+        anchor_col: VisualCol(1_000_000_000_000),
+        head_line: 2,
+        head_col: VisualCol(1_000_000_000_000),
+    });
+    t.apply(Action::ColumnInsert(ColumnInsert::Text("X".into())));
+    assert_eq!(t.text(), "a\nb\nc");
+}

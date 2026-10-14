@@ -133,6 +133,8 @@ pub struct BigFile {
     map: Option<Mmap>,
     /// The file's length at the last refresh.
     len: u64,
+    /// When it was last written, at the last refresh.
+    modified: Option<std::time::SystemTime>,
     encoding: &'static Encoding,
     /// Length of a UTF-8 byte order mark before line 0.
     bom: u64,
@@ -327,6 +329,7 @@ impl BigFile {
             file: Arc::new(file),
             map: None,
             len: 0,
+            modified: meta.modified().ok(),
             encoding,
             bom,
             index: Arc::new(Mutex::new(Index::default())),
@@ -446,9 +449,17 @@ impl BigFile {
             return Change::Unchanged;
         };
         let now = meta.len();
+        let modified = meta.modified().ok();
         if now == self.len {
-            return Change::Unchanged;
+            if modified == self.modified || now == 0 {
+                return Change::Unchanged;
+            }
+            // Written since, at the same length: rewritten in place.
+            self.modified = modified;
+            self.reload(now);
+            return Change::Reloaded;
         }
+        self.modified = modified;
         if now < self.len {
             self.reload(now);
             return Change::Reloaded;

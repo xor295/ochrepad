@@ -184,6 +184,10 @@ impl OchrepadApp {
 
     /// Opens the Column Editor (Alt+C).
     pub fn open_column_editor(&mut self) {
+        if self.focused_viewer().is_some() {
+            self.note_text(super::READ_ONLY);
+            return;
+        }
         self.edit_tools.column_open = true;
         self.edit_tools.column_focus = true;
     }

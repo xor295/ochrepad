@@ -593,10 +593,11 @@ impl Editor {
             return;
         };
         let caret_line = [doc.line_of(v.selections.primary().head)];
-        let shown = if shown.is_empty() {
+        let in_doc = shown.partition_point(|&l| l < count);
+        let shown = if in_doc == 0 {
             &caret_line[..]
         } else {
-            shown
+            &shown[..in_doc]
         };
         v.folds.set_filter(Some(shown), count);
         let folds = &v.folds;
@@ -615,6 +616,48 @@ impl Editor {
             Selection::caret(doc.line_start(target))
         });
         v.selections = moved;
+    }
+
+    /// After text was appended to a filtered `view` (follow mode): hides
+    /// the lines from `from` on but `shown` (sorted) and the lines holding
+    /// a caret, leaving the lines before `from` as they were.
+    pub fn filter_appended(&mut self, view: ViewId, from: usize, shown: &[usize]) {
+        let Some(v) = self.views.get_mut(&view) else {
+            return;
+        };
+        let Some(b) = self.buffers.get(&v.buffer()) else {
+            return;
+        };
+        let doc = &b.doc;
+        let mut lines = shown.to_vec();
+        lines.extend(
+            v.selections
+                .ranges()
+                .iter()
+                .map(|s| doc.line_of(s.head))
+                .filter(|&l| l >= from),
+        );
+        lines.sort_unstable();
+        lines.dedup();
+        v.folds.set_filter_from(from, &lines, doc.line_count());
+    }
+
+    /// The lines of `view` holding a selection's head, in order.
+    pub fn caret_lines(&self, view: ViewId) -> Vec<usize> {
+        let Some(v) = self.views.get(&view) else {
+            return Vec::new();
+        };
+        let Some(b) = self.buffers.get(&v.buffer()) else {
+            return Vec::new();
+        };
+        let mut lines: Vec<usize> = v
+            .selections
+            .ranges()
+            .iter()
+            .map(|s| b.doc.line_of(s.head))
+            .collect();
+        lines.dedup();
+        lines
     }
 
     /// After any action: brings the folds' line numbers up to date and

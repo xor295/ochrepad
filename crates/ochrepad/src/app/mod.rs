@@ -42,6 +42,9 @@ use crate::macro_ui::{MacroSource, Macros};
 use crate::preview::Previews;
 use crate::settings::{AppSettings, ThemeChoice};
 
+/// What a command that would change a file says when a viewer has the focus.
+pub(crate) const READ_ONLY: &str = "This file is open read-only (View > Open as Editable)";
+
 const NEW: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::N);
 const OPEN: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::O);
 const SAVE_AS: KeyboardShortcut =
@@ -616,6 +619,11 @@ impl OchrepadApp {
 
     /// The tab the filter bar is for: the focused viewer, or the active
     /// editor.
+    /// The document revision an editor's filter was last made for (tests).
+    pub fn filter_applied_at(&self, view: ViewId) -> Option<u64> {
+        self.filter.applied_revision(view)
+    }
+
     fn filter_target(&mut self) -> crate::filter_bar::FilterTarget {
         match self.focused_viewer() {
             Some(id) => id.into(),
@@ -728,6 +736,10 @@ impl OchrepadApp {
 
     /// Plays a macro on the active view; failures are shown in a dialog.
     pub fn play_macro(&mut self, source: MacroSource, repeat: ochrepad_core::Repeat) {
+        if self.focused_viewer().is_some() {
+            self.note_text(READ_ONLY);
+            return;
+        }
         match self
             .macros
             .play(&mut self.editor, self.active, source, repeat)
@@ -866,9 +878,10 @@ impl OchrepadApp {
                 }
             }
         }
+        let following = &self.external.follow;
         if self
             .filter
-            .tick(&mut self.editor, &mut self.viewers, self.now)
+            .tick(&mut self.editor, &mut self.viewers, following, self.now)
         {
             ui.ctx()
                 .request_repaint_after(std::time::Duration::from_millis(50));
@@ -1097,14 +1110,14 @@ impl OchrepadApp {
         let viewer = self.focused_viewer();
         if pressed(ui, &SAVE_AS) {
             if viewer.is_some() {
-                self.note_text("This file is open read-only (View > Open as Editable)");
+                self.note_text(READ_ONLY);
             } else {
                 self.save_as();
             }
         }
         if pressed(ui, &SAVE) {
             if viewer.is_some() {
-                self.note_text("This file is open read-only (View > Open as Editable)");
+                self.note_text(READ_ONLY);
             } else {
                 self.save();
             }
@@ -1275,17 +1288,31 @@ impl OchrepadApp {
             self.close_folder();
         }
         ui.separator();
-        if item(ui, "Save", "Ctrl+S") {
+        // A viewer's file is read-only; the editor behind it is not in view.
+        let viewer = self.focused_viewer();
+        let editing = viewer.is_none();
+        let save = |ui: &mut Ui, label: &str, shortcut: &str| {
+            ui.add_enabled(editing, Button::new(label).shortcut_text(shortcut))
+                .on_disabled_hover_text(READ_ONLY)
+                .clicked()
+        };
+        if save(ui, "Save", "Ctrl+S") {
             self.save();
         }
-        if item(ui, "Save As…", "Ctrl+Shift+S") {
+        if save(ui, "Save As…", "Ctrl+Shift+S") {
             self.save_as();
         }
         ui.separator();
         if item(ui, "Close", "Ctrl+W") {
-            self.close_view(self.active);
+            match viewer {
+                Some(id) => self.close_viewer(id),
+                None => self.close_view(self.active),
+            }
         }
-        if ui.button("Close All but Active").clicked() {
+        if ui
+            .add_enabled(editing, Button::new("Close All but Active"))
+            .clicked()
+        {
             self.close_others(self.active);
         }
         if ui.button("Close All").clicked() {
@@ -1301,6 +1328,17 @@ impl OchrepadApp {
         let item = |ui: &mut Ui, label: &str, shortcut: &str| {
             ui.add(Button::new(label).shortcut_text(shortcut)).clicked()
         };
+        if let Some(id) = self.focused_viewer() {
+            // A viewer is read-only: copying is all that applies.
+            if item(ui, "Copy", "Ctrl+C")
+                && let Some(v) = self.viewers.get_mut(id)
+            {
+                v.state.copy(ui.ctx(), &v.file);
+            }
+            ui.separator();
+            ui.label(egui::RichText::new(READ_ONLY).weak());
+            return;
+        }
         if item(ui, "Undo", "Ctrl+Z") {
             self.apply(Action::Undo);
         }
@@ -1547,10 +1585,10 @@ impl OchrepadApp {
         if item(ui, "Filter Lines…", "Alt+Shift+L") {
             self.open_filter();
         }
-        if item(ui, "Go to Matching Bracket", "Ctrl+B") {
+        if viewer.is_none() && item(ui, "Go to Matching Bracket", "Ctrl+B") {
             self.apply(Action::GoToMatchingBracket);
         }
-        if item(ui, "Select to Matching Bracket", "Ctrl+Alt+B") {
+        if viewer.is_none() && item(ui, "Select to Matching Bracket", "Ctrl+Alt+B") {
             self.apply(Action::SelectToMatchingBracket);
         }
         ui.separator();
@@ -1622,6 +1660,10 @@ impl OchrepadApp {
     }
 
     fn compare_menu(&mut self, ui: &mut Ui) {
+        if self.focused_viewer().is_some() {
+            ui.label(egui::RichText::new("Files open in the viewer cannot be compared").weak());
+            return;
+        }
         let current = self.buffer_id();
         let others: Vec<(BufferId, String)> = self
             .tabs()

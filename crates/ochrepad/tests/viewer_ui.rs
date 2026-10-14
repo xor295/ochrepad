@@ -403,6 +403,86 @@ fn the_filter_works_in_a_viewer_and_follows_the_file() {
             .is_some_and(|v| v.file.progress().done && v.state.top_line() > top_before + 100)
     });
     h.get_by_label("Following");
+
+    // Scrolled away from the end, it stays where it is while the file grows.
+    h.get_by_label("Viewer: big.log").click();
+    key(&mut h, Modifiers::COMMAND, Key::Home);
+    let top = h.state().viewers.get(id).unwrap().state.top_line();
+    let lines = h.state().viewers.get(id).unwrap().file.progress().lines;
+    append(&path, &log(50));
+    wait_for(&mut h, |h| {
+        h.state()
+            .viewers
+            .get(id)
+            .is_some_and(|v| v.file.progress().done && v.file.progress().lines > lines)
+    });
+    for _ in 0..5 {
+        h.step();
+    }
+    assert_eq!(h.state().viewers.get(id).unwrap().state.top_line(), top);
+}
+
+#[test]
+fn menus_leave_the_editor_behind_a_viewer_alone() {
+    let d = Dirs::new();
+    let notes = d.file("notes.txt", "notes\n");
+    let path = d.file("big.log", &log(1000));
+    let mut h = harness();
+    h.state_mut().open_path(&notes);
+    h.run();
+    open_viewer(&mut h, &path);
+    // Edit offers copying only.
+    h.get_by_label("Edit").click();
+    h.run();
+    h.get_by_label_contains("open read-only");
+    assert!(h.query_by_label_contains("Clear Undo History").is_none());
+    key(&mut h, Modifiers::NONE, Key::Escape);
+    // Macro playback says why it can't run.
+    key(&mut h, Modifiers::COMMAND | Modifiers::SHIFT, Key::P);
+    h.get_by_label_contains("open read-only");
+    // File > Close closes the viewer, not the editor behind it.
+    h.get_by_label("File").click();
+    h.run();
+    h.get_by_label_contains("Ctrl+W").click();
+    h.run();
+    assert!(h.state().viewers.iter().next().is_none());
+    assert_eq!(h.state().file_name(), "notes.txt");
+}
+
+#[test]
+fn a_session_far_down_a_file_comes_back_there() {
+    let d = Dirs::new();
+    let path = d.file("far.log", &log(300_000));
+    let mut app = OchrepadApp::new();
+    app.set_storage(&d.config(), &d.data());
+    let mut h = app_with(app, Vec2::new(900.0, 500.0));
+    open_viewer(&mut h, &path);
+    let id = viewer_id(&mut h);
+    h.state_mut()
+        .viewers
+        .get_mut(id)
+        .unwrap()
+        .state
+        .scroll_to_line(290_000);
+    h.run();
+    h.state_mut().request_exit();
+    h.run();
+    h.state_mut().flush_disk();
+    drop(h);
+    // The first frames come before the index reaches that line; the view
+    // goes there once it has.
+    let mut app = OchrepadApp::new();
+    app.set_storage(&d.config(), &d.data());
+    let mut h = app_with(app, Vec2::new(900.0, 500.0));
+    wait_for(&mut h, |h| {
+        h.state()
+            .viewers
+            .iter()
+            .next()
+            .is_some_and(|(_, v)| v.file.progress().done)
+    });
+    let (_, viewer) = h.state().viewers.iter().next().unwrap();
+    assert_eq!(viewer.state.top_line(), 290_000);
 }
 
 #[test]

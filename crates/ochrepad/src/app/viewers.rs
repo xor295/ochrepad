@@ -159,85 +159,86 @@ impl OchrepadApp {
         let lines = v.file.line_finder();
         let decoder = v.file.decoder();
         let scope = format!("in {name}");
+        // The panel's Stop and Clear set this flag, and the file source
+        // stops reading on it.
         let stop = std::sync::Arc::new(AtomicBool::new(false));
         let src = v.file.source(stop.clone());
-        self.results.start_external(query, scope, move |cancel| {
-            // The panel's Stop and Clear set `cancel`; the source checks
-            // `stop`, so pass one on to the other as matches come.
-            let decode = |bytes: &[u8]| decoder.decode(bytes).into_owned();
-            let mut hits: Vec<Hit> = Vec::new();
-            // Where the window of the last hit starts and ends in the file.
-            let mut window = 0..0;
-            let (mut matches, mut truncated, mut hint) = (0usize, false, None);
-            for m in searcher.matches_in(&src, 0..src.len()) {
-                if cancel.load(std::sync::atomic::Ordering::Relaxed) {
-                    stop.store(true, std::sync::atomic::Ordering::Relaxed);
-                    break;
-                }
-                if matches == MAX_MATCHES {
-                    truncated = true;
-                    break;
-                }
-                matches += 1;
-                let Some(line) = lines.line_of(m.start, hint, &cancel) else {
-                    break;
-                };
-                hint = Some((m.start, line));
-                let line = line as usize;
-                if let Some(last) = hits.last_mut()
-                    && last.line == line
-                {
-                    if window.contains(&m.start) && m.end <= window.end {
-                        let a = decode(&lines.read(window.start..m.start)).len();
-                        let b = decode(&lines.read(window.start..m.end)).len();
-                        last.ranges.push(a..b);
+        self.results
+            .start_external(query, scope, stop, move |cancel| {
+                let decode = |bytes: &[u8]| decoder.decode(bytes).into_owned();
+                let mut hits: Vec<Hit> = Vec::new();
+                // Where the window of the last hit starts and ends in the file.
+                let mut window = 0..0;
+                let (mut matches, mut truncated, mut hint) = (0usize, false, None);
+                for m in searcher.matches_in(&src, 0..src.len()) {
+                    if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                        break;
                     }
-                    continue;
+                    if matches == MAX_MATCHES {
+                        truncated = true;
+                        break;
+                    }
+                    matches += 1;
+                    let Some(line) = lines.line_of(m.start, hint, &cancel) else {
+                        break;
+                    };
+                    hint = Some((m.start, line));
+                    let line = line as usize;
+                    if let Some(last) = hits.last_mut()
+                        && last.line == line
+                    {
+                        if window.contains(&m.start) && m.end <= window.end {
+                            let a = decode(&lines.read(window.start..m.start)).len();
+                            let b = decode(&lines.read(window.start..m.end)).len();
+                            last.ranges.push(a..b);
+                        }
+                        continue;
+                    }
+                    // The line around the match: from the break before it (or a
+                    // window's worth before) to the break after it.
+                    let from = m.start.saturating_sub(CONTEXT);
+                    let bytes = lines.read(from..m.end + CONTEXT);
+                    // Fewer bytes than asked for if the file got shorter since.
+                    let at = ((m.start - from) as usize).min(bytes.len());
+                    let begin = bytes[..at]
+                        .iter()
+                        .rposition(|&b| b == b'\n' || b == b'\r')
+                        .map_or(0, |i| i + 1);
+                    let after = ((m.end - from) as usize).min(bytes.len());
+                    let end = bytes[after..]
+                        .iter()
+                        .position(|&b| b == b'\n' || b == b'\r')
+                        .map_or(bytes.len(), |i| after + i);
+                    window = from + begin as u64..from + end as u64;
+                    let text = decode(&bytes[begin..end]);
+                    let a = decode(&bytes[begin..at]).len();
+                    let b = decode(&bytes[begin..after.max(at)]).len();
+                    let first = a..b;
+                    let mut hit = Hit {
+                        line,
+                        text,
+                        ranges: vec![first],
+                        start: ByteOffset(m.start as usize),
+                        end: ByteOffset(m.end as usize),
+                        column: a,
+                    };
+                    shorten(&mut hit);
+                    hits.push(hit);
                 }
-                // The line around the match: from the break before it (or a
-                // window's worth before) to the break after it.
-                let from = m.start.saturating_sub(CONTEXT);
-                let bytes = lines.read(from..m.end + CONTEXT);
-                let at = (m.start - from) as usize;
-                let begin = bytes[..at]
-                    .iter()
-                    .rposition(|&b| b == b'\n' || b == b'\r')
-                    .map_or(0, |i| i + 1);
-                let after = ((m.end - from) as usize).min(bytes.len());
-                let end = bytes[after..]
-                    .iter()
-                    .position(|&b| b == b'\n' || b == b'\r')
-                    .map_or(bytes.len(), |i| after + i);
-                window = from + begin as u64..from + end as u64;
-                let text = decode(&bytes[begin..end]);
-                let a = decode(&bytes[begin..at]).len();
-                let b = decode(&bytes[begin..after.max(at)]).len();
-                let first = a..b;
-                let mut hit = Hit {
-                    line,
-                    text,
-                    ranges: vec![first],
-                    start: ByteOffset(m.start as usize),
-                    end: ByteOffset(m.end as usize),
-                    column: a,
+                let files = if hits.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![FileHits {
+                        source: Source::Viewer(id),
+                        name,
+                        revision: 0,
+                        hits,
+                        matches,
+                        expanded: true,
+                    }]
                 };
-                shorten(&mut hit);
-                hits.push(hit);
-            }
-            let files = if hits.is_empty() {
-                Vec::new()
-            } else {
-                vec![FileHits {
-                    source: Source::Viewer(id),
-                    name,
-                    revision: 0,
-                    hits,
-                    matches,
-                    expanded: true,
-                }]
-            };
-            Ok((files, truncated))
-        });
+                Ok((files, truncated))
+            });
     }
 
     /// Goes to a result in a viewer.

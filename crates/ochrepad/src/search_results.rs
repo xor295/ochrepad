@@ -142,20 +142,29 @@ impl SearchResults {
     /// Starts searching `jobs` for `query` in the background, as the newest
     /// search; older ones are collapsed.
     pub fn start(&mut self, query: SearchQuery, scope: String, jobs: Vec<Job>) {
-        self.spawn(query, scope, false, move |q, c, tx| search(q, jobs, c, tx));
+        self.spawn(query, scope, false, None, move |q, c, tx| {
+            search(q, jobs, c, tx)
+        });
     }
 
     /// Starts a search that `work` does on the background thread (the
     /// viewer's, over a file too large to open), and lists what it returns:
     /// the results and whether more matches were found than are kept.
+    /// `cancel` is the flag Stop and Clear set; the work should watch it
+    /// (a file source can stop its reads on it).
     pub fn start_external(
         &mut self,
         query: SearchQuery,
         scope: String,
+        cancel: Arc<AtomicBool>,
         work: impl FnOnce(Arc<AtomicBool>) -> Result<(Vec<FileHits>, bool), String> + Send + 'static,
     ) {
-        self.spawn(query, scope, false, move |_, cancel, tx| {
-            match work(cancel) {
+        self.spawn(
+            query,
+            scope,
+            false,
+            Some(cancel),
+            move |_, cancel, tx| match work(cancel) {
                 Ok((files, truncated)) => {
                     for f in files {
                         if tx.send(Msg::File(f)).is_err() {
@@ -170,8 +179,8 @@ impl SearchResults {
                 Err(e) => {
                     let _ = tx.send(Msg::Failed(e));
                 }
-            }
-        });
+            },
+        );
     }
 
     /// Starts Find in Files over `folder`.
@@ -183,7 +192,7 @@ impl SearchResults {
         open: Vec<OpenDoc>,
     ) {
         let scope = format!("in {}", folder.display());
-        self.spawn(query, scope, true, move |q, c, tx| {
+        self.spawn(query, scope, true, None, move |q, c, tx| {
             search_files(q, &folder, &options, open, c, tx)
         });
     }
@@ -193,12 +202,13 @@ impl SearchResults {
         query: SearchQuery,
         scope: String,
         in_files: bool,
+        cancel: Option<Arc<AtomicBool>>,
         work: impl FnOnce(SearchQuery, Arc<AtomicBool>, Sender<Msg>) + Send + 'static,
     ) {
         for s in &mut self.searches {
             s.expanded = false;
         }
-        let cancel = Arc::new(AtomicBool::new(false));
+        let cancel = cancel.unwrap_or_default();
         let (tx, rx) = channel();
         let (q, c) = (query.clone(), cancel.clone());
         std::thread::Builder::new()
@@ -233,7 +243,20 @@ impl SearchResults {
         let mut running = false;
         for s in &mut self.searches {
             let Some(rx) = &s.receiver else { continue };
-            while let Ok(msg) = rx.try_recv() {
+            loop {
+                let msg = match rx.try_recv() {
+                    Ok(msg) => msg,
+                    Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                    // The search thread ended without saying it was done
+                    // (it failed).
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                        if !s.done {
+                            s.error = Some("The search stopped unexpectedly".into());
+                            s.done = true;
+                        }
+                        break;
+                    }
+                };
                 match msg {
                     Msg::File(f) => {
                         s.matches += f.matches;

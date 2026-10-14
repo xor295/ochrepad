@@ -131,6 +131,10 @@ impl ColumnInsert {
     }
 }
 
+/// The most spaces one insertion may add to take short lines out to its
+/// column, in all.
+const MAX_PADDING: usize = 16 << 20;
+
 /// Where one item goes: the text it replaces (empty for an insertion), and
 /// the spaces that first take a short line out to the column.
 struct Target {
@@ -218,6 +222,11 @@ pub(crate) fn insert(
             .map(|line| at_column(doc, line, col, tab_width))
             .collect()
     };
+    // Padding out to a column far past every line (a hand-written macro)
+    // would make a document of that size: refused.
+    if targets.iter().map(|t| t.pad).sum::<usize>() > MAX_PADDING {
+        return Resolved::Selections(sels.clone());
+    }
     let items = what.items(targets.len());
     let edits: Vec<Edit> = targets
         .iter()
