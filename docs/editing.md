@@ -42,6 +42,24 @@ when nothing is selected, with Notepad++'s keys:
 | iNVERT cASE | Ctrl+Alt+I | Every letter's case swapped. |
 | ranDOm cASE | | Each letter upper or lower case at random. |
 
+## Comments
+
+**Edit > Comment/Uncomment** comments out the selected lines, or the
+caret's line, with the language's comment markers (about 100 languages
+have them):
+
+| Command | Keys | Does |
+|---|---|---|
+| Toggle Comment | Ctrl+/ or Ctrl+Q | Comments the lines at their common indentation, or uncomments them if they all are. |
+| Comment Lines | Ctrl+K | Comments the lines even if they already are, adding a level (Notepad++'s Single Line Comment). |
+| Uncomment Lines | Ctrl+Shift+K | Takes one level off each line that has one and leaves the others. |
+| Toggle Block Comment | Ctrl+Shift+/ or Ctrl+Shift+Q | Wraps each selection (or the caret's line) in a block comment, or unwraps it. |
+
+For a language with only block comments (HTML, CSS, XML), the line
+commands wrap each run of selected lines in one block comment instead, or
+unwrap it; lines that are each a comment of their own are unwrapped one
+by one. Blank lines are left alone.
+
 ## Blank operations
 
 **Edit > Blank Operations** works on the selected lines, or on every line
