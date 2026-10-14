@@ -6,6 +6,10 @@ pressing **Ctrl+F** and typing always starts a new search, even if the panel
 was already open. **Enter** / **F3** finds the next match,
 **Shift+Enter** / **Shift+F3** the previous one, **Esc** closes the panel.
 
+**Ctrl+F3** (Search > Select and Find Next) searches for the selected text,
+or the word at the caret, without opening the panel, and **Ctrl+Shift+F3**
+backwards; F3 and Shift+F3 then go on with it. The panel's options apply.
+
 Options:
 
 - **Regular expression**: see the dialect notes below. Off means the text is

@@ -1543,7 +1543,38 @@ fn rect_clip_id() -> Id {
 /// as a block).
 pub fn copy_text(ctx: &egui::Context, text: String) {
     ctx.data_mut(|d| d.remove::<String>(rect_clip_id()));
+    remember_copy(ctx, &text, false);
     ctx.copy_text(text);
+}
+
+/// Where the texts copied in ochrepad are remembered, newest first, with
+/// whether each was a rectangle (Edit > Paste from History).
+fn clip_history_id() -> Id {
+    Id::new("ochrepad-clip-history")
+}
+
+/// How many copies Paste from History offers.
+const MAX_CLIP_HISTORY: usize = 10;
+/// Larger copies are not remembered.
+const MAX_CLIP_REMEMBERED: usize = 1 << 20;
+
+fn remember_copy(ctx: &egui::Context, text: &str, rect: bool) {
+    if text.is_empty() || text.len() > MAX_CLIP_REMEMBERED {
+        return;
+    }
+    ctx.data_mut(|d| {
+        let history = d.get_temp_mut_or_default::<Vec<(String, bool)>>(clip_history_id());
+        history.retain(|(t, _)| t != text);
+        history.insert(0, (text.to_owned(), rect));
+        history.truncate(MAX_CLIP_HISTORY);
+    });
+}
+
+/// The texts copied in ochrepad, newest first, and whether each was a
+/// rectangle.
+pub fn clip_history(ctx: &egui::Context) -> Vec<(String, bool)> {
+    ctx.data(|d| d.get_temp(clip_history_id()))
+        .unwrap_or_default()
 }
 
 /// Copies the selection to the clipboard; returns whether anything was
@@ -1563,6 +1594,7 @@ pub fn copy_selection(ctx: &egui::Context, editor: &Editor, view: ViewId) -> boo
             d.remove::<String>(rect_clip_id());
         }
     });
+    remember_copy(ctx, &text, rect);
     ctx.copy_text(text);
     true
 }

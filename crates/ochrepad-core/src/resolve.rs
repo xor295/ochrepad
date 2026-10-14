@@ -278,6 +278,8 @@ pub(crate) fn resolve(
         | Action::Replace { .. }
         | Action::ReplaceAll { .. }
         | Action::SelectAllMatches(_)
+        | Action::MultiSelectNext { .. }
+        | Action::MultiSelectAll { .. }
         | Action::ToggleBookmark
         | Action::NextBookmark
         | Action::PrevBookmark
@@ -724,7 +726,7 @@ pub(crate) fn word_left(doc: &Document, mut p: ByteOffset) -> ByteOffset {
 
 /// The run of same-class graphemes around `p`, preferring a word on either
 /// side. Never crosses a newline.
-fn word_at(doc: &Document, p: ByteOffset) -> (ByteOffset, ByteOffset) {
+pub(crate) fn word_at(doc: &Document, p: ByteOffset) -> (ByteOffset, ByteOffset) {
     let a = after(doc, p).map(|x| x.1).filter(|c| *c != Class::Newline);
     let b = before(doc, p).map(|x| x.1).filter(|c| *c != Class::Newline);
     let class = match (a, b) {

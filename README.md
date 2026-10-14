@@ -141,10 +141,12 @@ Windows and Linux. macOS is not supported.
 | | |
 |---|---|
 | New, Open, Save, Save As | Ctrl+N, Ctrl+O, Ctrl+S, Ctrl+Shift+S |
-| Close tab, next/previous tab | Ctrl+W, Ctrl+Tab, Ctrl+Shift+Tab |
+| Close tab, next/previous tab | Ctrl+W (or middle click), Ctrl+Tab, Ctrl+Shift+Tab |
+| Reopen the file closed last | Ctrl+Shift+T |
 | Undo, Redo | Ctrl+Z, Ctrl+Y (or Ctrl+Shift+Z) |
 | Find, Replace | Ctrl+F, Ctrl+H |
 | Find next/previous | F3, Shift+F3 (Enter, Shift+Enter in the panel) |
+| Select and find next/previous | Ctrl+F3, Ctrl+Shift+F3 |
 | Find in Files | Ctrl+Shift+F |
 | Column selection | Alt+drag, Alt+Shift+arrows |
 | Add a caret | Ctrl+click, Ctrl+Alt+Up/Down |

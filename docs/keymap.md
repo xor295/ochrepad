@@ -49,7 +49,8 @@ For example `Ctrl+Shift+Up`, `alt+f5`, `Ctrl+OpenBracket`.
 - **Application shortcuts** are fixed and are handled before the keymap,
   so binding them here has no effect: Ctrl+N, Ctrl+O, Ctrl+S, Ctrl+Shift+S,
   Ctrl+W, Ctrl+Tab, Ctrl+Shift+Tab, Ctrl+F, Ctrl+Shift+F, Ctrl+H, Ctrl+G, F3,
-  Shift+F3, Ctrl+Shift+R, Ctrl+Shift+P, Ctrl+Shift+M, Ctrl+Shift+E, F8,
+  Shift+F3, Ctrl+F3, Ctrl+Shift+F3, Ctrl+Shift+T, Ctrl+Shift+R,
+  Ctrl+Shift+P, Ctrl+Shift+M, Ctrl+Shift+E, F8,
   Shift+F8, Ctrl+plus, Ctrl+=, Ctrl+minus, Ctrl+0, Ctrl+Shift+8,
   Alt+Shift+L, Alt+C (Column Editor) and F11 (Full Screen).
 - **Copy, cut and paste** (Ctrl+C, Ctrl+X, Ctrl+V) come from the system
@@ -204,6 +205,8 @@ all five options:
 | `{"Action": {"Replace": {"query": {"pattern": "\\s+$", "options": {"regex": true, "match_case": false, "whole_word": false, "wrap": true, "in_selection": false}}, "replacement": ""}}}` | Replaces the selected match and selects the next one. |
 | `{"Action": {"ReplaceAll": {"query": {"pattern": "colour", "options": {"regex": false, "match_case": true, "whole_word": true, "wrap": true, "in_selection": false}}, "replacement": "color"}}}` | Replaces every match, as one undo step. |
 | `{"Action": {"SelectAllMatches": {"pattern": "foo", "options": {"regex": false, "match_case": true, "whole_word": true, "wrap": true, "in_selection": false}}}}` | Puts a selection on every match. |
+| `{"Action": {"MultiSelectNext": {"match_case": true, "whole_word": true}}}` | Adds the next occurrence of the selected text as another selection (Edit > Multi-select Next). With only a caret, selects the word at it first. No default keys. |
+| `{"Action": {"MultiSelectAll": {"match_case": false, "whole_word": true}}}` | Selects every occurrence of the selected text, or of the word at the caret (Edit > Multi-select All). |
 | `{"Action": {"BookmarkMatches": {"pattern": "ERROR", "options": {"regex": false, "match_case": true, "whole_word": true, "wrap": true, "in_selection": false}}}}` | Bookmarks every line where a match starts, keeping the bookmarks already there. |
 
 The pattern syntax is described in [Find and replace](find-and-replace.md).

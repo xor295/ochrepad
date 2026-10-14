@@ -23,6 +23,16 @@ people downloading the release.
 - Change history: the gutter marks the lines changed (blue), added (green)
   and deleted (red) since the file was saved. View > Change History turns
   it off.
+- Edit > Multi-select Next and Multi-select All put selections on the
+  other occurrences of the selected text (or the word at the caret), with
+  Notepad++'s case and whole-word choices.
+- Ctrl+F3 and Ctrl+Shift+F3 (Search > Select and Find Next/Previous) find
+  the selected text or the word at the caret without the find panel.
+- File > Restore Recent Closed File (Ctrl+Shift+T) reopens the files closed
+  this session, the latest first. A middle click on a tab closes it.
+- Edit > Paste from History offers the last ten texts copied in ochrepad.
+- Edit > Read-Only refuses edits to a document until turned off.
+- The status bar shows how many characters and lines are selected.
 - A read-only viewer for large files: files over 256 MB (a setting) open
   without being read into memory, so a log of several gigabytes shows its
   first screen at once. The line index builds in the background while you

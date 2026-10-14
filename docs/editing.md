@@ -86,6 +86,27 @@ Other View:
   first; Undo brings the changes back.
 
 Closing tabs with unsaved changes asks about each, as closing one does.
+A **middle click** on a tab closes it. **File > Restore Recent Closed
+File** (**Ctrl+Shift+T**) opens the file closed last again, and the one
+before it the next time.
+
+## Multi-select, paste from history, read-only
+
+- **Edit > Multi-select Next** adds the next occurrence of the selected
+  text as another selection, so typing then edits them all; with only a
+  caret, the first time selects the word at it. **Edit > Multi-select All**
+  selects every occurrence at once. Each has Notepad++'s four kinds: Ignore
+  Case & Whole Word (neither), Match Case Only, Match Whole Word Only, and
+  Match Case & Whole Word. They have no keys of their own; the
+  `MultiSelectNext` and `MultiSelectAll` commands can be given some in
+  [keymap.json](keymap.md).
+- **Edit > Paste from History** offers the last ten texts copied (or cut)
+  in ochrepad, newest first, so something copied before the last copy can
+  still be pasted. A rectangle pastes as a block.
+- **Edit > Read-Only** refuses edits to the current document until it is
+  turned off; the tab says "(read-only)". The file on disk is not changed.
+- The status bar shows how many characters are selected, and on how many
+  lines ("12 selected, 3 lines").
 
 ## Bookmarks
 

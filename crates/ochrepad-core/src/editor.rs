@@ -359,6 +359,9 @@ impl Editor {
                 };
                 resolved.ok_or(ActionError::NoCommentSyntax)
             }
+            Action::MultiSelectNext { .. } | Action::MultiSelectAll { .. } => {
+                crate::multiselect::resolve(action, &buffer.doc, sels)
+            }
             Action::NextBookmark
             | Action::PrevBookmark
             | Action::RemoveBookmarkedLines

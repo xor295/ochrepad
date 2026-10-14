@@ -116,6 +116,19 @@ pub enum Action {
     },
     /// One selection per match.
     SelectAllMatches(SearchQuery),
+    /// Multi-select Next: add the next occurrence of the primary
+    /// selection's text (after it, going round from the end) as a new
+    /// primary selection. With a caret, select the word at it first.
+    MultiSelectNext {
+        match_case: bool,
+        whole_word: bool,
+    },
+    /// Multi-select All: a selection on every occurrence of the primary
+    /// selection's text (or of the word at the caret).
+    MultiSelectAll {
+        match_case: bool,
+        whole_word: bool,
+    },
     /// Convert each selection (or the caret's line) to a case.
     ConvertCase(CaseMode),
     /// Sort the selected lines, the rectangle's lines keyed by the text in
