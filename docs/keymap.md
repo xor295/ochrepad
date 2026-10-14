@@ -50,7 +50,7 @@ For example `Ctrl+Shift+Up`, `alt+f5`, `Ctrl+OpenBracket`.
   so binding them here has no effect: Ctrl+N, Ctrl+O, Ctrl+S, Ctrl+Shift+S,
   Ctrl+W, Ctrl+Tab, Ctrl+Shift+Tab, Ctrl+F, Ctrl+Shift+F, Ctrl+H, Ctrl+G, F3,
   Shift+F3, Ctrl+F3, Ctrl+Shift+F3, Ctrl+Shift+T, Ctrl+PageUp,
-  Ctrl+PageDown, Ctrl+Shift+R,
+  Ctrl+PageDown, Ctrl+Shift+PageUp, Ctrl+Shift+PageDown, Ctrl+Shift+R,
   Ctrl+Shift+P, Ctrl+Shift+M, Ctrl+Shift+E, F8,
   Shift+F8, Ctrl+plus, Ctrl+=, Ctrl+minus, Ctrl+0, Ctrl+Shift+8,
   Alt+Shift+L, Alt+C (Column Editor) and F11 (Full Screen).

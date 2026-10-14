@@ -28,6 +28,9 @@ people downloading the release.
   level whatever the lines already have, where Ctrl+Q toggles.
 - Edit > Begin/End Select (and in Column Mode), as in Notepad++: mark
   where a selection begins, move anywhere, and select up to there.
+- View > Move Tab Forward and Move Tab Backward (Ctrl+Shift+PageDown and
+  Ctrl+Shift+PageUp) move the active tab along its tab bar, as in
+  Notepad++.
 - Overtype: Insert switches to typing over the text, as in Notepad++. The
   status bar shows OVR and the caret becomes a bar under the character it
   replaces; typing never runs past the end of a line.

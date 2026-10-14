@@ -73,6 +73,10 @@ const PLAY_MACRO: KeyboardShortcut =
 const NEXT_TAB: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::Tab);
 const NEXT_TAB_PAGE: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::PageDown);
 const PREV_TAB_PAGE: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::PageUp);
+const MOVE_TAB_FORWARD: KeyboardShortcut =
+    KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::PageDown);
+const MOVE_TAB_BACKWARD: KeyboardShortcut =
+    KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::PageUp);
 const PREV_TAB: KeyboardShortcut =
     KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::Tab);
 
@@ -793,6 +797,30 @@ impl OchrepadApp {
         }
     }
 
+    /// Moves the active tab one place along its tab bar (Notepad++'s Move
+    /// Tab Forward and Backward); at either end it stays.
+    pub fn move_tab(&mut self, forward: bool) {
+        let current = self
+            .focused_viewer()
+            .map_or(Tab::Editor(self.active), Tab::Viewer);
+        let Some(path) = self.dock.find_tab(&current) else {
+            return;
+        };
+        let node = NodePath {
+            surface: path.surface,
+            node: path.node,
+        };
+        let Ok(leaf) = self.dock.leaf_mut(node) else {
+            return;
+        };
+        let i = path.tab.0;
+        let j = if forward { i + 1 } else { i.wrapping_sub(1) };
+        if j < leaf.tabs.len() {
+            leaf.tabs.swap(i, j);
+            leaf.active = TabIndex(j);
+        }
+    }
+
     /// Plays a macro on the active view; failures are shown in a dialog.
     pub fn play_macro(&mut self, source: MacroSource, repeat: ochrepad_core::Repeat) {
         if self.focused_viewer().is_some() {
@@ -1327,6 +1355,13 @@ impl OchrepadApp {
         }
         if pressed(ui, &NEXT_TAB) {
             self.cycle_tab(true);
+        }
+        // Before Ctrl+PageUp/PageDown, which an extra Shift would match too.
+        if pressed(ui, &MOVE_TAB_BACKWARD) {
+            self.move_tab(false);
+        }
+        if pressed(ui, &MOVE_TAB_FORWARD) {
+            self.move_tab(true);
         }
         // Notepad++'s and browsers' other keys for the same.
         if pressed(ui, &PREV_TAB_PAGE) {
@@ -2391,6 +2426,18 @@ impl OchrepadApp {
             .clicked()
         {
             self.cycle_tab(false);
+        }
+        if ui
+            .add(Button::new("Move Tab Forward").shortcut_text("Ctrl+Shift+PageDown"))
+            .clicked()
+        {
+            self.move_tab(true);
+        }
+        if ui
+            .add(Button::new("Move Tab Backward").shortcut_text("Ctrl+Shift+PageUp"))
+            .clicked()
+        {
+            self.move_tab(false);
         }
         ui.separator();
         for (label, shortcut, action) in [

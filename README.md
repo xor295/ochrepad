@@ -148,6 +148,7 @@ Windows and Linux. macOS is not supported.
 |---|---|
 | New, Open, Save, Save As | Ctrl+N, Ctrl+O, Ctrl+S, Ctrl+Shift+S |
 | Close tab, next/previous tab | Ctrl+W (or middle click), Ctrl+Tab or Ctrl+PageDown, Ctrl+Shift+Tab or Ctrl+PageUp |
+| Move the tab back or forward along the bar | Ctrl+Shift+PageUp, Ctrl+Shift+PageDown |
 | Reopen the file closed last | Ctrl+Shift+T |
 | Undo, Redo | Ctrl+Z, Ctrl+Y (or Ctrl+Shift+Z) |
 | Find, Replace | Ctrl+F, Ctrl+H |
