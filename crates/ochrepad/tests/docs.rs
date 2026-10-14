@@ -88,6 +88,7 @@ fn name(action: &Action) -> &'static str {
         Action::MultiSelectAll { .. } => "MultiSelectAll",
         Action::ConvertCase(_) => "ConvertCase",
         Action::SortLines(_) => "SortLines",
+        Action::ShuffleLines { .. } => "ShuffleLines",
         Action::TrimTrailingWhitespace => "TrimTrailingWhitespace",
         Action::DuplicateLine => "DuplicateLine",
         Action::MoveLinesUp => "MoveLinesUp",
@@ -139,7 +140,7 @@ fn name(action: &Action) -> &'static str {
     }
 }
 
-const ALL: [&str; 75] = [
+const ALL: [&str; 76] = [
     "InsertText",
     "Paste",
     "InsertTab",
@@ -167,6 +168,7 @@ const ALL: [&str; 75] = [
     "MultiSelectAll",
     "ConvertCase",
     "SortLines",
+    "ShuffleLines",
     "TrimTrailingWhitespace",
     "DuplicateLine",
     "MoveLinesUp",

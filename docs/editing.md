@@ -15,6 +15,12 @@ undo step, can be recorded in a macro, and can be bound to other keys
 | Insert Blank Line Above Current | Ctrl+Alt+Enter | Inserts a line above the caret's line, indented like it, and puts the caret there. |
 | Insert Blank Line Below Current | Ctrl+Alt+Shift+Enter | The same, below. |
 | Reverse Line Order | | Reverses the selected lines, or every line when nothing is selected. |
+| Sort Lines by Length Ascending, Descending | | Sorts the selected lines (or every line) by their length in characters, and lines of the same length as text. |
+| Randomize Line Order | | Puts the selected lines (or every line) in a random order. |
+
+The other sorts (ascending, descending, ignoring case, as numbers, removing
+duplicates) are there too; with a column selection they sort by the text in
+the column ([more](column-selection.md)).
 
 With several carets, each line is done once. A selection over several
 lines inserts above its first line or below its last one.
@@ -89,6 +95,14 @@ Closing tabs with unsaved changes asks about each, as closing one does.
 A **middle click** on a tab closes it. **File > Restore Recent Closed
 File** (**Ctrl+Shift+T**) opens the file closed last again, and the one
 before it the next time.
+
+## Summary
+
+**View > Summary** shows the current document's full path, when its file
+was created and last modified (in UTC), its size on disk, and how many
+characters (without line endings), words and lines it has, with its length
+in bytes with its line endings. With a selection, it also says how many
+characters, bytes and lines are selected.
 
 ## Multi-select, paste from history, read-only
 

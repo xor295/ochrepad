@@ -35,6 +35,9 @@ people downloading the release.
   this session, the latest first. A middle click on a tab closes it.
 - Edit > Paste from History offers the last ten texts copied in ochrepad.
 - Edit > Read-Only refuses edits to a document until turned off.
+- View > Summary: the document's path, file times, size, and characters,
+  words and lines (and the selection's).
+- Edit > Line Operations: Sort Lines by Length, and Randomize Line Order.
 - The status bar shows how many characters and lines are selected.
 - A read-only viewer for large files: files over 256 MB (a setting) open
   without being read into memory, so a log of several gigabytes shows its

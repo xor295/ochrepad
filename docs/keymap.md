@@ -134,7 +134,8 @@ Motions for `MoveCursor`:
 | `{"Action": "SpacesToTabs"}` | Replaces spaces with tabs wherever the columns stay the same: the indentation, and runs of two or more spaces reaching a tab stop. |
 | `{"Action": {"ColumnInsert": {"Text": "> "}}}` | The Column Editor: inserts the text at the caret's column on its line and every line below, on each line of a column selection, or at each of several carets ([more](editing.md#column-editor)). For numbers, give `{"Numbers": {"initial": 1, "increase": 1, "repeat": 1, "leading": "Zeros", "format": "Dec"}}` instead of `{"Text": …}`: `leading` is `"None"`, `"Zeros"` or `"Spaces"`, and `format` is `"Dec"`, `"Hex"`, `"Oct"` or `"Bin"`. Fields left out take those values (with `"None"`). |
 | `{"Action": {"ConvertCase": "Upper"}}` | Converts the selections (or the caret's line) to `"Upper"`, `"Lower"`, `"Title"` or `"Invert"` case. |
-| `{"Action": {"SortLines": {"descending": false, "case_insensitive": true, "numeric": false, "remove_duplicates": false}}}` | Sorts the selected lines, or the whole document when nothing is selected. All four options must be given. `numeric` compares the number at the start of each line; `remove_duplicates` drops repeated lines. With a column selection, lines are sorted by the text inside the column. |
+| `{"Action": {"SortLines": {"descending": false, "case_insensitive": true, "numeric": false, "remove_duplicates": false}}}` | Sorts the selected lines, or the whole document when nothing is selected. These four options must be given. `numeric` compares the number at the start of each line; `remove_duplicates` drops repeated lines; an optional `"by_length": true` sorts by length instead. With a column selection, lines are sorted by the text inside the column. |
+| `{"Action": {"ShuffleLines": {"seed": 42}}}` | Puts the same lines in a random order (Randomize Line Order); the seed decides which, so the same seed gives the same order. |
 
 ### Indenting, comments and brackets
 

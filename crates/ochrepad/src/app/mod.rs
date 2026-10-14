@@ -27,6 +27,7 @@ mod external;
 mod history_store;
 mod prefs;
 mod search;
+mod summary;
 mod tools;
 mod viewers;
 mod workspace;
@@ -159,6 +160,8 @@ pub struct OchrepadApp {
     pub changes: crate::change_history::ChangeHistory,
     /// View > Function List.
     pub function_list: crate::function_list::FunctionList,
+    /// The View > Summary dialog, while it is open.
+    summary: Option<summary::SummaryDialog>,
     /// The log highlight rules from the settings, compiled.
     log_rules: crate::log_rules::LogRules,
     /// The Search Results panel.
@@ -235,6 +238,7 @@ impl OchrepadApp {
             filter: Default::default(),
             changes: Default::default(),
             function_list: Default::default(),
+            summary: None,
             closed_files: Vec::new(),
             log_rules: Default::default(),
             results: Default::default(),
@@ -1041,6 +1045,7 @@ impl OchrepadApp {
         self.go_to_line_dialog(ui);
         self.open_as_editable_dialog(ui);
         self.hash_dialog(ui);
+        self.summary_dialog(ui);
         self.edit_tools_frame(ui);
         self.external_dialog(ui);
         self.preferences_window(ui);
@@ -1575,6 +1580,14 @@ impl OchrepadApp {
                 case_insensitive,
                 numeric,
                 remove_duplicates,
+                by_length: false,
+            })
+        };
+        let by_length = |descending| {
+            Action::SortLines(SortOptions {
+                descending,
+                by_length: true,
+                ..SortOptions::default()
             })
         };
         for (label, action) in [
@@ -1600,10 +1613,19 @@ impl OchrepadApp {
                 "Sort Lines and Remove Duplicates",
                 sort(false, false, false, true),
             ),
+            ("Sort Lines by Length Ascending", by_length(false)),
+            ("Sort Lines by Length Descending", by_length(true)),
         ] {
             if ui.button(label).clicked() {
                 self.apply(action);
             }
+        }
+        if ui.button("Randomize Line Order").clicked() {
+            // Any seed: the time will do.
+            let seed = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(1, |d| d.as_nanos() as u64);
+            self.apply(Action::ShuffleLines { seed });
         }
     }
 
@@ -2114,6 +2136,14 @@ impl OchrepadApp {
         }
         if ui.button("Clone to Other View").clicked() {
             self.clone_to_other_view();
+        }
+        if self.focused_viewer().is_none()
+            && ui
+                .button("Summary…")
+                .on_hover_text("The document's characters, words and lines, and its file's times")
+                .clicked()
+        {
+            self.show_summary();
         }
         let viewer = self.focused_viewer();
         if ui

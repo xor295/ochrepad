@@ -162,6 +162,7 @@ pub(crate) fn resolve(
         }
         Action::ConvertCase(mode) => transform::case(doc, sels, *mode),
         Action::SortLines(options) => transform::sort(doc, sels, *options, tab_width),
+        Action::ShuffleLines { seed } => transform::shuffle(doc, sels, *seed, tab_width),
         Action::TrimTrailingWhitespace => transform::trim_trailing(doc, sels),
         Action::DuplicateLine => transform::duplicate(doc, sels),
         Action::MoveLinesUp => transform::move_lines(doc, sels, true),

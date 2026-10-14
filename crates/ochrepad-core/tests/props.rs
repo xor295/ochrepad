@@ -106,12 +106,14 @@ fn action() -> impl Strategy<Value = Action> {
             ochrepad_core::CaseMode::Invert,
         ])
         .prop_map(Action::ConvertCase),
-        1 => any::<[bool; 4]>().prop_map(|b| Action::SortLines(ochrepad_core::SortOptions {
+        1 => any::<[bool; 5]>().prop_map(|b| Action::SortLines(ochrepad_core::SortOptions {
             descending: b[0],
             case_insensitive: b[1],
             numeric: b[2],
             remove_duplicates: b[3],
+            by_length: b[4],
         })),
+        1 => any::<u64>().prop_map(|seed| Action::ShuffleLines { seed }),
         1 => prop::sample::select(vec![
             Action::TrimTrailingWhitespace,
             Action::DuplicateLine,

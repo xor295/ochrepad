@@ -23,7 +23,8 @@ menu item to explain:
   encoding, and hashes.
 - [Editing lines, blanks and columns](editing.md): Notepad++'s line and
   blank operations, the Column Editor, the tab menu and reopening closed
-  files, bookmarks, the right-click menu, multi-select, paste from history,
+  files, bookmarks, the right-click menu, the summary, multi-select, paste
+  from history,
   read-only documents, full screen, and closing brackets as you type.
 - [Key bindings](keymap.md): the `keymap.json` format and every command you
   can bind.

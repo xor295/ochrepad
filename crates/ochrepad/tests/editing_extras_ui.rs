@@ -167,3 +167,33 @@ fn a_read_only_document_refuses_edits() {
     assert_eq!(text(&h), "keep");
     h.get_by_label("new 1 * (read-only)");
 }
+
+#[test]
+fn view_summary_counts_the_document() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("notes.txt");
+    std::fs::write(&file, "one two\r\nthree, four five.\r\n").unwrap();
+    let mut h = harness();
+    h.state_mut().open_path(&file);
+    h.run();
+    click(&mut h, "View");
+    click(&mut h, "Summary…");
+    h.get_by_label("Summary");
+    // 7 + 17 characters on two lines and an empty third one; the length
+    // with the file's CR LF line endings.
+    for row in [
+        "Characters (without line endings)",
+        "Words",
+        "Lines",
+        "Modified",
+    ] {
+        h.get_by_label(row);
+    }
+    for value in ["24", "5", "3"] {
+        h.get_by_label(value);
+    }
+    // The document's length and the file's size.
+    assert_eq!(h.get_all_by_label("28 bytes").count(), 2);
+    click(&mut h, "Close");
+    assert!(h.query_by_label("Summary").is_none());
+}

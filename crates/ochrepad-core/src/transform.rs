@@ -37,6 +37,9 @@ pub struct SortOptions {
     pub numeric: bool,
     /// Drop lines equal to the line before them after sorting.
     pub remove_duplicates: bool,
+    /// Compare by length in characters (then as text).
+    #[serde(default)]
+    pub by_length: bool,
 }
 
 /// Converts `text` to `mode`. The result may be longer or shorter (`ß` →
@@ -217,6 +220,75 @@ pub(crate) fn sort(
     o: SortOptions,
     tab_width: usize,
 ) -> Resolved {
+    reorder(doc, sels, tab_width, o.case_insensitive, |lines, keys| {
+        let compare = |a: usize, b: usize| -> Ordering {
+            let ord = if o.numeric {
+                match (leading_number(&keys[a]), leading_number(&keys[b])) {
+                    (Some(x), Some(y)) => x.total_cmp(&y),
+                    (None, Some(_)) => Ordering::Less,
+                    (Some(_), None) => Ordering::Greater,
+                    (None, None) => keys[a].cmp(&keys[b]),
+                }
+            } else if o.by_length {
+                let len = |i: usize| keys[i].chars().count();
+                len(a).cmp(&len(b)).then_with(|| keys[a].cmp(&keys[b]))
+            } else {
+                keys[a].cmp(&keys[b])
+            };
+            if o.descending { ord.reverse() } else { ord }
+        };
+        let mut order: Vec<usize> = (0..lines.len()).collect();
+        order.sort_by(|&a, &b| compare(a, b)); // stable
+        if o.remove_duplicates {
+            let same = |a: &str, b: &str| {
+                if o.case_insensitive {
+                    a.to_lowercase() == b.to_lowercase()
+                } else {
+                    a == b
+                }
+            };
+            order.dedup_by(|b, a| same(&lines[*a], &lines[*b]));
+        }
+        order
+    })
+}
+
+/// Puts the lines Sort Lines would sort in a random order, from `seed`
+/// (Randomize Line Order).
+pub(crate) fn shuffle(
+    doc: &Document,
+    sels: &SelectionSet,
+    seed: u64,
+    tab_width: usize,
+) -> Resolved {
+    reorder(doc, sels, tab_width, false, |lines, _| {
+        // xorshift64*, then Fisher-Yates.
+        let mut state = seed | 1;
+        let mut next = || {
+            state ^= state >> 12;
+            state ^= state << 25;
+            state ^= state >> 27;
+            state.wrapping_mul(0x2545_F491_4F6C_DD1D)
+        };
+        let mut order: Vec<usize> = (0..lines.len()).collect();
+        for i in (1..order.len()).rev() {
+            let j = (next() % (i as u64 + 1)) as usize;
+            order.swap(i, j);
+        }
+        order
+    })
+}
+
+/// Rewrites the lines Sort Lines works on (the selected lines, a
+/// rectangle's lines keyed by the text inside it, or the whole document)
+/// in the order `order` gives from the lines and their keys.
+fn reorder(
+    doc: &Document,
+    sels: &SelectionSet,
+    tab_width: usize,
+    case_insensitive: bool,
+    order: impl FnOnce(&[String], &[String]) -> Vec<usize>,
+) -> Resolved {
     let rect = sels.rect().cloned();
     let any_selected = sels.ranges().iter().any(|s| !s.is_empty());
     let (first, mut last) = if let Some(r) = &rect {
@@ -250,38 +322,14 @@ pub(crate) fn sort(
                 }
                 None => text.clone(),
             };
-            if o.case_insensitive {
+            if case_insensitive {
                 key.to_lowercase()
             } else {
                 key
             }
         })
         .collect();
-    let compare = |a: usize, b: usize| -> Ordering {
-        let ord = if o.numeric {
-            match (leading_number(&keys[a]), leading_number(&keys[b])) {
-                (Some(x), Some(y)) => x.total_cmp(&y),
-                (None, Some(_)) => Ordering::Less,
-                (Some(_), None) => Ordering::Greater,
-                (None, None) => keys[a].cmp(&keys[b]),
-            }
-        } else {
-            keys[a].cmp(&keys[b])
-        };
-        if o.descending { ord.reverse() } else { ord }
-    };
-    let mut order: Vec<usize> = (0..lines.len()).collect();
-    order.sort_by(|&a, &b| compare(a, b)); // stable
-    if o.remove_duplicates {
-        let same = |a: &str, b: &str| {
-            if o.case_insensitive {
-                a.to_lowercase() == b.to_lowercase()
-            } else {
-                a == b
-            }
-        };
-        order.dedup_by(|b, a| same(&lines[*a], &lines[*b]));
-    }
+    let order = order(&lines, &keys);
     let new: Vec<&str> = order.iter().map(|&i| lines[i].as_str()).collect();
     let new = new.join("\n");
     let start = doc.line_start(first);

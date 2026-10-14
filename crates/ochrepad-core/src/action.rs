@@ -134,6 +134,11 @@ pub enum Action {
     /// Sort the selected lines, the rectangle's lines keyed by the text in
     /// the rectangle, or the whole document when nothing is selected.
     SortLines(SortOptions),
+    /// Put the lines Sort Lines would sort in a random order (Randomize
+    /// Line Order); the seed decides the order, so a macro replays it.
+    ShuffleLines {
+        seed: u64,
+    },
     /// Remove trailing spaces and tabs from the selected lines (all lines
     /// when nothing is selected).
     TrimTrailingWhitespace,
