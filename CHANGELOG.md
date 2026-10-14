@@ -23,9 +23,10 @@ people downloading the release.
 - The right-click menu opens a file named at the caret (`src/main.rs:12:5`
   goes to that line and column) or a web link in the browser, and Search
   Results can copy its results.
-- Edit > Comment Lines (Ctrl+K) and Uncomment Lines (Ctrl+Shift+K), as
-  Notepad++'s Single Line Comment and Uncomment: they add or take off one
-  level whatever the lines already have, where Ctrl+Q toggles.
+- Edit > Comment/Uncomment > Comment Lines (Ctrl+K) and Uncomment Lines
+  (Ctrl+Shift+K), as Notepad++'s Single Line Comment and Uncomment: they
+  add or take off one level whatever the lines already have, where Ctrl+Q
+  toggles.
 - Edit > Begin/End Select (and in Column Mode), as in Notepad++: mark
   where a selection begins, move anywhere, and select up to there.
 - View > Move Tab Forward and Move Tab Backward (Ctrl+Shift+PageDown and
@@ -175,6 +176,8 @@ people downloading the release.
 
 - iNVERT cASE moved from Ctrl+Alt+U to Ctrl+Alt+I, its Notepad++ key;
   Ctrl+Alt+U is Sentence case, as there.
+- Edit's comment commands are in a Comment/Uncomment submenu, as in
+  Notepad++, and a tab's right-click menu no longer lists Close twice.
 
 ### Fixed
 

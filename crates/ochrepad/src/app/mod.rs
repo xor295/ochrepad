@@ -1056,6 +1056,9 @@ impl OchrepadApp {
                 .allowed_splits(AllowedSplits::All)
                 .show_leaf_close_all_buttons(false)
                 .show_leaf_collapse_buttons(false)
+                // The tabs' right-click menu is ours (`on_tab_button`):
+                // egui_dock's adds a second Close after it.
+                .tab_context_menus(false)
                 .show_inside(ui, &mut tabs);
         });
         self.paint_tab_accents(ui, &tab_rects);
@@ -1645,15 +1648,24 @@ impl OchrepadApp {
         }
         ui.menu_button("Copy to Clipboard", |ui| self.copy_to_clipboard_menu(ui));
         ui.separator();
+        // As in Notepad++, the comment commands share a submenu.
+        ui.menu_button("Comment/Uncomment", |ui| {
+            for (label, shortcut, action) in [
+                ("Toggle Comment", "Ctrl+/", Action::ToggleLineComment),
+                ("Comment Lines", "Ctrl+K", Action::CommentLines),
+                ("Uncomment Lines", "Ctrl+Shift+K", Action::UncommentLines),
+                (
+                    "Toggle Block Comment",
+                    "Ctrl+Shift+/",
+                    Action::ToggleBlockComment,
+                ),
+            ] {
+                if ui.add(Button::new(label).shortcut_text(shortcut)).clicked() {
+                    self.apply(action);
+                }
+            }
+        });
         for (label, shortcut, action) in [
-            ("Toggle Comment", "Ctrl+/", Action::ToggleLineComment),
-            ("Comment Lines", "Ctrl+K", Action::CommentLines),
-            ("Uncomment Lines", "Ctrl+Shift+K", Action::UncommentLines),
-            (
-                "Toggle Block Comment",
-                "Ctrl+Shift+/",
-                Action::ToggleBlockComment,
-            ),
             ("Indent", "Tab", Action::Indent),
             ("Unindent", "Shift+Tab", Action::Unindent),
         ] {
@@ -2897,6 +2909,41 @@ struct Tabs<'a> {
     tab_rects: &'a mut Vec<(Tab, egui::Rect, egui::LayerId)>,
 }
 
+impl Tabs<'_> {
+    /// A tab's right-click menu.
+    fn tab_menu(&mut self, ui: &mut Ui, tab: Tab) {
+        let view = match tab {
+            Tab::Editor(view) => view,
+            Tab::Viewer(id) => {
+                if ui.button("Close").clicked() {
+                    self.commands.push(TabCommand::CloseViewer(id));
+                }
+                if ui.button("Open as Editable…").clicked() {
+                    self.commands.push(TabCommand::OpenAsEditable(id));
+                }
+                return;
+            }
+            Tab::Preview(_) | Tab::Compare(_) => {
+                if ui.button("Close").clicked() {
+                    self.commands.push(TabCommand::CloseTab(tab));
+                }
+                return;
+            }
+        };
+        if ui.button("Close").clicked() {
+            self.commands.push(TabCommand::Close(view));
+        }
+        if ui.button("Close All but This").clicked() {
+            self.commands.push(TabCommand::CloseOthers(view));
+        }
+        if ui.button("Clone to Other View").clicked() {
+            self.commands.push(TabCommand::CloneToOtherView(view));
+        }
+        ui.separator();
+        edit_tools::tab_menu(ui, view, self.editor, self.untitled, self.commands);
+    }
+}
+
 impl TabViewer for Tabs<'_> {
     type Tab = Tab;
 
@@ -3063,32 +3110,6 @@ impl TabViewer for Tabs<'_> {
         }
     }
 
-    fn context_menu(&mut self, ui: &mut Ui, tab: &mut Tab, _path: NodePath) {
-        if let Tab::Viewer(id) = tab {
-            if ui.button("Close").clicked() {
-                self.commands.push(TabCommand::CloseViewer(*id));
-            }
-            if ui.button("Open as Editable…").clicked() {
-                self.commands.push(TabCommand::OpenAsEditable(*id));
-            }
-            return;
-        }
-        let Tab::Editor(tab) = tab else {
-            return;
-        };
-        if ui.button("Close").clicked() {
-            self.commands.push(TabCommand::Close(*tab));
-        }
-        if ui.button("Close All but This").clicked() {
-            self.commands.push(TabCommand::CloseOthers(*tab));
-        }
-        if ui.button("Clone to Other View").clicked() {
-            self.commands.push(TabCommand::CloneToOtherView(*tab));
-        }
-        ui.separator();
-        edit_tools::tab_menu(ui, *tab, self.editor, self.untitled, self.commands);
-    }
-
     fn on_tab_button(&mut self, tab: &mut Tab, response: &egui::Response) {
         self.tab_rects
             .push((*tab, response.rect, response.layer_id));
@@ -3100,6 +3121,9 @@ impl TabViewer for Tabs<'_> {
                 other => TabCommand::CloseTab(other),
             });
         }
+        // The right-click menu: ours, as egui_dock's is turned off.
+        let target = *tab;
+        response.context_menu(|ui| self.tab_menu(ui, target));
         // egui_dock gives tab buttons no accessibility info.
         let title = self.title(tab).text().to_owned();
         response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &title));
