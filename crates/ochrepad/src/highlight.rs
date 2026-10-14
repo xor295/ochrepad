@@ -33,6 +33,11 @@ pub struct Highlighting {
 }
 
 impl Highlighting {
+    /// The syntaxes and themes, shared with background work.
+    pub fn registry(&self) -> &Arc<Registry> {
+        &self.registry
+    }
+
     pub fn new(registry: Arc<Registry>) -> Self {
         Self {
             languages: registry.language_names(),

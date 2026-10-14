@@ -157,6 +157,8 @@ pub struct OchrepadApp {
     pub filter: crate::filter_bar::FilterBar,
     /// The lines changed since each file was saved (the gutter's marks).
     pub changes: crate::change_history::ChangeHistory,
+    /// View > Function List.
+    pub function_list: crate::function_list::FunctionList,
     /// The log highlight rules from the settings, compiled.
     log_rules: crate::log_rules::LogRules,
     /// The Search Results panel.
@@ -232,6 +234,7 @@ impl OchrepadApp {
             find: FindPanel::default(),
             filter: Default::default(),
             changes: Default::default(),
+            function_list: Default::default(),
             closed_files: Vec::new(),
             log_rules: Default::default(),
             results: Default::default(),
@@ -927,6 +930,7 @@ impl OchrepadApp {
         }
 
         self.sidebar(ui);
+        self.function_list_panel(ui);
 
         self.dark = ui.visuals().dark_mode;
         if self
@@ -1782,6 +1786,66 @@ impl OchrepadApp {
         }
     }
 
+    /// View > Function List: the panel on the right, kept up to date for
+    /// the active document.
+    fn function_list_panel(&mut self, ui: &mut Ui) {
+        if !self.settings.show_function_list {
+            return;
+        }
+        let buffer = self.buffer_id();
+        let viewer = self.focused_viewer();
+        let limit = self.settings.highlight_limit_mb * 1024 * 1024;
+        let language = self.highlighting.language(buffer).to_owned();
+        let caret_line = self
+            .editor
+            .view(self.active)
+            .zip(self.editor.buffer(buffer))
+            .map_or(0, |(v, b)| b.doc().line_of(v.selections.primary().head));
+        let target = self
+            .editor
+            .buffer(buffer)
+            .filter(|b| viewer.is_none() && b.doc().len().0 <= limit)
+            .map(|b| crate::function_list::Target {
+                buffer,
+                revision: b.revision(),
+                language: &language,
+                doc: b.doc(),
+                indent_width: b.indent.width,
+                caret_line,
+            });
+        if let Some(t) = &target
+            && self
+                .function_list
+                .tick(t, self.highlighting.registry(), self.now)
+        {
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(100));
+        }
+        let frame = egui::Frame::new()
+            .fill(ui.visuals().panel_fill)
+            .inner_margin(egui::Margin::same(crate::theme::space::S as i8));
+        let shown = Panel::right("function-list")
+            .frame(frame)
+            .resizable(true)
+            .default_size(self.settings.function_list_width)
+            .size_range(160.0..=480.0)
+            .show(ui, |ui| self.function_list.ui(ui, target.as_ref()));
+        let width = shown.response.rect.width();
+        if (width - self.settings.function_list_width).abs() > 0.5 {
+            self.settings.function_list_width = width;
+        }
+        let (go, close) = shown.inner;
+        if close {
+            self.settings.show_function_list = false;
+        }
+        if let Some(line) = go {
+            self.apply(Action::GoToLine {
+                line: line + 1,
+                column: 1,
+            });
+        }
+    }
+
     /// Select and Find Next/Previous (Ctrl+F3, Ctrl+Shift+F3): finds the
     /// selected text, or the word at the caret, without opening the find
     /// panel; F3 and Shift+F3 then go on with it.
@@ -2107,6 +2171,8 @@ impl OchrepadApp {
         ui.checkbox(&mut self.settings.fold_margin, "Show Fold Margin");
         ui.checkbox(&mut self.settings.word_wrap, "Word Wrap");
         ui.checkbox(&mut self.settings.document_map, "Document Map");
+        ui.checkbox(&mut self.settings.show_function_list, "Function List")
+            .on_hover_text("A panel listing the document's functions, types and headings");
         ui.checkbox(&mut self.settings.change_history, "Change History")
             .on_hover_text("Mark the lines changed since the file was saved, in the gutter");
         let buffer = self.buffer_id();

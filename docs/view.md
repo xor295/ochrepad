@@ -63,6 +63,25 @@ colour, so you can see the shape of the file and jump around in it.
 - **View > Document Map** turns it off for every editor. It also hides
   itself while a pane is too narrow to show 40 columns of text beside it.
 
+## Function List
+
+**View > Function List** opens a panel on the right listing what the
+current document defines, in order: functions and methods (ƒ), types such
+as structs, classes, enums, traits and Rust's `impl` blocks (T), modules
+(M), and the headings of a Markdown file (#). Entries are indented as
+their lines are, so methods sit under their class.
+
+- **Click** an entry to go to its line.
+- The **Filter** field keeps the entries whose name contains what you type.
+- The entry the caret is in is highlighted.
+- The list is read again a moment after you stop typing, and when you
+  switch tabs.
+
+The entries come from the language's syntax highlighting: whatever the
+syntax marks as a definition is listed, so it works for most of the 180
+languages without a parser for each, and lists nothing for plain text.
+Files over the highlighting size limit aren't listed.
+
 ## Change history
 
 The gutter marks the lines that differ from the file as it was when you

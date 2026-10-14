@@ -20,6 +20,9 @@ people downloading the release.
   are recorded in macros and are kept in the session.
 - A right-click menu in the editor: undo and redo, the clipboard, case,
   comments and the line's bookmark.
+- View > Function List: a panel listing the document's functions, types,
+  modules and Markdown headings (from the syntax highlighting, so for most
+  languages), with a filter; click one to go to it.
 - Change history: the gutter marks the lines changed (blue), added (green)
   and deleted (red) since the file was saved. View > Change History turns
   it off.

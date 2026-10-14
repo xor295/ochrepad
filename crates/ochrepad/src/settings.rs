@@ -63,6 +63,9 @@ pub struct AppSettings {
     pub document_map: bool,
     /// Mark the lines changed since the file was saved, in the gutter.
     pub change_history: bool,
+    /// View > Function List: the panel of the document's functions.
+    pub show_function_list: bool,
+    pub function_list_width: f32,
     /// Editor text size in percent of `font_size` (View > Zoom).
     pub zoom: u32,
     /// View > Show Symbol: spaces as dots and tabs as arrows.
@@ -113,6 +116,8 @@ impl Default for AppSettings {
             word_wrap: false,
             document_map: true,
             change_history: true,
+            show_function_list: false,
+            function_list_width: 240.0,
             zoom: 100,
             show_space_tab: false,
             show_eol: false,

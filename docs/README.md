@@ -10,7 +10,7 @@ menu item to explain:
   rectangles and extra carets, and how copy, paste and sorting work with them.
 - [The editor view](view.md): zoom, Show Symbol (spaces, tabs, line
   endings, invisible characters, indent guides), the document map, the
-  change history, word wrap, and folding (where blocks can be folded, the shortcuts, how folded
+  Function List, the change history, word wrap, and folding (where blocks can be folded, the shortcuts, how folded
   text behaves).
 - [Logs and large files](logs.md): filtering lines, highlight rules for log
   levels, following a file as it grows (tail -f), and the read-only viewer

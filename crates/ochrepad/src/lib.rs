@@ -11,6 +11,7 @@ pub mod file_tree;
 pub mod filter_bar;
 pub mod find_panel;
 pub mod fonts;
+pub mod function_list;
 pub mod highlight;
 pub mod invisible;
 pub mod keymap;
