@@ -6,6 +6,10 @@ use egui::text::{CCursor, CCursorRange};
 use egui::{Id, Key, RichText, TextEdit, Ui};
 use ochrepad_core::{Action, ActionError, Editor, SearchOptions, SearchQuery, Searcher, ViewId};
 
+/// The longest search text, and the longest selection taken as one: a
+/// one-line field lays its whole text out each frame.
+pub const MAX_PATTERN: usize = 10_000;
+
 /// What the panel asks the app to do after drawing.
 #[derive(Clone, Debug, PartialEq)]
 pub enum FindRequest {
@@ -135,7 +139,7 @@ impl FindPanel {
     }
 
     /// Opens the panel (Ctrl+F / Ctrl+H), taking a one-line selection as
-    /// the pattern.
+    /// the pattern (one of at most [`MAX_PATTERN`] bytes).
     pub fn open(&mut self, editor: &Editor, view: ViewId, replace: bool) {
         self.open = true;
         self.show_replace = replace;
@@ -145,7 +149,7 @@ impl FindPanel {
             && let Some(b) = editor.buffer(v.buffer())
         {
             let sel = v.selections.primary();
-            if !sel.is_empty() {
+            if !sel.is_empty() && sel.end().0 - sel.start().0 <= MAX_PATTERN {
                 let text = b.doc().slice(sel.range());
                 if !text.contains('\n') {
                     self.pattern = text;
@@ -231,6 +235,7 @@ impl FindPanel {
         ui.horizontal_wrapped(|ui| {
             ui.label("Find:");
             let mut output = TextEdit::singleline(&mut self.pattern)
+                .char_limit(MAX_PATTERN)
                 .id(field_id())
                 .desired_width(field_width)
                 .hint_text("text or regex")
@@ -434,6 +439,7 @@ impl FindPanel {
                 ui.label("Replace:");
                 ui.add(
                     TextEdit::singleline(&mut self.replacement)
+                        .char_limit(MAX_PATTERN)
                         .id(Id::new("ochrepad-replace-field"))
                         .desired_width(field_width)
                         .hint_text(if self.options.regex {

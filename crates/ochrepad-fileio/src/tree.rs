@@ -23,18 +23,91 @@ pub struct Entry {
     pub ignored: bool,
 }
 
+/// Whether a path, as written, is on one of this machine's drives (on
+/// Windows; a UNC or device path is not). Relative paths are.
+fn on_this_machine(path: &Path) -> bool {
+    use std::path::{Component, Prefix};
+    match path.components().next() {
+        Some(Component::Prefix(p)) => matches!(p.kind(), Prefix::Disk(_) | Prefix::VerbatimDisk(_)),
+        _ => true,
+    }
+}
+
+/// The first line of a small text file.
+fn first_line(path: &Path) -> Option<String> {
+    use std::io::Read;
+    let mut head = Vec::new();
+    std::fs::File::open(path)
+        .ok()?
+        .take(4096)
+        .read_to_end(&mut head)
+        .ok()?;
+    let text = String::from_utf8_lossy(&head);
+    Some(text.lines().next().unwrap_or("").to_owned())
+}
+
+/// Whether the ignore files `ignore` reads in `dir` stay on this machine:
+/// `.gitignore` and `.ignore`, and git's `info/exclude`, which it finds
+/// through `.git` (a folder, a link, or a worktree's file whose `gitdir:`
+/// line, and the `commondir` there, name the real one). On Windows only
+/// opening `\\host\share\...` sends the user's credentials to that host,
+/// and a folder from someone else can point there with a link or just a
+/// `.git` file. Elsewhere this is always true.
+pub fn ignore_files_stay_local(dir: &Path) -> bool {
+    if !cfg!(windows) {
+        return true;
+    }
+    // A link's target, relative to its folder.
+    let link_stays = |path: &Path| match std::fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_symlink() => std::fs::read_link(path).is_ok_and(|t| {
+            let target = match path.parent() {
+                Some(parent) if t.is_relative() => parent.join(t),
+                _ => t,
+            };
+            on_this_machine(&target)
+        }),
+        _ => true,
+    };
+    if !link_stays(&dir.join(".gitignore")) || !link_stays(&dir.join(".ignore")) {
+        return false;
+    }
+    let git = dir.join(".git");
+    match std::fs::symlink_metadata(&git) {
+        Ok(meta) if meta.file_type().is_symlink() => link_stays(&git),
+        Ok(meta) if meta.is_file() => {
+            let Some(line) = first_line(&git) else {
+                return true;
+            };
+            let Some(gitdir) = line.strip_prefix("gitdir: ") else {
+                return true;
+            };
+            let gitdir = PathBuf::from(gitdir);
+            if !on_this_machine(&gitdir) {
+                return false;
+            }
+            // `commondir` there names the repository's own folder.
+            first_line(&gitdir.join("commondir"))
+                .is_none_or(|c| c.starts_with('.') || on_this_machine(Path::new(&c)))
+        }
+        Ok(_) => link_stays(&git.join("info")) && link_stays(&git.join("info").join("exclude")),
+        Err(_) => true,
+    }
+}
+
 /// The files and folders directly in `dir`: folders first, then files, each
 /// in natural order ("file2" before "file10", case ignored). Ignored entries
 /// are left out unless `show_ignored`.
 pub fn list_dir(dir: &Path, show_ignored: bool) -> Result<Vec<Entry>, String> {
+    // Ignore files that point off this machine turn them all off here.
+    let honour = dir.ancestors().all(ignore_files_stay_local);
     let shown: HashSet<PathBuf> = WalkBuilder::new(dir)
         .max_depth(Some(1))
         .hidden(false)
-        .parents(true)
-        .ignore(true)
-        .git_ignore(true)
-        .git_global(true)
-        .git_exclude(true)
+        .parents(honour)
+        .ignore(honour)
+        .git_ignore(honour)
+        .git_global(honour)
+        .git_exclude(honour)
         .require_git(false)
         .follow_links(false)
         .build()
@@ -95,7 +168,11 @@ pub fn walk_files(dir: &Path, o: &WalkOptions) -> Result<impl Iterator<Item = Pa
         overrides.add(f).map_err(|e| format!("filter {f}: {e}"))?;
     }
     let overrides = overrides.build().map_err(|e| e.to_string())?;
-    let honour = !o.include_ignored;
+    // Ignore files that point off this machine (see
+    // `ignore_files_stay_local`): in the folder or above it, they are all
+    // turned off; in a folder inside it, that folder is left out (the
+    // filter runs before the walk reads its ignore files).
+    let honour = !o.include_ignored && dir.ancestors().all(ignore_files_stay_local);
     let walk = WalkBuilder::new(dir)
         .max_depth((!o.subfolders).then_some(1))
         .hidden(false)
@@ -108,7 +185,12 @@ pub fn walk_files(dir: &Path, o: &WalkOptions) -> Result<impl Iterator<Item = Pa
         .follow_links(false)
         .overrides(overrides)
         .sort_by_file_name(|a, b| a.cmp(b))
-        .filter_entry(|e| e.file_name() != ".git")
+        .filter_entry(move |e| {
+            e.file_name() != ".git"
+                && (!honour
+                    || !e.file_type().is_some_and(|t| t.is_dir())
+                    || ignore_files_stay_local(e.path()))
+        })
         .build();
     Ok(walk
         .filter_map(Result::ok)
@@ -276,6 +358,53 @@ mod tests {
             vec!["main.rs"]
         );
         assert!(list_dir(&root.join("missing"), false).is_err());
+    }
+
+    /// A `.git` file (as a worktree has) can name a network folder, where
+    /// the walk would read git's excludes and send Windows' credentials.
+    /// Such a folder is left out of a walk; listed itself, its ignore
+    /// files are not read.
+    #[cfg(windows)]
+    #[test]
+    fn a_git_file_naming_a_network_folder_is_not_followed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        assert!(ignore_files_stay_local(root));
+        let evil = root.join("evil");
+        std::fs::create_dir(&evil).unwrap();
+        std::fs::write(evil.join("a.txt"), "x").unwrap();
+        for gitdir in [r"\\host.invalid\share\x", "//host.invalid/share/x"] {
+            std::fs::write(evil.join(".git"), format!("gitdir: {gitdir}\n")).unwrap();
+            assert!(!ignore_files_stay_local(&evil), "{gitdir}");
+        }
+        // A local gitdir whose commondir is on the network.
+        let real = root.join("real");
+        std::fs::create_dir(&real).unwrap();
+        std::fs::write(real.join("commondir"), r"\\host.invalid\share").unwrap();
+        std::fs::write(evil.join(".git"), format!("gitdir: {}\n", real.display())).unwrap();
+        assert!(!ignore_files_stay_local(&evil));
+        std::fs::write(real.join("commondir"), "../common").unwrap();
+        assert!(ignore_files_stay_local(&evil));
+        std::fs::write(real.join("commondir"), r"\\host.invalid\share").unwrap();
+
+        std::fs::write(root.join("b.txt"), "x").unwrap();
+        let o = WalkOptions {
+            subfolders: true,
+            ..WalkOptions::default()
+        };
+        let names: Vec<String> = walk_files(root, &o)
+            .unwrap()
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert!(names.contains(&"b.txt".to_owned()), "{names:?}");
+        assert!(!names.contains(&"a.txt".to_owned()), "{names:?}");
+        // Opened itself, it is listed without its ignore files.
+        let listed: Vec<String> = list_dir(&evil, false)
+            .unwrap()
+            .into_iter()
+            .map(|e| e.name)
+            .collect();
+        assert_eq!(listed, ["a.txt"]);
     }
 
     #[test]

@@ -256,6 +256,33 @@ fn snapshot_with_a_relative_image() {
     h.snapshot("markdown_preview");
 }
 
+/// An image named without an extension (or as `.jfif`) is decoded with the
+/// preview's limits too: one wider than a texture can be is shrunk, where
+/// egui_extras' own loader made a texture too big and the app stopped.
+#[test]
+fn a_wide_image_without_an_extension_is_shrunk() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut png = Vec::new();
+    image::RgbaImage::new(20_000, 1)
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .unwrap();
+    std::fs::write(tmp.path().join("logo"), &png).unwrap();
+    std::fs::write(tmp.path().join("logo.jfif"), &png).unwrap();
+    let file = tmp.path().join("doc.md");
+    std::fs::write(&file, "# Logo\n\n![logo](logo) ![jfif](logo.jfif)\n").unwrap();
+    let mut h = Harness::builder()
+        .with_size(Vec2::new(760.0, 420.0))
+        .with_step_dt(1.0 / 60.0)
+        .with_max_steps(10_000)
+        .with_wait_for_pending_images(true)
+        .wgpu()
+        .build_ui_state(|ui, app: &mut OchrepadApp| app.show(ui), OchrepadApp::new());
+    h.state_mut().open_path(&file);
+    h.state_mut().open_preview();
+    h.run();
+    h.render().expect("renders");
+}
+
 /// The URLs the last frame asked the browser to open.
 fn opened_urls(h: &Harness<'_, OchrepadApp>) -> Vec<String> {
     h.output()

@@ -216,6 +216,16 @@ people downloading the release.
   Windows still warns before running a downloaded script edited here.
 - Backup names from a damaged or tampered session file can no longer point
   outside the backup folder.
+- Opening or searching a folder never reads an ignore file through a link
+  to a network location, or through a `.git` file naming one (as a
+  downloaded archive could contain), which would have sent Windows
+  credentials to that computer. The right-click menu's Open File never
+  looks at network paths either.
+- These no longer crash the app or hold it up: a Markdown image named
+  without an extension, a letter with millions of accent marks, Ctrl+F on
+  a selection of megabytes, Format JSON on JSON nested thousands of levels
+  deep (refused past 1,000 levels), a line of thousands of flag letters,
+  and large code blocks in the preview (shown without highlighting).
 
 ## [0.2.0] - 2026-10-13
 

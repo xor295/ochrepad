@@ -40,6 +40,12 @@ are hidden, and so is the `.git` folder. This works whether or not the
 folder is a git repository. Other dot-files, such as `.gitignore` itself,
 are shown.
 
+On Windows, an ignore file that is a link to a network location, or a
+`.git` file that points to one, is never read, since only opening it would
+send your Windows credentials to that computer. A folder holding one is
+listed with nothing hidden, and Find in Files leaves a folder below the one
+searched out altogether.
+
 **Folder > Show Ignored Files** (the button at the top of the sidebar)
 shows them too, greyed out.
 

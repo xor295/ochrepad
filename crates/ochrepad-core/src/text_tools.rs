@@ -95,6 +95,9 @@ pub struct InvalidJson {
 /// Whitespace between JSON tokens (RFC 8259).
 const JSON_SPACE: [char; 4] = [' ', '\t', '\n', '\r'];
 
+/// Format JSON refuses deeper nesting (minifying and validating do not).
+pub const MAX_FORMAT_DEPTH: usize = 1000;
+
 /// One member or element per line, each level indented by `indent` (a tab,
 /// or `indent.width` spaces). Key order, number text and strings are kept
 /// exactly; only the whitespace between tokens changes.
@@ -387,6 +390,20 @@ fn run_json(text: &str, style: Style, positions: &mut [usize]) -> Result<String,
                 };
                 w.element(stack.len());
                 w.token(&text[i..end], i);
+                // Formatted, each level indents every line inside it, so the
+                // text grows with the square of the depth: a few KB of
+                // brackets would become gigabytes.
+                if matches!(c, b'{' | b'[')
+                    && matches!(w.style, Style::Pretty { .. })
+                    && stack.len() >= MAX_FORMAT_DEPTH
+                {
+                    return Err(json_error(
+                        i,
+                        format!(
+                            "nested more than {MAX_FORMAT_DEPTH} levels deep, too deep to format"
+                        ),
+                    ));
+                }
                 match c {
                     b'{' => {
                         stack.push(true);
@@ -1017,6 +1034,25 @@ mod tests {
         let deep = format!("{}{}", "[".repeat(100_000), "]".repeat(100_000));
         assert!(validate_json(&deep).is_ok());
         assert_eq!(minify_json(&deep).unwrap(), deep);
+        // Formatted, it would take about 40 GB: refused, with where.
+        let indent = Indent {
+            use_spaces: true,
+            width: 4,
+        };
+        let err = format_json(&deep, indent).unwrap_err();
+        assert_eq!(err.offset, MAX_FORMAT_DEPTH);
+        assert!(
+            err.message.contains("too deep to format"),
+            "{}",
+            err.message
+        );
+        // Up to the limit, it formats.
+        let ok = format!(
+            "{}{}",
+            "[".repeat(MAX_FORMAT_DEPTH),
+            "]".repeat(MAX_FORMAT_DEPTH)
+        );
+        assert!(format_json(&ok, indent).is_ok());
     }
 
     #[test]

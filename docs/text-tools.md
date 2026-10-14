@@ -26,7 +26,10 @@ run (invalid JSON, or text that does not decode), nothing changes.
   tabs, or with spaces of the document's indent width, as the status bar
   shows (`Tabs: 4`, `Spaces: 2`). Choose another there before formatting to
   get a different indent. A selection in the middle of a line is indented to
-  fit that line: its later lines start with the line's indentation.
+  fit that line: its later lines start with the line's indentation. JSON
+  nested more than 1,000 levels deep is not formatted (each level indents
+  every line inside it, so the result would be enormous); minifying and
+  validating take any depth.
 - **Minify JSON** removes every space and line break between the tokens.
 - **Validate JSON** checks the JSON without changing it. The status bar says
   when it is valid.

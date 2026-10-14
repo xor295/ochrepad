@@ -103,7 +103,8 @@ impl OchrepadApp {
         let selected = self
             .viewers
             .get(id)
-            .and_then(|v| v.state.selected_line_text(&v.file));
+            .and_then(|v| v.state.selected_line_text(&v.file))
+            .filter(|t| t.len() <= crate::find_panel::MAX_PATTERN);
         self.find.open = true;
         self.find.show_replace = false;
         self.find.focus_field();

@@ -61,14 +61,13 @@ pub struct LineLayout {
     cell_w: f32,
 }
 
-/// The end of the grapheme starting at `at`.
+/// The end of the grapheme starting at `at`, a grapheme boundary. From a
+/// boundary the text after it segments on its own; a cursor placed there
+/// would look back over everything before it (a long run of flag letters
+/// made laying a line out quadratic).
 fn next_grapheme(text: &str, at: usize) -> usize {
-    let mut cursor = unicode_segmentation::GraphemeCursor::new(at, text.len(), true);
-    match cursor.next_boundary(text, 0) {
-        Ok(Some(end)) => end,
-        // Cannot happen with the whole text as the chunk; step one char.
-        _ => at + text[at..].chars().next().map_or(1, char::len_utf8),
-    }
+    use unicode_segmentation::UnicodeSegmentation;
+    at + text[at..].graphemes(true).next().map_or(1, str::len)
 }
 
 /// Adds ASCII text drawn as one run, joining the previous piece when it is

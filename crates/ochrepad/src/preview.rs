@@ -117,6 +117,90 @@ fn percent_decode(s: &str) -> String {
     String::from_utf8(out).unwrap_or_else(|_| s.to_owned())
 }
 
+/// A fenced code block longer than this (in bytes) shows as plain text, and
+/// so does every block after this much highlighted code: the viewer
+/// highlights each code block again on every frame.
+const MAX_HIGHLIGHTED_BLOCK: usize = 4 * 1024;
+const MAX_HIGHLIGHTED_TOTAL: usize = 16 * 1024;
+
+/// `md` with the language taken off the fenced code blocks too long to
+/// highlight (see [`MAX_HIGHLIGHTED_BLOCK`]), so that they show as plain
+/// text. Fences inside lists and quotes are left as they are.
+fn plain_big_code_blocks(md: String) -> String {
+    let lines: Vec<(usize, &str)> = md
+        .split('\n')
+        .scan(0, |at, line| {
+            let start = *at;
+            *at += line.len() + 1;
+            Some((start, line))
+        })
+        .collect();
+    let mut cuts = Vec::new();
+    let mut total = 0;
+    let mut i = 0;
+    while i < lines.len() {
+        let (start, line) = lines[i];
+        let Some((fence, n, info)) = opening_fence(line) else {
+            i += 1;
+            continue;
+        };
+        // An unclosed block runs to the end of the document.
+        let mut j = i + 1;
+        let mut size = 0;
+        while j < lines.len() && !closes(lines[j].1, fence, n) {
+            size += lines[j].1.len() + 1;
+            j += 1;
+        }
+        if !info.is_empty() {
+            if size > MAX_HIGHLIGHTED_BLOCK || total + size > MAX_HIGHLIGHTED_TOTAL {
+                cuts.push(start + info.start..start + info.end);
+            } else {
+                total += size;
+            }
+        }
+        i = j + 1;
+    }
+    if cuts.is_empty() {
+        return md;
+    }
+    let mut out = String::with_capacity(md.len());
+    let mut at = 0;
+    for cut in cuts {
+        out.push_str(&md[at..cut.start]);
+        at = cut.end;
+    }
+    out.push_str(&md[at..]);
+    out
+}
+
+/// A line opening a fenced code block (CommonMark): up to three spaces,
+/// then three or more backticks or tildes, then the info string. The fence
+/// character, how many, and where the info string is in the line.
+fn opening_fence(line: &str) -> Option<(u8, usize, std::ops::Range<usize>)> {
+    let indent = line.len() - line.trim_start_matches(' ').len();
+    let rest = &line[indent..];
+    let fence = *rest.as_bytes().first()?;
+    let n = rest.bytes().take_while(|&b| b == fence).count();
+    if indent > 3 || !matches!(fence, b'`' | b'~') || n < 3 {
+        return None;
+    }
+    let after = indent + n;
+    let info = &line[after..];
+    if fence == b'`' && info.contains('`') {
+        return None;
+    }
+    let from = after + (info.len() - info.trim_start().len());
+    let to = after + info.trim_end().len();
+    Some((fence, n, from..to.max(from)))
+}
+
+/// Whether `line` closes a block opened with `n` `fence` characters.
+fn closes(line: &str, fence: u8, n: usize) -> bool {
+    let indent = line.len() - line.trim_start_matches(' ').len();
+    let rest = line[indent..].trim_end();
+    indent <= 3 && rest.len() >= n && rest.bytes().all(|b| b == fence)
+}
+
 /// The `file://` prefix for relative links in a document at `path`.
 pub fn base_uri(path: Option<&Path>) -> String {
     match path.and_then(Path::parent) {
@@ -157,7 +241,7 @@ impl Previews {
         if p.rendered != Some(revision) {
             let since = p.seen.map_or(0.0, |(_, t)| now - t);
             if p.rendered.is_none() || since >= DEBOUNCE_SECS {
-                p.text = buffer.doc().to_string();
+                p.text = plain_big_code_blocks(buffer.doc().to_string());
                 p.rendered = Some(revision);
             } else {
                 ui.ctx()
@@ -206,6 +290,32 @@ impl Previews {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn long_code_blocks_lose_their_language() {
+        let small = "```rust\nfn main() {}\n```\n";
+        assert_eq!(plain_big_code_blocks(small.to_owned()), small);
+        let body = "let x = 1;\n".repeat(500);
+        let big = format!("# Doc\n\n  ```rust ignore\n{body}```\n\n~~~js\nx\n~~~\n");
+        let out = plain_big_code_blocks(big.clone());
+        assert_eq!(out, big.replacen("```rust ignore", "```", 1));
+        // Unclosed: to the end of the document.
+        let open = format!("```py\n{body}");
+        assert_eq!(plain_big_code_blocks(open), format!("```\n{body}"));
+        // Not fences: four spaces, two backticks, backticks in the info.
+        for text in [
+            format!("    ```rust\n{body}```\n"),
+            format!("``rust\n{body}"),
+            format!("```a`b\n{body}"),
+        ] {
+            assert_eq!(plain_big_code_blocks(text.clone()), text);
+        }
+        // Blocks past the total lose theirs; plain blocks cost nothing.
+        let block = format!("```c\n{}```\n", "x;\n".repeat(1000));
+        let many = block.repeat(6);
+        let out = plain_big_code_blocks(many);
+        assert_eq!(out.matches("```c").count(), 5);
+    }
 
     #[test]
     fn only_web_and_mail_links_reach_the_browser() {

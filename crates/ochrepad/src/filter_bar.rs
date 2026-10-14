@@ -20,6 +20,7 @@ use egui::text::{CCursor, CCursorRange};
 use egui::{Id, Key, RichText, TextEdit, Ui};
 use ochrepad_core::{BufferId, Editor, SearchOptions, SearchQuery, Searcher, ViewId};
 
+use crate::find_panel::MAX_PATTERN;
 use crate::viewer::{ViewerId, Viewers};
 
 /// Quiet time after typing in the field, or after an edit to the document,
@@ -152,8 +153,11 @@ impl FilterBar {
             FilterTarget::Editor(view) => (
                 editor.view(view).and_then(|v| {
                     let sel = v.selections.primary();
+                    if sel.is_empty() || sel.end().0 - sel.start().0 > MAX_PATTERN {
+                        return None;
+                    }
                     let text = editor.buffer(v.buffer())?.doc().slice(sel.range());
-                    (!sel.is_empty() && !text.contains('\n')).then_some(text)
+                    (!text.contains('\n')).then_some(text)
                 }),
                 editor
                     .view(view)
@@ -163,7 +167,8 @@ impl FilterBar {
             FilterTarget::Viewer(id) => (
                 viewers
                     .get(id)
-                    .and_then(|v| v.state.selected_line_text(&v.file)),
+                    .and_then(|v| v.state.selected_line_text(&v.file))
+                    .filter(|t| t.len() <= MAX_PATTERN),
                 0,
             ),
         };
@@ -282,6 +287,7 @@ impl FilterBar {
         ui.horizontal_wrapped(|ui| {
             ui.label("Filter:");
             let mut output = TextEdit::singleline(&mut tab.pattern)
+                .char_limit(MAX_PATTERN)
                 .id(field_id(target))
                 .desired_width(field_width)
                 .hint_text("lines with this text")

@@ -39,3 +39,39 @@ fn a_bracket_beside_megabytes_of_non_ascii_text() {
     h.run();
     h.render().expect("renders");
 }
+
+#[test]
+fn one_grapheme_of_megabytes_renders() {
+    // A letter with millions of combining marks is one grapheme, laid out
+    // as one piece: it overflowed the GPU's vertex buffer.
+    let mut h = harness();
+    h.event(Event::Paste(format!("a{}", "\u{301}".repeat(4_000_000))));
+    h.run();
+    h.render().expect("renders");
+}
+
+#[test]
+fn ctrl_f_on_a_selection_of_megabytes_renders() {
+    // The find field took the whole selection as its text and laid it out.
+    let mut h = harness();
+    h.event(Event::Paste("a".repeat(4_000_000)));
+    h.run();
+    h.key_press_modifiers(Modifiers::COMMAND, Key::A);
+    h.run();
+    h.key_press_modifiers(Modifiers::COMMAND, Key::F);
+    h.run();
+    h.render().expect("renders");
+    assert!(h.state().find.pattern.len() <= ochrepad::find_panel::MAX_PATTERN);
+}
+
+#[test]
+fn a_line_of_flag_letters_lays_out_in_linear_time() {
+    // Each grapheme's cursor looked back over every flag letter before it.
+    let line: String = "\u{1F1FA}\u{1F1F8}".repeat(32_000);
+    let t = std::time::Instant::now();
+    let layout = ochrepad::layout::LineLayout::build(line, 8.0, 4, egui::Color32::WHITE, None);
+    assert_eq!(layout.width, 32_000.0 * 2.0 * 8.0);
+    if !cfg!(debug_assertions) {
+        assert!(t.elapsed() < std::time::Duration::from_millis(100));
+    }
+}

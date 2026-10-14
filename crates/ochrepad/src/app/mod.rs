@@ -2288,6 +2288,9 @@ impl OchrepadApp {
         else {
             return;
         };
+        if range.end.0 - range.start.0 > crate::find_panel::MAX_PATTERN {
+            return;
+        }
         let text = self.buffer().doc().slice(range);
         if text.is_empty() || text.contains('\n') {
             return;

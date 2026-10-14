@@ -35,9 +35,16 @@ const FILE: &str = "file://";
 /// The largest image file the preview reads.
 pub const MAX_IMAGE_FILE: u64 = 32 * 1024 * 1024;
 
-/// Raster formats [`SafeRasterLoader`] decodes (those `image` is built
-/// with).
-const RASTER: [&str; 5] = ["png", "jpg", "jpeg", "webp", "bmp"];
+/// Whether [`SafeRasterLoader`] takes `uri`: exactly the URIs `egui_extras`'
+/// image loader would (no extension, or one of the formats `image` is built
+/// to read), so that none reaches it, since it decodes at any size.
+fn is_raster(uri: &str) -> bool {
+    match Path::new(uri).extension().and_then(|e| e.to_str()) {
+        None => true,
+        Some(ext) => image::ImageFormat::from_extension(ext.to_lowercase())
+            .is_some_and(|f| f.reading_enabled()),
+    }
+}
 
 /// Installs the guards before the preview first draws. `egui_commonmark`
 /// installs `egui_extras`' loaders when it draws, and egui asks the most
@@ -389,7 +396,7 @@ impl ImageLoader for SafeRasterLoader {
         // egui names a frame of a possibly animated image (WebP) `uri#0`;
         // the first frame is drawn, as a still image.
         let uri = egui::decode_animated_image_uri(uri).map_or(uri, |(uri, _frame)| uri);
-        if !RASTER.iter().any(|e| egui::load::has_extension(uri, e)) {
+        if !is_raster(uri) {
             return Err(LoadError::NotSupported);
         }
         if let Some(result) = self.cache.lock().get(uri) {

@@ -28,6 +28,9 @@ const BLINK_HALF_PERIOD: f64 = 0.53;
 const SCROLLBAR_W: f32 = 12.0;
 const TEXT_PAD: f32 = 4.0;
 const MULTI_CLICK_TIME: f64 = 0.5;
+/// The most of one grapheme laid out for drawing (an emoji sequence is a
+/// few dozen bytes).
+const MAX_GRAPHEME_BYTES: usize = 256;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum DragMode {
@@ -1222,6 +1225,15 @@ pub(crate) fn paint_line_text(
             }
             let keep = ((clip.max.x - px) / cell).ceil().max(0.0) as usize + 1;
             range.end = range.end.min(range.start + keep);
+        } else if range.len() > MAX_GRAPHEME_BYTES {
+            // One grapheme: a letter with thousands of marks on it, say.
+            // Its first ones are all its cells can show, and all of it
+            // would overflow the GPU buffer.
+            let mut end = range.start + MAX_GRAPHEME_BYTES;
+            while !layout.text.is_char_boundary(end) {
+                end -= 1;
+            }
+            range.end = end;
         }
         let galley =
             painter.layout_no_wrap(layout.text[range].to_owned(), font.clone(), piece.color);
