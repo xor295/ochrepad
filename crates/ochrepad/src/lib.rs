@@ -15,6 +15,7 @@ pub mod find_panel;
 pub mod fonts;
 pub mod function_list;
 pub mod highlight;
+pub mod instance;
 pub mod invisible;
 pub mod keymap;
 pub mod layout;
