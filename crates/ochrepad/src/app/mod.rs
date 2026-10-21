@@ -1044,6 +1044,7 @@ impl OchrepadApp {
                 find_highlight,
                 editor: &mut self.editor,
                 view_states: &mut self.view_states,
+                active: self.active,
                 untitled: &self.untitled,
                 highlighting: &mut self.highlighting,
                 keymap: &self.keymap,
@@ -1066,6 +1067,7 @@ impl OchrepadApp {
                 .show_inside(ui, &mut tabs);
         });
         self.paint_tab_accents(ui, &tab_rects);
+        self.repaint_unsynced_previews(ui.ctx());
         let zoom = crate::editor_view::take_zoom_steps(ui.ctx());
         if zoom != 0 {
             self.zoom_by(zoom);
@@ -1216,6 +1218,19 @@ impl OchrepadApp {
                     focused == *active,
                 );
             }
+        }
+    }
+
+    /// Repaints when a shown preview has yet to follow its editor's
+    /// scrolling: a preview drawn before its editor sees it a frame late.
+    fn repaint_unsynced_previews(&self, ctx: &egui::Context) {
+        let unsynced = self.dock.iter_leaves().any(|(_, leaf)| {
+            matches!(leaf.tabs.get(leaf.active.0), Some(Tab::Preview(b))
+                if preview_top_line(&self.editor, self.active, *b)
+                    .is_some_and(|line| self.previews.needs_sync(*b, line)))
+        });
+        if unsynced {
+            ctx.request_repaint();
         }
     }
 
@@ -2945,6 +2960,23 @@ impl OchrepadApp {
     }
 }
 
+/// The top line (with the fraction scrolled past) of the editor a preview of
+/// `buffer` follows: `active` when it shows `buffer`, else its first view.
+fn preview_top_line(editor: &Editor, active: ViewId, buffer: BufferId) -> Option<f64> {
+    let view = editor
+        .view(active)
+        .filter(|v| v.buffer() == buffer && !v.is_aux())
+        .or_else(|| editor.views_of(buffer).min_by_key(|v| v.id()))?;
+    let s = &view.scroll;
+    // A wrapped line's later rows count as its start.
+    let frac = if s.first_sub == 0 {
+        s.line_fraction
+    } else {
+        0.0
+    };
+    Some(s.first_line as f64 + f64::from(frac))
+}
+
 /// Draws the tabs: one editor per view, Markdown previews and comparisons.
 struct Tabs<'a> {
     look: crate::editor_view::Look,
@@ -2963,6 +2995,9 @@ struct Tabs<'a> {
     find_highlight: Option<&'a ochrepad_core::Searcher>,
     editor: &'a mut Editor,
     view_states: &'a mut HashMap<ViewId, EditorViewState>,
+    /// The last focused editor (a preview follows it when it shows the
+    /// preview's buffer).
+    active: ViewId,
     untitled: &'a HashMap<BufferId, String>,
     highlighting: &'a mut Highlighting,
     keymap: &'a Keymap,
@@ -3050,7 +3085,11 @@ impl TabViewer for Tabs<'_> {
             Tab::Editor(v) => v,
             Tab::Preview(b) => {
                 if let Some(buffer) = self.editor.buffer(b)
-                    && let Some(click) = self.previews.show(ui, buffer)
+                    && let Some(click) = self.previews.show(
+                        ui,
+                        buffer,
+                        preview_top_line(self.editor, self.active, b),
+                    )
                 {
                     self.commands.push(TabCommand::Link(click));
                 }
