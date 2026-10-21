@@ -10,6 +10,12 @@ people downloading the release.
 
 ## [Unreleased]
 
+### Fixed
+
+- Menus from the menu bar always open below it. In a short window a menu
+  that did not fit used to cover the menu bar or open beside its title; it
+  now scrolls instead.
+
 ## [0.3.0] - 2026-10-14
 
 ### Added
