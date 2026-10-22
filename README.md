@@ -57,7 +57,8 @@ A fast, native text editor in the spirit of Notepad++, written in Rust with
   version) with aligned lines, changed words highlighted, and F8/Shift+F8 to
   jump between changes. Both sides are editable, with syntax highlighting,
   and the diff updates as you type.
-- **Markdown preview** beside the editor, updating as you type, with images
+- **Markdown preview** beside the editor, updating as you type and
+  scrolling with it, with images
   (PNG, JPEG, WebP, SVG) loaded from the document's folder. Web and mail
   links open in the browser, links to files open in ochrepad, and other
   kinds of link are not followed.

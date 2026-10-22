@@ -12,6 +12,10 @@ people downloading the release.
 
 ### Fixed
 
+- The Markdown preview now scrolls with its editor: scrolling the editor
+  brings the same part of the document to the top of the preview, lined up
+  at each heading. The preview can still be scrolled by itself until the
+  editor moves again.
 - Only one ochrepad runs at a time. Opening a file with ochrepad (Open
   with, a double-click, or the command line) while it is running opens the
   file in a new tab of the running window instead of starting a second
