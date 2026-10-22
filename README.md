@@ -151,8 +151,7 @@ sudo apt-get install libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev lib
 To run it you need an X11 or Wayland desktop with Vulkan or OpenGL drivers.
 File dialogs go through the XDG desktop portal.
 
-ochrepad is developed on Windows 11; CI builds and tests every change on
-Windows and Linux. macOS is not supported.
+CI builds and tests every change on Windows and Linux. macOS is not supported.
 
 ## Keyboard shortcuts
 
