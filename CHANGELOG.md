@@ -10,6 +10,12 @@ people downloading the release.
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-10-22
+
+### Changed
+
+- Building from source (`cargo install ochrepad`) needs Rust 1.89 or newer.
+
 ### Fixed
 
 - Menus from the menu bar always open below it. In a short window a menu
@@ -350,7 +356,8 @@ The first release, for Windows and Linux.
   highlighting size limit; an editable keymap; recent files; drag and drop.
 - A warm light and dark theme with ochre accents.
 
-[Unreleased]: https://github.com/xor295/ochrepad/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/xor295/ochrepad/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/xor295/ochrepad/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/xor295/ochrepad/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/xor295/ochrepad/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/xor295/ochrepad/releases/tag/v0.1.0
