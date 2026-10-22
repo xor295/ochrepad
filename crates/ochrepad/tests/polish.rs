@@ -36,8 +36,6 @@ impl Dirs {
 fn app(d: &Dirs) -> Harness<'static, OchrepadApp> {
     let mut app = OchrepadApp::new();
     app.set_storage(&d.config(), &d.data());
-    // Tall enough for the whole File menu below the menu bar (in a shorter
-    // window egui moves it up over the menu titles).
     let mut h = Harness::builder()
         .with_size(Vec2::new(1000.0, 700.0))
         .with_step_dt(1.0 / 60.0)
@@ -313,4 +311,48 @@ fn hovering_another_menu_title_switches_menus() {
     h.get_by_label("Settings").hover();
     h.run();
     h.get_by_label("Preferences…");
+}
+
+#[test]
+fn menus_open_below_the_bar_and_scroll_in_a_short_window() {
+    let d = Dirs::new();
+    let mut app = OchrepadApp::new();
+    app.set_storage(&d.config(), &d.data());
+    let mut h = Harness::builder()
+        .with_size(Vec2::new(800.0, 260.0))
+        .with_step_dt(1.0 / 60.0)
+        .with_max_steps(10_000)
+        .build_ui_state(|ui, app: &mut OchrepadApp| app.show(ui), app);
+    h.run();
+    let title = h.get_by_label("File").rect();
+    h.get_by_label("File").click();
+    h.run();
+    let first = h.get_by_label_contains("New").rect();
+    assert!(
+        first.top() >= title.bottom(),
+        "the menu starts below its title: {first:?} vs {title:?}"
+    );
+    assert!(
+        (first.left() - title.left()).abs() < 12.0,
+        "and lines up with it: {first:?} vs {title:?}"
+    );
+    let exit = h.get_by_label("Exit").rect();
+    assert!(exit.top() > 260.0, "Exit starts out of sight: {exit:?}");
+    h.get_by_label_contains("New").hover();
+    h.run();
+    for _ in 0..20 {
+        h.event(Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Line,
+            delta: Vec2::new(0.0, -5.0),
+            phase: egui::TouchPhase::Move,
+            modifiers: Modifiers::NONE,
+        });
+        h.run();
+    }
+    let exit = h.get_by_label("Exit").rect();
+    assert!(exit.bottom() <= 260.0, "scrolled to Exit: {exit:?}");
+    assert!(
+        exit.top() >= title.bottom(),
+        "the menu stays below the bar: {exit:?}"
+    );
 }

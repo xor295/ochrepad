@@ -12,6 +12,9 @@ people downloading the release.
 
 ### Fixed
 
+- Menus from the menu bar always open below it. In a short window a menu
+  that did not fit used to cover the menu bar or open beside its title; it
+  now scrolls instead.
 - The Markdown preview now scrolls with its editor: scrolling the editor
   brings the same part of the document to the top of the preview, lined up
   at each heading. The preview can still be scrolled by itself until the

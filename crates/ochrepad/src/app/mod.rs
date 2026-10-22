@@ -1406,15 +1406,13 @@ impl OchrepadApp {
     fn menu_bar(&mut self, ui: &mut Ui) {
         egui::MenuBar::new().ui(ui, |ui| {
             let titles = [
-                ui.menu_button("File", |ui| self.file_menu(ui)).response,
-                ui.menu_button("Edit", |ui| self.edit_menu(ui)).response,
-                ui.menu_button("Search", |ui| self.search_menu(ui)).response,
-                ui.menu_button("Macro", |ui| self.macro_menu(ui)).response,
-                ui.menu_button("Compare", |ui| self.compare_menu(ui))
-                    .response,
-                ui.menu_button("View", |ui| self.view_menu(ui)).response,
-                ui.menu_button("Settings", |ui| self.settings_menu(ui))
-                    .response,
+                bar_menu(ui, "File", |ui| self.file_menu(ui)),
+                bar_menu(ui, "Edit", |ui| self.edit_menu(ui)),
+                bar_menu(ui, "Search", |ui| self.search_menu(ui)),
+                bar_menu(ui, "Macro", |ui| self.macro_menu(ui)),
+                bar_menu(ui, "Compare", |ui| self.compare_menu(ui)),
+                bar_menu(ui, "View", |ui| self.view_menu(ui)),
+                bar_menu(ui, "Settings", |ui| self.settings_menu(ui)),
             ];
             switch_menu_on_hover(ui, &titles);
         });
@@ -3323,6 +3321,48 @@ fn buffer_name(editor: &Editor, untitled: &HashMap<BufferId, String>, buffer: Bu
             || "untitled".to_owned(),
             |n| n.to_string_lossy().into_owned(),
         )
+}
+
+/// A menu bar title and its menu. Unlike `ui.menu_button`, the menu always
+/// opens below the bar (egui moves a menu that does not fit below beside or
+/// over its title), and scrolls when the window is too short for it.
+fn bar_menu(ui: &mut Ui, title: &str, content: impl FnOnce(&mut Ui)) -> egui::Response {
+    use egui::RectAlign;
+    use egui::containers::menu::MenuConfig;
+    let response = ui.button(title);
+    // A new config, not the bar's: its `bar` flag would make submenus open
+    // as menus of their own.
+    let found = MenuConfig::find(ui);
+    let config = MenuConfig::new()
+        .close_behavior(found.close_behavior)
+        .style(found.style);
+    let frame = egui::Frame::popup(ui.style());
+    let below = ui.ctx().content_rect().bottom() - response.rect.bottom();
+    let max_height = (below - frame.total_margin().sum().y).max(ui.spacing().interact_size.y);
+    egui::Popup::menu(&response)
+        .align(RectAlign::BOTTOM_START)
+        // Right-aligned with the title when it would go off the right edge.
+        .align_alternatives(&[RectAlign::BOTTOM_END])
+        .frame(frame)
+        .close_behavior(config.close_behavior)
+        .style(config.style.clone())
+        .info(
+            egui::UiStackInfo::new(egui::UiKind::Menu)
+                .with_tag_value(MenuConfig::MENU_CONFIG_TAG, config),
+        )
+        .show(|ui| {
+            // egui's first (sizing) pass caps a popup at
+            // `default_area_size`, and later passes keep that size.
+            ui.set_max_height(max_height);
+            egui::ScrollArea::vertical()
+                .max_height(max_height)
+                .show(ui, |ui| {
+                    // The scroll bar's room must not wrap the widest item.
+                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+                    content(ui);
+                });
+        });
+    response
 }
 
 /// As in desktop menu bars: while one menu is open, hovering another title
