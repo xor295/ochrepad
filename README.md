@@ -121,7 +121,7 @@ notes say how to check it.
 
 ## Building
 
-You need a recent stable [Rust toolchain](https://rustup.rs) (1.88 or newer).
+You need a recent stable [Rust toolchain](https://rustup.rs) (1.89 or newer).
 
 ```sh
 git clone https://github.com/xor295/ochrepad.git

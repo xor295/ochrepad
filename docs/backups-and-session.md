@@ -96,6 +96,19 @@ configuration folder (`%APPDATA%\ochrepad\config` on Windows,
 Markdown previews and comparisons are not part of the session; reopen them
 from the menus.
 
+## One ochrepad at a time
+
+Only one ochrepad runs at a time, so two windows never overwrite each
+other's session. Opening a file while ochrepad is running (from **Open
+with**, a double-click on a file, or `ochrepad notes.txt` in a terminal)
+opens it in a new tab of the running window and brings that window
+forward; starting ochrepad again without a file just brings the window
+forward. Folders open in its sidebar, and relative paths are taken from the
+folder the command was run in.
+
+(Windows can refuse to let one program bring another's window forward; the
+taskbar button flashes instead.)
+
 ## Session files
 
 Besides the session ochrepad keeps by itself, you can save sets of files to
