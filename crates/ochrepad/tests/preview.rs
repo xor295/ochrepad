@@ -329,3 +329,53 @@ fn links_open_files_here_and_only_web_links_go_to_the_browser() {
     let path = h.state().buffer().meta.path.clone().unwrap();
     assert_eq!(path.file_name().unwrap(), "other.md");
 }
+
+/// The top of the heading labelled `label` in the preview.
+fn heading_y(h: &Harness<'_, OchrepadApp>, label: &str) -> f32 {
+    h.get_by_label(label).rect().top()
+}
+
+#[test]
+fn the_preview_follows_the_editor_scrolling() {
+    let mut md = String::new();
+    for i in 1..=40 {
+        md.push_str(&format!("## Part {i}\n\nSome text.\n\nMore text.\n\n"));
+    }
+    let mut h = harness(OchrepadApp::new());
+    h.event(Event::Paste(md));
+    h.run();
+    key(&mut h, Modifiers::COMMAND, Key::Home);
+    h.state_mut().open_preview();
+    h.run();
+    // Where the first heading is drawn with the preview at its top.
+    let top = heading_y(&h, "Part 1");
+
+    // The editor's top line is the start of part 21: so is the preview's.
+    let view = h.state().active_view();
+    h.state_mut()
+        .editor
+        .view_mut(view)
+        .expect("view")
+        .scroll
+        .first_line = 120;
+    h.run();
+    let y = heading_y(&h, "Part 21");
+    assert!((y - top).abs() < 30.0, "Part 21 at the top, at {y} ({top})");
+    let line = h.state().previews.synced_line(h.state().buffer_id());
+    assert_eq!(line, Some(120.0));
+
+    // Scrolled by itself, the preview stays until the editor moves again.
+    let preview = h.get_by_label("Part 21").rect().center();
+    h.event(Event::PointerMoved(preview));
+    h.event(Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Point,
+        delta: Vec2::new(0.0, -300.0),
+        modifiers: Modifiers::NONE,
+        phase: egui::TouchPhase::Move,
+    });
+    h.run();
+    let moved = heading_y(&h, "Part 21");
+    assert!(moved < y - 100.0, "scrolled by itself, at {moved}");
+    key(&mut h, Modifiers::COMMAND, Key::End);
+    assert!(heading_y(&h, "Part 40") < 600.0, "follows to the end");
+}

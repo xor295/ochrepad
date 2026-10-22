@@ -15,6 +15,15 @@ people downloading the release.
 - Menus from the menu bar always open below it. In a short window a menu
   that did not fit used to cover the menu bar or open beside its title; it
   now scrolls instead.
+- The Markdown preview now scrolls with its editor: scrolling the editor
+  brings the same part of the document to the top of the preview, lined up
+  at each heading. The preview can still be scrolled by itself until the
+  editor moves again.
+- Only one ochrepad runs at a time. Opening a file with ochrepad (Open
+  with, a double-click, or the command line) while it is running opens the
+  file in a new tab of the running window instead of starting a second
+  window that shared, and overwrote, the same session. Starting ochrepad
+  again brings the running window forward.
 
 ## [0.3.0] - 2026-10-14
 

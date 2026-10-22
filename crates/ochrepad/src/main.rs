@@ -7,10 +7,22 @@ use std::time::Instant;
 
 use ochrepad::OchrepadApp;
 use ochrepad::bench::Bench;
+use ochrepad::instance::{self, Primary, Start};
 
 struct Shell {
     app: OchrepadApp,
     bench: Option<Bench>,
+    /// Receives the files later launches hand over (single instance).
+    instance: Option<Primary>,
+}
+
+/// Opens a command-line argument: a folder in the sidebar, else a file.
+fn open_arg(app: &mut OchrepadApp, path: &std::path::Path) {
+    if path.is_dir() {
+        app.open_folder(path);
+    } else {
+        app.open_path(path);
+    }
 }
 
 impl eframe::App for Shell {
@@ -18,6 +30,23 @@ impl eframe::App for Shell {
         let start = Instant::now();
         if let Some(b) = &mut self.bench {
             b.drive(&mut self.app);
+        }
+        let launches = self
+            .instance
+            .as_ref()
+            .map(Primary::take)
+            .unwrap_or_default();
+        for launch in &launches {
+            for path in &launch.paths {
+                open_arg(&mut self.app, path);
+            }
+        }
+        if !launches.is_empty() {
+            // Bring the window forward for the launch (Windows may only
+            // flash the taskbar button instead).
+            let ctx = ui.ctx();
+            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
         }
         let shown = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.app.show(ui)));
         if let Err(panic) = shown {
@@ -77,6 +106,21 @@ fn main() -> eframe::Result {
         .map(PathBuf::from)
         .collect();
 
+    // Files opened while ochrepad runs (Open with, a second launch) go to
+    // the running window, which owns the session. Without a configuration
+    // folder, or if the hand-over fails, this runs on its own as before.
+    let instance = match ochrepad_fileio::config_dir() {
+        Some(dir) if !bench => match instance::start(&dir, &paths) {
+            Ok(Start::Forwarded) => return Ok(()),
+            Ok(Start::Primary(primary)) => Some(primary),
+            Err(e) => {
+                eprintln!("ochrepad: could not reach the running instance: {e}");
+                None
+            }
+        },
+        _ => None,
+    };
+
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1200.0, 800.0])
@@ -117,6 +161,9 @@ fn main() -> eframe::Result {
                     app.set_storage(&dir, &data);
                 }
             }
+            if let Some(primary) = &instance {
+                primary.set_context(&cc.egui_ctx);
+            }
             for path in paths {
                 if path.is_dir() {
                     app.open_folder(&path);
@@ -146,6 +193,7 @@ fn main() -> eframe::Result {
                     b.launched = Some(launched);
                     b
                 }),
+                instance,
             }))
         }),
     )
