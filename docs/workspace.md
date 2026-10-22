@@ -7,7 +7,8 @@ there, as in VS Code's Explorer or Notepad++'s Folder as Workspace.
 
 - **File > Open Folder…**, or drop a folder onto the window.
 - From the command line: `ochrepad path/to/folder` (files and folders can be
-  mixed: `ochrepad . notes.txt`).
+  mixed: `ochrepad . notes.txt`). If ochrepad is already running, the
+  folder opens in that window.
 - **File > Recent Folders** lists the last ten. **File > Close Folder**
   closes it (open tabs stay open).
 - The folder, the folders you had expanded, and the sidebar's width come
