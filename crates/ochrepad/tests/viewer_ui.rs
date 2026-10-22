@@ -443,6 +443,9 @@ fn menus_leave_the_editor_behind_a_viewer_alone() {
     // File > Close closes the viewer, not the editor behind it.
     h.get_by_label("File").click();
     h.run();
+    // Close is below the bottom of this window: the menu scrolls to it.
+    h.get_by_label_contains("Ctrl+W").scroll_to_me();
+    h.run();
     h.get_by_label_contains("Ctrl+W").click();
     h.run();
     assert!(h.state().viewers.iter().next().is_none());

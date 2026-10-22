@@ -1044,6 +1044,7 @@ impl OchrepadApp {
                 find_highlight,
                 editor: &mut self.editor,
                 view_states: &mut self.view_states,
+                active: self.active,
                 untitled: &self.untitled,
                 highlighting: &mut self.highlighting,
                 keymap: &self.keymap,
@@ -1066,6 +1067,7 @@ impl OchrepadApp {
                 .show_inside(ui, &mut tabs);
         });
         self.paint_tab_accents(ui, &tab_rects);
+        self.repaint_unsynced_previews(ui.ctx());
         let zoom = crate::editor_view::take_zoom_steps(ui.ctx());
         if zoom != 0 {
             self.zoom_by(zoom);
@@ -1216,6 +1218,19 @@ impl OchrepadApp {
                     focused == *active,
                 );
             }
+        }
+    }
+
+    /// Repaints when a shown preview has yet to follow its editor's
+    /// scrolling: a preview drawn before its editor sees it a frame late.
+    fn repaint_unsynced_previews(&self, ctx: &egui::Context) {
+        let unsynced = self.dock.iter_leaves().any(|(_, leaf)| {
+            matches!(leaf.tabs.get(leaf.active.0), Some(Tab::Preview(b))
+                if preview_top_line(&self.editor, self.active, *b)
+                    .is_some_and(|line| self.previews.needs_sync(*b, line)))
+        });
+        if unsynced {
+            ctx.request_repaint();
         }
     }
 
@@ -1391,15 +1406,13 @@ impl OchrepadApp {
     fn menu_bar(&mut self, ui: &mut Ui) {
         egui::MenuBar::new().ui(ui, |ui| {
             let titles = [
-                ui.menu_button("File", |ui| self.file_menu(ui)).response,
-                ui.menu_button("Edit", |ui| self.edit_menu(ui)).response,
-                ui.menu_button("Search", |ui| self.search_menu(ui)).response,
-                ui.menu_button("Macro", |ui| self.macro_menu(ui)).response,
-                ui.menu_button("Compare", |ui| self.compare_menu(ui))
-                    .response,
-                ui.menu_button("View", |ui| self.view_menu(ui)).response,
-                ui.menu_button("Settings", |ui| self.settings_menu(ui))
-                    .response,
+                bar_menu(ui, "File", |ui| self.file_menu(ui)),
+                bar_menu(ui, "Edit", |ui| self.edit_menu(ui)),
+                bar_menu(ui, "Search", |ui| self.search_menu(ui)),
+                bar_menu(ui, "Macro", |ui| self.macro_menu(ui)),
+                bar_menu(ui, "Compare", |ui| self.compare_menu(ui)),
+                bar_menu(ui, "View", |ui| self.view_menu(ui)),
+                bar_menu(ui, "Settings", |ui| self.settings_menu(ui)),
             ];
             switch_menu_on_hover(ui, &titles);
         });
@@ -2945,6 +2958,23 @@ impl OchrepadApp {
     }
 }
 
+/// The top line (with the fraction scrolled past) of the editor a preview of
+/// `buffer` follows: `active` when it shows `buffer`, else its first view.
+fn preview_top_line(editor: &Editor, active: ViewId, buffer: BufferId) -> Option<f64> {
+    let view = editor
+        .view(active)
+        .filter(|v| v.buffer() == buffer && !v.is_aux())
+        .or_else(|| editor.views_of(buffer).min_by_key(|v| v.id()))?;
+    let s = &view.scroll;
+    // A wrapped line's later rows count as its start.
+    let frac = if s.first_sub == 0 {
+        s.line_fraction
+    } else {
+        0.0
+    };
+    Some(s.first_line as f64 + f64::from(frac))
+}
+
 /// Draws the tabs: one editor per view, Markdown previews and comparisons.
 struct Tabs<'a> {
     look: crate::editor_view::Look,
@@ -2963,6 +2993,9 @@ struct Tabs<'a> {
     find_highlight: Option<&'a ochrepad_core::Searcher>,
     editor: &'a mut Editor,
     view_states: &'a mut HashMap<ViewId, EditorViewState>,
+    /// The last focused editor (a preview follows it when it shows the
+    /// preview's buffer).
+    active: ViewId,
     untitled: &'a HashMap<BufferId, String>,
     highlighting: &'a mut Highlighting,
     keymap: &'a Keymap,
@@ -3050,7 +3083,11 @@ impl TabViewer for Tabs<'_> {
             Tab::Editor(v) => v,
             Tab::Preview(b) => {
                 if let Some(buffer) = self.editor.buffer(b)
-                    && let Some(click) = self.previews.show(ui, buffer)
+                    && let Some(click) = self.previews.show(
+                        ui,
+                        buffer,
+                        preview_top_line(self.editor, self.active, b),
+                    )
                 {
                     self.commands.push(TabCommand::Link(click));
                 }
@@ -3284,6 +3321,48 @@ fn buffer_name(editor: &Editor, untitled: &HashMap<BufferId, String>, buffer: Bu
             || "untitled".to_owned(),
             |n| n.to_string_lossy().into_owned(),
         )
+}
+
+/// A menu bar title and its menu. Unlike `ui.menu_button`, the menu always
+/// opens below the bar (egui moves a menu that does not fit below beside or
+/// over its title), and scrolls when the window is too short for it.
+fn bar_menu(ui: &mut Ui, title: &str, content: impl FnOnce(&mut Ui)) -> egui::Response {
+    use egui::RectAlign;
+    use egui::containers::menu::MenuConfig;
+    let response = ui.button(title);
+    // A new config, not the bar's: its `bar` flag would make submenus open
+    // as menus of their own.
+    let found = MenuConfig::find(ui);
+    let config = MenuConfig::new()
+        .close_behavior(found.close_behavior)
+        .style(found.style);
+    let frame = egui::Frame::popup(ui.style());
+    let below = ui.ctx().content_rect().bottom() - response.rect.bottom();
+    let max_height = (below - frame.total_margin().sum().y).max(ui.spacing().interact_size.y);
+    egui::Popup::menu(&response)
+        .align(RectAlign::BOTTOM_START)
+        // Right-aligned with the title when it would go off the right edge.
+        .align_alternatives(&[RectAlign::BOTTOM_END])
+        .frame(frame)
+        .close_behavior(config.close_behavior)
+        .style(config.style.clone())
+        .info(
+            egui::UiStackInfo::new(egui::UiKind::Menu)
+                .with_tag_value(MenuConfig::MENU_CONFIG_TAG, config),
+        )
+        .show(|ui| {
+            // egui's first (sizing) pass caps a popup at
+            // `default_area_size`, and later passes keep that size.
+            ui.set_max_height(max_height);
+            egui::ScrollArea::vertical()
+                .max_height(max_height)
+                .show(ui, |ui| {
+                    // The scroll bar's room must not wrap the widest item.
+                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+                    content(ui);
+                });
+        });
+    response
 }
 
 /// As in desktop menu bars: while one menu is open, hovering another title
