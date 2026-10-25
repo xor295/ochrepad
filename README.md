@@ -42,10 +42,14 @@ A fast, native text editor in the spirit of Notepad++, written in Rust with
   kept, and saves are atomic ([more](docs/file-handling.md)).
 - **Nothing lost**: unsaved work is backed up every few seconds and comes
   back with your tabs next time. When another program changes an open
-  file, ochrepad reloads it, or asks first if you have unsaved changes ([more](docs/backups-and-session.md)).
+  file, ochrepad reloads it, or asks first if you have unsaved changes
+  ([more](docs/backups-and-session.md)).
 - **Logs and huge files**: filter lines, color log levels, follow a growing
   file (tail -f), and open multi-gigabyte files read-only in an instant
   ([more](docs/logs.md)).
+- **A terminal** below your files: run builds, scripts or Claude Code, and
+  Ctrl+click a compiler error to open the file at that line
+  ([more](docs/terminal.md)).
 
 Not included (by design, for now): right-to-left text, proportional fonts,
 plugins and language servers.
@@ -110,6 +114,7 @@ Most of Notepad++'s shortcuts work as they do there. The everyday ones:
 | Record, play a macro | Ctrl+Shift+R, Ctrl+Shift+P |
 | Next/previous tab, reopen closed tab | Ctrl+Tab, Ctrl+Shift+Tab, Ctrl+Shift+T |
 | Markdown preview, sidebar | Ctrl+Shift+M, Ctrl+Shift+E |
+| Terminal, new terminal | Ctrl+\`, Ctrl+Shift+\` |
 | Filter lines | Alt+Shift+L |
 | Next/previous difference or change | F8, Shift+F8 |
 | Zoom | Ctrl+plus, Ctrl+minus, Ctrl+0 (or Ctrl+wheel) |

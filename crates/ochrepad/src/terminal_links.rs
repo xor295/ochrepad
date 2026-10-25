@@ -61,14 +61,37 @@ pub fn link_at(cells: &[(usize, char)], col: usize, dirs: &[&Path]) -> Option<Li
     if trimmed.is_empty() {
         return None;
     }
-    let (path, mut place) = file_named(trimmed, dirs)?;
+    // The whole word, else its start up to a `:line` or `:line:column` that
+    // text follows (`grep -n`'s `src/main.rs:12:fn main()`).
+    let (found, len) = file_named(trimmed, dirs)
+        .map(|f| (f, trimmed.len()))
+        .or_else(|| {
+            numbered_prefixes(trimmed)
+                .find_map(|end| file_named(&trimmed[..end], dirs).map(|f| (f, end)))
+        })?;
+    let (path, mut place) = found;
     if place.is_none() {
         place = place_after(&text[run.end..]);
     }
     Some(Link {
-        cols: cols(run.start..run.start + trimmed.len()),
+        cols: cols(run.start..run.start + len),
         target: LinkTarget::File(path, place),
     })
+}
+
+/// Where `word` could end after a path and its `:line`, longest first: the
+/// ends of `:digits` groups followed by another `:`.
+fn numbered_prefixes(word: &str) -> impl Iterator<Item = usize> + '_ {
+    let mut ends: Vec<usize> = word
+        .match_indices(':')
+        .filter_map(|(i, _)| {
+            let digits = word[i + 1..].bytes().take_while(u8::is_ascii_digit).count();
+            let end = i + 1 + digits;
+            (digits > 0 && word[end..].starts_with(':')).then_some(end)
+        })
+        .collect();
+    ends.reverse();
+    ends.into_iter()
 }
 
 /// A line (and column) written after a path in the ways that do not use a
@@ -146,6 +169,13 @@ mod tests {
             link.target,
             LinkTarget::File(dir.path().join("Prog.cs"), Some((12, 5)))
         );
+
+        // grep -n: text follows the line number.
+        let link = find("src/main.rs:12:fn main() {", 3, dir.path()).unwrap();
+        assert_eq!(link.cols, 0..14);
+        assert_eq!(link.target, LinkTarget::File(main.clone(), Some((12, 1))));
+        let link = find("src/main.rs:12:5:warning", 3, dir.path()).unwrap();
+        assert_eq!(link.target, LinkTarget::File(main.clone(), Some((12, 5))));
 
         // A plain path, then punctuation.
         let link = find("wrote src/main.rs.", 8, dir.path()).unwrap();

@@ -53,13 +53,15 @@ For example `Ctrl+Shift+Up`, `alt+f5`, `Ctrl+OpenBracket`.
   Ctrl+PageDown, Ctrl+Shift+PageUp, Ctrl+Shift+PageDown, Ctrl+Shift+R,
   Ctrl+Shift+P, Ctrl+Shift+M, Ctrl+Shift+E, F8,
   Shift+F8, Ctrl+plus, Ctrl+=, Ctrl+minus, Ctrl+0, Ctrl+Shift+8,
-  Alt+Shift+L, Alt+C (Column Editor) and F11 (Full Screen).
+  Alt+Shift+L, Alt+C (Column Editor), F11 (Full Screen), Ctrl+\` (Terminal)
+  and Ctrl+Shift+\` (New Terminal).
 - **Copy, cut and paste** (Ctrl+C, Ctrl+X, Ctrl+V) come from the system
   clipboard, not from key bindings.
 - **A saved macro's shortcut** takes precedence over a keymap binding for the
   same keys (see [Macros](macros.md)).
 - The keymap applies while the editor has the keyboard. In the find panel or
-  a dialog, keys go to that field.
+  a dialog, keys go to that field, and in a terminal to the program running
+  there (see [The terminal](terminal.md#keys)).
 
 ## Commands
 

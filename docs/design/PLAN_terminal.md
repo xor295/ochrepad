@@ -1,5 +1,9 @@
 # Plan: a terminal in ochrepad
 
+**Status: done** (2026-10-24). T1–T7 as planned. Beyond the plan: box-drawing
+and block characters drawn as shapes, `grep -n` locations, and a 40 % first
+pane (30 % was too small for Claude Code). `CLAUDE.md` is the current guide.
+
 Written 2026-10-24, after 0.3.1. `CLAUDE.md` is the current guide; read its
 architecture rules before starting. This plan adds a real terminal (a
 pseudo-terminal and a terminal emulator) as a dock tab, so that `cargo build`,

@@ -12,6 +12,13 @@ people downloading the release.
 
 ### Added
 
+- **A terminal.** View > Terminal (Ctrl+\`) opens a shell in a pane below
+  the editors, in the open folder; Ctrl+Shift+\` opens another. It is a full
+  terminal (colours, full-screen programs such as `vim` and Claude Code, the
+  mouse, scrollback), takes nearly every key while it has the keyboard, and
+  Ctrl+click opens links and the files and lines compilers and tracebacks
+  name. Terminal tabs come back with the session. The shell, its arguments
+  and the scrollback are in Preferences. See `docs/terminal.md`.
 - A **?** menu with **About**, which shows the version, links to the
   GitHub repository and crates.io, and the license.
 
