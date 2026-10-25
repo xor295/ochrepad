@@ -2,7 +2,7 @@
 resolver = "3"
 members = ["crates/*"]
 
-# Shared by every crate. The four crates are released together with one
+# Shared by every crate. The five crates are released together with one
 # version; set it here.
 [workspace.package]
 version = "0.3.1"
@@ -15,4 +15,5 @@ repository = "https://github.com/xor295/ochrepad"
 [workspace.dependencies]
 ochrepad-core = { version = "=0.3.1", path = "crates/ochrepad-core" }
 ochrepad-fileio = { version = "=0.3.1", path = "crates/ochrepad-fileio" }
+ochrepad-lsp = { version = "=0.3.1", path = "crates/ochrepad-lsp" }
 ochrepad-syntax = { version = "=0.3.1", path = "crates/ochrepad-syntax" }
