@@ -198,7 +198,8 @@ fn a_terminal_looks_right() {
     let t = h.state_mut().terminals.get_mut(id).unwrap();
     t.title = Some("demo".to_owned());
     t.feed(
-        "\x1b[2J\x1b[H$ cargo build\r\n\
+        // Screen and scrollback cleared: the error text differs by system.
+        "\x1b[2J\x1b[3J\x1b[H$ cargo build\r\n\
          \x1b[1m\x1b[32m   Compiling\x1b[0m demo v0.1.0\r\n\
          \x1b[1m\x1b[31merror\x1b[0m\x1b[1m: expected `;`\x1b[0m\r\n\
          \x1b[1m\x1b[34m  --> \x1b[0msrc/main.rs:3:5\r\n\
