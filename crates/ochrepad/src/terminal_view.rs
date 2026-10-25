@@ -413,11 +413,20 @@ pub fn context_menu(ui: &mut Ui, t: &mut Terminal) -> Option<MenuCommand> {
     chosen
 }
 
+/// `m` with Ctrl set when Command is: they are the same key on Windows and
+/// Linux, and some sources (tests, some backends) set only one of them.
+fn with_ctrl(m: Modifiers) -> Modifiers {
+    Modifiers {
+        ctrl: m.ctrl || m.command,
+        ..m
+    }
+}
+
 /// Keys, text, the clipboard and the IME, while the terminal has the
 /// keyboard.
 fn keyboard(ui: &Ui, t: &mut Terminal, mode: TermMode) {
     let mut input: Vec<Vec<u8>> = Vec::new();
-    let modifiers = ui.input(|i| i.modifiers);
+    let modifiers = with_ctrl(ui.input(|i| i.modifiers));
     for event in ui.input(|i| i.events.clone()) {
         match event {
             Event::Text(text) => {
@@ -452,7 +461,7 @@ fn keyboard(ui: &Ui, t: &mut Terminal, mode: TermMode) {
                         continue;
                     }
                 }
-                if let Some(bytes) = terminal_keys::key_bytes(key, modifiers, mode) {
+                if let Some(bytes) = terminal_keys::key_bytes(key, with_ctrl(modifiers), mode) {
                     input.push(bytes);
                 }
             }
@@ -798,7 +807,9 @@ fn report(
     row: usize,
     mode: TermMode,
 ) {
-    if let Some(bytes) = terminal_keys::mouse_report(button, action, mods, col, row, mode) {
+    if let Some(bytes) =
+        terminal_keys::mouse_report(button, action, with_ctrl(mods), col, row, mode)
+    {
         t.write(bytes);
     }
 }

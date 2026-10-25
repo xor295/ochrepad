@@ -20,7 +20,7 @@ pub(super) const NEW_TERMINAL: KeyboardShortcut =
 
 /// The share of the window's height the editors keep when the first
 /// terminal opens below them.
-const EDITOR_SHARE: f32 = 0.7;
+const EDITOR_SHARE: f32 = 0.6;
 
 impl OchrepadApp {
     /// The folder a new terminal starts in: the open folder, else the
