@@ -22,16 +22,21 @@ use crate::editor_view::{
 };
 mod about;
 mod autosave;
+mod code_actions;
 mod document;
 mod edit_tools;
+mod edits;
 mod external;
 mod file_extras;
 mod history_store;
+mod language_servers;
+mod navigate;
 mod prefs;
 mod replace_in_files;
 mod search;
 mod sessions;
 mod summary;
+mod symbols;
 mod terminals;
 mod tools;
 mod viewers;
@@ -102,6 +107,14 @@ const NEXT_DIFF: KeyboardShortcut = KeyboardShortcut::new(Modifiers::NONE, Key::
 const PREV_DIFF: KeyboardShortcut = KeyboardShortcut::new(Modifiers::SHIFT, Key::F8);
 
 const GO_TO_LINE: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::G);
+const GO_TO_DEFINITION: KeyboardShortcut = KeyboardShortcut::new(Modifiers::NONE, Key::F12);
+const FIND_REFERENCES: KeyboardShortcut = KeyboardShortcut::new(Modifiers::SHIFT, Key::F12);
+const RENAME: KeyboardShortcut = KeyboardShortcut::new(Modifiers::SHIFT, Key::F6);
+const CODE_ACTIONS: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::Period);
+const GO_TO_SYMBOL: KeyboardShortcut =
+    KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::ALT), Key::T);
+const FORMAT_DOCUMENT: KeyboardShortcut =
+    KeyboardShortcut::new(Modifiers::ALT.plus(Modifiers::SHIFT), Key::F);
 /// Ctrl+Shift+L is Notepad++'s Delete Line.
 const FILTER_LINES: KeyboardShortcut =
     KeyboardShortcut::new(Modifiers::ALT.plus(Modifiers::SHIFT), Key::L);
@@ -149,6 +162,28 @@ pub struct OchrepadApp {
     pub viewers: crate::viewer::Viewers,
     /// Terminal tabs.
     pub terminals: crate::terminal::Terminals,
+    /// Where completions come from (words of the open documents, …).
+    pub completion: crate::completion::Completion,
+    /// Language servers for the open documents.
+    pub language_servers: crate::lsp::LanguageServers,
+    /// View > Language Servers is open.
+    pub show_language_servers: bool,
+    /// The tooltip for what the pointer rests on (diagnostics, hover).
+    hover: crate::hover::Hover,
+    /// The call's signature above the caret.
+    signature: crate::signature::SignatureHelp,
+    /// Go to Definition's request in flight.
+    definition: Option<navigate::Pending>,
+    /// Rename, while it asks and waits.
+    renaming: Option<edits::Rename>,
+    /// Format Document's request in flight.
+    formatting: Option<edits::Formatting>,
+    /// Code actions: asked for, shown, or running.
+    code_actions: Option<code_actions::CodeActions>,
+    /// Search > Go to Symbol in Folder, while it is open.
+    symbol_search: Option<symbols::SymbolSearch>,
+    /// View > Problems.
+    pub problems: crate::problems::ProblemsPanel,
     /// The viewer whose Open as Editable question is showing.
     confirm_editable: Option<crate::viewer::ViewerId>,
     view_states: HashMap<ViewId, EditorViewState>,
@@ -255,6 +290,17 @@ impl OchrepadApp {
             compares: Compares::default(),
             viewers: Default::default(),
             terminals: Default::default(),
+            completion: Default::default(),
+            language_servers: Default::default(),
+            show_language_servers: false,
+            hover: Default::default(),
+            signature: Default::default(),
+            definition: None,
+            renaming: None,
+            formatting: None,
+            code_actions: None,
+            symbol_search: None,
+            problems: Default::default(),
             confirm_editable: None,
             view_states: HashMap::new(),
             untitled: HashMap::from([(buffer, "new 1".to_owned())]),
@@ -553,9 +599,14 @@ impl OchrepadApp {
 
     // --- Saving ------------------------------------------------------------------
 
-    /// Saves the active buffer, asking for a path if it has none.
+    /// Saves the active buffer, asking for a path if it has none (after
+    /// formatting it, with format on save).
     pub fn save(&mut self) -> bool {
-        self.save_buffer(self.buffer_id())
+        let buffer = self.buffer_id();
+        if self.format_then_save(buffer) {
+            return true;
+        }
+        self.save_buffer(buffer)
     }
 
     fn save_buffer(&mut self, buffer: BufferId) -> bool {
@@ -914,6 +965,8 @@ impl OchrepadApp {
         if self.terminal_has_keyboard(ui) {
             self.terminal_shortcuts(ui);
         } else {
+            // Its menu's keys come first.
+            self.code_actions_keys(ui);
             self.shortcuts(ui);
         }
         if ui.input(|i| i.viewport().close_requested()) && !self.close_confirmed {
@@ -1044,6 +1097,27 @@ impl OchrepadApp {
                 self.go_to_result(go);
             }
         }
+        if self.problems.open {
+            let root = self.tree.as_ref().map(|t| t.root().to_path_buf());
+            let go = Panel::bottom("problems")
+                .resizable(true)
+                .default_size(200.0)
+                .show(ui, |ui| {
+                    self.problems
+                        .ui(ui, &self.language_servers.diagnostics, root.as_deref())
+                })
+                .inner;
+            // Only a local file, as the servers' Show Document.
+            if let Some(go) = go
+                && crate::safe_images::is_local_path(&go.path)
+                && go.path.is_file()
+            {
+                self.open_file_at(
+                    &go.path,
+                    Some((go.line as usize + 1, go.column as usize + 1)),
+                );
+            }
+        }
 
         self.sidebar(ui);
         self.function_list_panel(ui);
@@ -1057,6 +1131,37 @@ impl OchrepadApp {
             ui.ctx().request_repaint();
         }
         self.visible.clear();
+        let folder = self
+            .tree
+            .as_ref()
+            .filter(|_| self.settings.completion_folder)
+            .map(|t| t.root().to_path_buf());
+        self.completion.only_own_document = !self.settings.completion_other_documents;
+        if !self.settings.completion {
+            self.completion.stop();
+        } else if self.completion.tick(
+            &self.editor,
+            self.highlighting.registry(),
+            folder.as_deref(),
+            self.now,
+            ui.ctx(),
+        ) {
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(100));
+        }
+        self.language_servers_tick(ui);
+        self.definition_tick();
+        self.edits_tick();
+        self.code_actions_tick();
+        if let Some((path, bytes)) = self.completion.take_cache_write() {
+            let tag = self
+                .persist
+                .worker
+                .submit(ochrepad_fileio::worker::Job::Write { path, bytes });
+            self.persist
+                .pending
+                .insert(tag, autosave::PendingJob::Other);
+        }
         let editor = &self.editor;
         self.token_styles.retain(|b| editor.buffer(b).is_some());
         let limit = self.settings.highlight_limit_mb * 1024 * 1024;
@@ -1073,12 +1178,17 @@ impl OchrepadApp {
             let style = crate::theme::dock_style(ui.style());
             let find_highlight = self.find.highlighter();
             let mut tabs = Tabs {
+                language_servers: &mut self.language_servers,
+                hover: &mut self.hover,
+                signature: &mut self.signature,
                 look: self.settings.look(),
                 log_rules: &self.log_rules,
                 tab_width: self.settings.tab_width,
                 viewers: &mut self.viewers,
                 terminals: &mut self.terminals,
                 terminal_font: self.settings.editor_font_size(),
+                completion: self.settings.completion.then_some(&mut self.completion),
+                completion_settings: self.settings.completion_settings(),
                 fold_margin: self.settings.fold_margin,
                 word_wrap: self.settings.word_wrap,
                 document_map: self.settings.document_map,
@@ -1173,6 +1283,11 @@ impl OchrepadApp {
                         crate::editor_menu::MenuCommand::OpenFile(path, place) => {
                             self.open_file_at(&path, place);
                         }
+                        crate::editor_menu::MenuCommand::GoToDefinition => self.go_to_definition(),
+                        crate::editor_menu::MenuCommand::FindReferences => self.find_references(),
+                        crate::editor_menu::MenuCommand::Rename => self.rename_symbol(),
+                        crate::editor_menu::MenuCommand::FormatDocument => self.format_document(),
+                        crate::editor_menu::MenuCommand::CodeActions => self.code_actions(),
                     }
                 }
                 TabCommand::CloseTab(tab) => {
@@ -1192,10 +1307,15 @@ impl OchrepadApp {
         self.replace_all_dialog(ui);
         self.new_entry_dialog(ui);
         self.go_to_line_dialog(ui);
+        self.rename_symbol_dialog(ui);
+        self.code_actions_menu(ui);
+        self.symbol_search_dialog(ui);
         self.open_as_editable_dialog(ui);
         self.hash_dialog(ui);
         self.summary_dialog(ui);
         self.about_dialog(ui);
+        self.language_server_question(ui);
+        self.language_servers_window(ui);
         self.rename_dialog(ui);
         self.replace_in_files_frame(ui);
         self.edit_tools_frame(ui);
@@ -1353,6 +1473,25 @@ impl OchrepadApp {
         }
         if pressed(ui, &GO_TO_LINE) {
             self.go_to_line = Some(String::new());
+        }
+        if viewer.is_none() && pressed(ui, &RENAME) {
+            self.rename_symbol();
+        }
+        if viewer.is_none() && pressed(ui, &CODE_ACTIONS) {
+            self.code_actions();
+        }
+        if pressed(ui, &GO_TO_SYMBOL) {
+            self.go_to_symbol();
+        }
+        if viewer.is_none() && pressed(ui, &FORMAT_DOCUMENT) {
+            self.format_document();
+        }
+        // Before F12, which an extra Shift would match too.
+        if viewer.is_none() && pressed(ui, &FIND_REFERENCES) {
+            self.find_references();
+        }
+        if viewer.is_none() && pressed(ui, &GO_TO_DEFINITION) {
+            self.go_to_definition();
         }
         if pressed(ui, &FILTER_LINES) {
             self.open_filter();
@@ -1806,6 +1945,15 @@ impl OchrepadApp {
                 }
             }
         });
+        if item(ui, "Rename…", "Shift+F6") {
+            self.rename_symbol();
+        }
+        if item(ui, "Format Document", "Alt+Shift+F") {
+            self.format_document();
+        }
+        if item(ui, "Code Actions…", "Ctrl+.") {
+            self.code_actions();
+        }
         ui.menu_button("Line Operations", |ui| self.line_operations_menu(ui));
         ui.menu_button("Blank Operations", |ui| self.blank_operations_menu(ui));
         ui.menu_button("Text Tools", |ui| self.text_tools_menu(ui));
@@ -2016,6 +2164,15 @@ impl OchrepadApp {
         ui.separator();
         if item(ui, "Go to Line…", "Ctrl+G") {
             self.go_to_line = Some(String::new());
+        }
+        if viewer.is_none() && item(ui, "Go to Definition", "F12") {
+            self.go_to_definition();
+        }
+        if viewer.is_none() && item(ui, "Find References", "Shift+F12") {
+            self.find_references();
+        }
+        if item(ui, "Go to Symbol in Folder…", "Ctrl+Alt+T") {
+            self.go_to_symbol();
         }
         if item(ui, "Filter Lines…", "Alt+Shift+L") {
             self.open_filter();
@@ -2247,9 +2404,12 @@ impl OchrepadApp {
                 caret_line,
             });
         if let Some(t) = &target
-            && self
-                .function_list
-                .tick(t, self.highlighting.registry(), self.now)
+            && self.function_list.tick(
+                t,
+                self.highlighting.registry(),
+                self.now,
+                &mut self.language_servers,
+            )
         {
             ui.ctx()
                 .request_repaint_after(std::time::Duration::from_millis(100));
@@ -2757,6 +2917,12 @@ impl OchrepadApp {
             .on_hover_text("A panel listing the document's functions, types and headings");
         ui.checkbox(&mut self.settings.change_history, "Change History")
             .on_hover_text("Mark the lines changed since the file was saved, in the gutter");
+        ui.checkbox(&mut self.problems.open, "Problems")
+            .on_hover_text("A panel listing the problems language servers report");
+        if ui.button("Language Servers…").clicked() {
+            self.show_language_servers = true;
+            ui.close();
+        }
         let buffer = self.buffer_id();
         if let Some(id) = self.focused_viewer() {
             // A viewer reads what the file gains by itself; following keeps
@@ -2959,6 +3125,11 @@ impl OchrepadApp {
                 {
                     self.go_to_line = Some(String::new());
                 }
+                self.language_server_status(ui);
+                if let Some(note) = self.completion.folder_status() {
+                    ui.separator();
+                    ui.add(egui::Label::new(egui::RichText::new(note).weak()).truncate());
+                }
                 if let Some((note, until)) = &self.status_note {
                     if self.now < *until {
                         ui.separator();
@@ -3085,6 +3256,13 @@ struct Tabs<'a> {
     terminals: &'a mut crate::terminal::Terminals,
     /// The editor's zoomed font size, which terminals share.
     terminal_font: f32,
+    /// Completion's sources; `None` when it is turned off.
+    completion: Option<&'a mut crate::completion::Completion>,
+    /// Language servers (diagnostics, and completions from them).
+    language_servers: &'a mut crate::lsp::LanguageServers,
+    hover: &'a mut crate::hover::Hover,
+    signature: &'a mut crate::signature::SignatureHelp,
+    completion_settings: crate::completion_popup::CompletionSettings,
     fold_margin: bool,
     word_wrap: bool,
     document_map: bool,
@@ -3327,6 +3505,13 @@ impl TabViewer for Tabs<'_> {
             crate::log_rules::LogStyle::new(self.log_rules, doc, ui.visuals().dark_mode)
         });
         let styled = self.token_styles.highlights(buffer, ui.visuals());
+        let underlines =
+            crate::lsp::underlines(self.language_servers.diagnostics_of(buffer), ui.visuals());
+        state.completion.settings = self.completion_settings;
+        let mut sources = self
+            .completion
+            .as_deref_mut()
+            .map(|c| c.source(Some(&mut *self.language_servers)));
         let response = editor_view(
             ui,
             self.editor,
@@ -3342,8 +3527,45 @@ impl TabViewer for Tabs<'_> {
                     .as_ref()
                     .map(|s| s as &dyn crate::editor_view::RowStyle),
                 changes: self.changes.and_then(|c| c.marks(buffer)),
+                completion: sources
+                    .as_mut()
+                    .map(|s| s as &mut dyn crate::completion_popup::CompletionSource),
+                underlines: &underlines,
             },
         );
+        let rest = state.hover;
+        let response = match self.editor.buffer(buffer).map(|b| b.doc().clone()) {
+            Some(doc) => self.hover.show(
+                response,
+                view,
+                buffer,
+                &doc,
+                rest,
+                ui.input(|i| i.time),
+                self.language_servers,
+            ),
+            None => response,
+        };
+        if let Some(b) = self.editor.buffer(buffer) {
+            let v = self.editor.view(view);
+            let caret = v
+                .map(|v| v.selections.clone())
+                .filter(|s| s.rect().is_none() && s.primary().is_empty())
+                .map(|s| s.primary().head);
+            let frame = crate::signature::Frame {
+                view,
+                buffer,
+                doc: &b.doc().clone(),
+                revision: b.revision(),
+                caret,
+                caret_rect: state.caret_rect,
+                invoked: std::mem::take(&mut state.signature_asked),
+                focused: response.has_focus(),
+            };
+            self.signature
+                .show(&response, &frame, self.language_servers);
+        }
+        let served = self.language_servers.session_of(buffer).is_some();
         let mut command = None;
         let doc_dir = self
             .editor
@@ -3357,7 +3579,7 @@ impl TabViewer for Tabs<'_> {
             .chain(self.workspace_root)
             .collect();
         response.context_menu(|ui| {
-            command = crate::editor_menu::show(ui, self.editor, view, state, &dirs);
+            command = crate::editor_menu::show(ui, self.editor, view, state, &dirs, served);
         });
         if let Some(command) = command {
             self.commands.push(TabCommand::Menu(view, command));

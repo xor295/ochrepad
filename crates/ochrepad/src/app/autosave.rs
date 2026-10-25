@@ -170,8 +170,17 @@ impl OchrepadApp {
         self.persist.session_file = Some(config_dir.join("session.json"));
         self.persist.backup_dir = Some(data_dir.join("backup"));
         self.persist.history_dir = Some(data_dir.join("history"));
+        self.completion.set_index_dir(data_dir.join("index"));
+        self.language_servers
+            .load_config(config_dir.join("lsp.json"));
         self.restore_session();
         self.prune_histories();
+        // Folder indexes for completion: the 20 used last are kept.
+        let tag = self.persist.worker.submit(fileio::worker::Job::Prune {
+            dir: data_dir.join("index"),
+            keep: 20,
+        });
+        self.persist.pending.insert(tag, PendingJob::Other);
     }
 
     pub(super) fn snapshots_active(&self) -> bool {
@@ -239,6 +248,8 @@ impl OchrepadApp {
                     match d.result {
                         Ok(()) => {
                             self.changes.saved(buffer, doc, revision);
+                            self.completion.saved(&path);
+                            self.language_servers.saved(buffer);
                             self.save_finished(buffer, revision, path);
                         }
                         Err(e) => {
@@ -295,6 +306,12 @@ impl OchrepadApp {
         self.record_disk_stamp(buffer);
         if self.is_keymap_file(&path) {
             self.reload_keymap();
+        }
+        if self.is_lsp_file(&path) {
+            self.language_servers.load_config(path.clone());
+            if let Some(e) = self.language_servers.lsp_error.clone() {
+                self.message = Some(format!("lsp.json was not used:\n{e}"));
+            }
         }
     }
 

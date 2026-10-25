@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::buffer::{BufferId, Indent};
 use crate::column_edit::ColumnInsert;
-use crate::position::VisualCol;
+use crate::position::{ByteOffset, VisualCol};
 use crate::search::SearchQuery;
 use crate::selection::SelectionSet;
 use crate::text_tools::{Codec, InvalidJson};
@@ -293,8 +293,31 @@ pub enum Action {
     /// Replace the text of each bookmarked line (not its line break) with
     /// this text: Paste to (Replace) Bookmarked Lines.
     ReplaceBookmarkedLines(String),
+    /// Accept a completion: at each caret, the `before` characters before
+    /// it and the `after` characters after it (never past its line) are
+    /// replaced with `text`; a selection is replaced like typing.
+    Complete {
+        before: usize,
+        after: usize,
+        text: String,
+    },
+    /// Replace these byte ranges as one undo step (a language server's
+    /// edits: a completion's extra edits, a rename, formatting, a code
+    /// action). Refused as a whole (`InvalidEdits`) unless every range is
+    /// inside the document, on character boundaries and apart from the
+    /// others. Never recorded in macros: the places are absolute.
+    Edits(Vec<TextEdit>),
     Undo,
     Redo,
+}
+
+/// One replacement of [`Action::Edits`]: the bytes `start..end` become
+/// `text`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TextEdit {
+    pub start: ByteOffset,
+    pub end: ByteOffset,
+    pub text: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -313,6 +336,9 @@ pub enum ActionError {
     Decode(String),
     /// A bookmark command found no bookmarks.
     NoBookmarks,
+    /// `Action::Edits` with a range outside the document, off a character
+    /// boundary, or overlapping another.
+    InvalidEdits,
 }
 
 impl fmt::Display for ActionError {
@@ -322,6 +348,9 @@ impl fmt::Display for ActionError {
             ActionError::UnknownBuffer(b) => write!(f, "no buffer with id {}", b.0),
             ActionError::InvalidPattern(e) => write!(f, "invalid search pattern: {e}"),
             ActionError::NotFound => f.write_str("no match found"),
+            ActionError::InvalidEdits => {
+                f.write_str("the edits do not fit the document (it may have changed)")
+            }
             ActionError::ReadOnly => f.write_str("the document is read-only"),
             ActionError::NoCommentSyntax => {
                 f.write_str("no comment markers are known for this language")

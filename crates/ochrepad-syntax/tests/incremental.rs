@@ -284,3 +284,34 @@ proptest! {
         prop_assert_eq!(h.line_spans(&REG, doc, 0..n), full(doc, "Rust"));
     }
 }
+
+#[test]
+fn the_context_at_a_place_is_code_a_comment_or_a_string() {
+    use ochrepad_syntax::TextContext;
+    let text = rust_file(1000);
+    let doc = Document::new(&text);
+    let mut h = BufferHighlighter::new(&REG, "Rust", theme());
+    while h.work_lines(&REG, &doc, 0..0, 10_000) {}
+    // Places in the unit near the end of the file (past many checkpoints).
+    let base = text.rfind("pub fn f").unwrap();
+    let at = |needle: &str| {
+        let i = base + text[base..].find(needle).unwrap();
+        h.context_at(&REG, &doc, ByteOffset(i + 2))
+    };
+    assert_eq!(at("a string"), TextContext::String);
+    assert_eq!(at("not a comment"), TextContext::String);
+    assert_eq!(at("trailing"), TextContext::Comment);
+    assert_eq!(
+        at("comment */ let"),
+        TextContext::Comment,
+        "a block comment's second line"
+    );
+    assert_eq!(at("let y"), TextContext::Code);
+    assert_eq!(at("format!"), TextContext::Code);
+    // Just before the opening quote is still code.
+    let quote = base + text[base..].find('"').unwrap();
+    assert_eq!(
+        h.context_at(&REG, &doc, ByteOffset(quote)),
+        TextContext::Code
+    );
+}

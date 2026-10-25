@@ -382,6 +382,9 @@ impl Editor {
             Action::MultiSelectNext { .. } | Action::MultiSelectAll { .. } => {
                 crate::multiselect::resolve(action, &buffer.doc, sels)
             }
+            Action::Edits(edits) => {
+                crate::resolve::edits(&buffer.doc, sels, edits).ok_or(ActionError::InvalidEdits)
+            }
             Action::NextBookmark
             | Action::PrevBookmark
             | Action::RemoveBookmarkedLines

@@ -1,5 +1,6 @@
-# Formatting, lints and the full test suite on Windows and Linux,
-# for every pull request and every push to main.
+# Formatting, lints and the full test suite on Windows and Linux, and
+# cargo deny on the dependencies, for every pull request and every push to
+# main. Once a week cargo deny runs alone, for advisories published since.
 name: CI
 
 on:
@@ -7,6 +8,9 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  schedule:
+    # Mondays, 06:17 UTC.
+    - cron: "17 6 * * 1"
 
 permissions:
   contents: read
@@ -26,6 +30,7 @@ env:
 jobs:
   check:
     name: ${{ matrix.name }}
+    if: github.event_name != 'schedule'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     strategy:
@@ -85,3 +90,19 @@ jobs:
             crates/*/tests/snapshots/**/*.new.png
             crates/*/tests/snapshots/**/*.diff.png
           if-no-files-found: ignore
+
+  # Security advisories, licenses, sources and duplicate versions of every
+  # dependency (deny.toml). One run covers both platforms: the graph is
+  # resolved for each target.
+  deny:
+    name: Dependencies
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          command: check

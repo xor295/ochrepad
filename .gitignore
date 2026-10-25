@@ -23,6 +23,7 @@ rustc-ice-*.txt
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 .idea/
 .mcp.json
+.claude/**
 # egui_kittest output when a snapshot test fails
 **/tests/snapshots/**/*.diff.png
 **/tests/snapshots/**/*.new.png

@@ -2,7 +2,10 @@
 
 mod util;
 
-use ochrepad_core::position::{byte_to_visual_col, next_grapheme_boundary, visual_col_to_byte};
+use ochrepad_core::position::{
+    ColumnUnits, byte_to_visual_col, from_lsp_position, next_grapheme_boundary, to_lsp_position,
+    visual_col_to_byte,
+};
 use ochrepad_core::tags::matching_tags;
 use ochrepad_core::text_tools::{format_json, minify_json, validate_json};
 use ochrepad_core::{Action, ByteOffset, Codec, Document, Indent, Motion, SelectionSet};
@@ -155,6 +158,19 @@ fn action() -> impl Strategy<Value = Action> {
                 .map(|(a, h)| ochrepad_core::Selection::new(ByteOffset(a), ByteOffset(h)))
                 .collect();
             Action::SetSelections(SelectionSet::new(ranges, 0))
+        }),
+        2 => (0usize..4, 0usize..3, short_text())
+            .prop_map(|(before, after, text)| Action::Complete { before, after, text }),
+        1 => prop::collection::vec((0usize..300, 0usize..300, short_text()), 0..4).prop_map(|v| {
+            Action::Edits(
+                v.into_iter()
+                    .map(|(a, b, text)| ochrepad_core::TextEdit {
+                        start: ByteOffset(a.min(b)),
+                        end: ByteOffset(a.max(b)),
+                        text,
+                    })
+                    .collect(),
+            )
         }),
         2 => Just(Action::Undo),
         1 => Just(Action::Redo),
@@ -568,6 +584,48 @@ proptest! {
                 break;
             }
             p = next_grapheme_boundary(&doc, p);
+        }
+    }
+
+    #[test]
+    fn lsp_positions_round_trip(s in text()) {
+        let doc = Document::new(&s);
+        for units in [ColumnUnits::Utf8, ColumnUnits::Utf16, ColumnUnits::Utf32] {
+            for i in s.char_indices().map(|(i, _)| i).chain([s.len()]) {
+                let (line, col) = to_lsp_position(&doc, ByteOffset(i), units);
+                prop_assert_eq!(from_lsp_position(&doc, line, col, units), ByteOffset(i));
+            }
+        }
+    }
+
+    #[test]
+    fn changed_range_turns_one_text_into_the_other(
+        a in text(),
+        b in text(),
+        pad in 0usize..3,
+        edit in any::<bool>(),
+    ) {
+        // Padding makes several rope pieces; an edited rope is cut into
+        // pieces differently from a new one.
+        let pad = "x".repeat(pad * 3000);
+        let a = format!("{pad}{a}{pad}");
+        let old = Document::new(&a);
+        let new = if edit {
+            let mut d = old.clone();
+            d.replace(ByteOffset(pad.len())..ByteOffset(a.len() - pad.len()), &b);
+            d
+        } else {
+            Document::new(&format!("{pad}{b}{pad}"))
+        };
+        let want = new.to_string();
+        match old.changed_range(&new) {
+            None => prop_assert_eq!(&a, &want),
+            Some((in_old, in_new)) => {
+                prop_assert!(in_old.start == in_new.start);
+                let mut patched = old.clone();
+                patched.replace(in_old, &new.slice(in_new));
+                prop_assert_eq!(patched.to_string(), want);
+            }
         }
     }
 }

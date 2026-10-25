@@ -99,6 +99,38 @@ impl Document {
         CharIdx(self.rope.byte_to_char(pos.0))
     }
 
+    /// The one replacement that turns `self` into `new`: the range of `self`
+    /// that differs and the range of `new` that took its place, both on
+    /// char boundaries (`None` when the texts are equal). Compares the
+    /// ropes' pieces from both ends, so an edit in a large document costs
+    /// little.
+    pub fn changed_range(&self, new: &Document) -> Option<(Range<ByteOffset>, Range<ByteOffset>)> {
+        let (old_len, new_len) = (self.rope.len_bytes(), new.rope.len_bytes());
+        let prefix = common_run(self.rope.chunks(), new.rope.chunks(), false);
+        if prefix == old_len && prefix == new_len {
+            return None;
+        }
+        fn back(r: &Rope) -> ropey::iter::Chunks<'_> {
+            r.chunks_at_byte(r.len_bytes()).0.reversed()
+        }
+        let most = old_len.min(new_len) - prefix;
+        let suffix = common_run(back(&self.rope), back(&new.rope), true).min(most);
+        // The same bytes up to `prefix` (and after the suffix) in both, so a
+        // boundary in one is a boundary in the other.
+        let mut start = prefix;
+        while !self.is_char_boundary(ByteOffset(start)) {
+            start -= 1;
+        }
+        let mut suffix = suffix;
+        while !self.is_char_boundary(ByteOffset(old_len - suffix)) {
+            suffix -= 1;
+        }
+        Some((
+            ByteOffset(start)..ByteOffset(old_len - suffix),
+            ByteOffset(start)..ByteOffset(new_len - suffix),
+        ))
+    }
+
     /// Replaces `range` with `text`. Both ends must be char boundaries.
     pub fn replace(&mut self, range: Range<ByteOffset>, text: &str) {
         debug_assert!(self.is_char_boundary(range.start) && self.is_char_boundary(range.end));
@@ -109,6 +141,62 @@ impl Document {
         }
         if !text.is_empty() {
             self.rope.insert(start.0, text);
+        }
+    }
+}
+
+/// How many bytes two texts, given as pieces, have in common from their
+/// start (or, with `backwards`, from their end, the pieces coming last
+/// first).
+fn common_run<'a>(
+    mut a: impl Iterator<Item = &'a str>,
+    mut b: impl Iterator<Item = &'a str>,
+    backwards: bool,
+) -> usize {
+    let (mut x, mut y): (&[u8], &[u8]) = (&[], &[]);
+    let mut n = 0;
+    loop {
+        while x.is_empty() {
+            match a.next() {
+                Some(c) => x = c.as_bytes(),
+                None => return n,
+            }
+        }
+        while y.is_empty() {
+            match b.next() {
+                Some(c) => y = c.as_bytes(),
+                None => return n,
+            }
+        }
+        let k = x.len().min(y.len());
+        let (px, py) = if backwards {
+            (&x[x.len() - k..], &y[y.len() - k..])
+        } else {
+            (&x[..k], &y[..k])
+        };
+        // Whole pieces are usually equal (a quick compare); only the one
+        // that differs is looked at byte by byte.
+        let same = if px == py {
+            k
+        } else if backwards {
+            px.iter()
+                .rev()
+                .zip(py.iter().rev())
+                .take_while(|(p, q)| p == q)
+                .count()
+        } else {
+            px.iter().zip(py).take_while(|(p, q)| p == q).count()
+        };
+        n += same;
+        if same < k {
+            return n;
+        }
+        if backwards {
+            x = &x[..x.len() - k];
+            y = &y[..y.len() - k];
+        } else {
+            x = &x[k..];
+            y = &y[k..];
         }
     }
 }

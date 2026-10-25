@@ -711,8 +711,8 @@ fn search_files(
     });
 }
 
-/// Groups matches by line.
-fn hits(doc: &Document, found: &[Range<ByteOffset>]) -> Vec<Hit> {
+/// Groups matches (sorted) by line.
+pub(crate) fn hits(doc: &Document, found: &[Range<ByteOffset>]) -> Vec<Hit> {
     let mut out: Vec<Hit> = Vec::new();
     for m in found {
         let line = doc.line_of(m.start);

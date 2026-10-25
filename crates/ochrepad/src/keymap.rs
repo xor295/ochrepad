@@ -26,6 +26,15 @@ pub enum EditorCommand {
     /// Edit > Line Operations > Split Lines, at the vertical edge or else
     /// the pane's width.
     SplitLines,
+    /// Shows the completion popup for the word at the caret (Ctrl+Space).
+    ShowCompletions,
+    /// Moves to the next problem a language server reported (Alt+F8).
+    NextProblem,
+    /// Moves to the previous one (Alt+Shift+F8).
+    PreviousProblem,
+    /// Shows the signature of the call the caret is in, from a language
+    /// server (Ctrl+Shift+Space).
+    ShowSignature,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -159,6 +168,13 @@ impl Default for Keymap {
             (Chord::new(Tab), act(Action::InsertTab)),
             (Chord::new(Escape), act(Action::CollapseSelections)),
             (Chord::new(Insert), EditorCommand::ToggleOvertype),
+            (Chord::new(Space).cmd(), EditorCommand::ShowCompletions),
+            (
+                Chord::new(Space).cmd().shift(),
+                EditorCommand::ShowSignature,
+            ),
+            (Chord::new(F8).alt(), EditorCommand::NextProblem),
+            (Chord::new(F8).alt().shift(), EditorCommand::PreviousProblem),
             (Chord::new(A).cmd(), act(Action::SelectAll)),
             (Chord::new(Z).cmd(), act(Action::Undo)),
             (Chord::new(Y).cmd(), act(Action::Redo)),

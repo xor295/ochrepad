@@ -72,6 +72,7 @@ impl Action {
                 | Action::UnfoldAll
                 | Action::FoldLevel(_)
                 | Action::UnfoldLevel(_)
+                | Action::Edits(_)
         )
     }
 }

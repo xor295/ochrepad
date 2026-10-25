@@ -23,6 +23,11 @@ pub trait LineStyler {
         doc: &Document,
         lines: std::ops::Range<usize>,
     ) -> Vec<Option<ochrepad_syntax::LineSpans>>;
+
+    /// Whether `offset` is in code, a comment or a string.
+    fn context_at(&mut self, _doc: &Document, _offset: ByteOffset) -> ochrepad_syntax::TextContext {
+        ochrepad_syntax::TextContext::Code
+    }
 }
 
 const BLINK_HALF_PERIOD: f64 = 0.53;
@@ -96,6 +101,12 @@ pub struct EditorViewState {
     pub symbols: Symbols,
     pub edge_column: Option<usize>,
     last_activity: f64,
+    /// The text under the pointer (an offset in it) and since when it has
+    /// rested there; `None` when the pointer is not over text.
+    pub hover: Option<(ByteOffset, f64)>,
+    /// Whether the editor had the focus last frame (gaining it restarts the
+    /// caret's blink, so the caret shows at once).
+    was_focused: bool,
     preedit: Option<String>,
     drag: Option<Drag>,
     bar_drag: Option<BarDrag>,
@@ -130,6 +141,13 @@ pub struct EditorViewState {
     /// Paste to (Replace) Bookmarked Lines asked for the clipboard at this
     /// time: the paste that answers goes to the bookmarked lines.
     paste_to_bookmarks: Option<f64>,
+    /// The completion popup.
+    pub completion: crate::completion_popup::CompletionState,
+    /// The primary caret's cell on screen, when it was drawn last frame
+    /// (for what shows beside it, such as signature help).
+    pub caret_rect: Option<Rect>,
+    /// Ctrl+Shift+Space was pressed: the app shows the call's signature.
+    pub signature_asked: bool,
 }
 
 impl Default for EditorViewState {
@@ -146,11 +164,16 @@ impl Default for EditorViewState {
             context_url: None,
             text_cols: 80,
             paste_to_bookmarks: None,
+            completion: Default::default(),
+            caret_rect: None,
+            signature_asked: false,
             cache: LayoutCache::default(),
             font_size: 14.0,
             symbols: Symbols::default(),
             edge_column: None,
             last_activity: 0.0,
+            hover: None,
+            was_focused: false,
             preedit: None,
             drag: None,
             bar_drag: None,
@@ -294,7 +317,19 @@ enum Op {
     Copy,
     Cut,
     ToggleOvertype,
-    BeginEndSelect { column: bool },
+    BeginEndSelect {
+        column: bool,
+    },
+    /// Accept the completion popup's item (and replace the rest of the
+    /// word after the caret).
+    AcceptCompletion {
+        replace: bool,
+    },
+    ShowCompletions,
+    /// The next (or previous) diagnostic.
+    GoToProblem {
+        back: bool,
+    },
 }
 
 /// Per-row colours from outside the editor: a compare view's diff, or a
@@ -324,6 +359,22 @@ pub struct Decorations<'a> {
     /// Search > Style All Occurrences of Token: what to highlight, in which
     /// colour.
     pub token_styles: &'a [(&'a Searcher, egui::Color32)],
+    /// Where completions come from; `None` turns completion off.
+    pub completion: Option<&'a mut dyn crate::completion_popup::CompletionSource>,
+    /// Lines under text (a language server's diagnostics), sorted by start.
+    pub underlines: &'a [Underline],
+}
+
+/// A wavy or dotted line under a range of text (a diagnostic).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Underline {
+    pub range: std::ops::Range<ByteOffset>,
+    pub color: egui::Color32,
+    /// Dotted (a hint) rather than wavy.
+    pub dotted: bool,
+    /// 0 for an error, 1 a warning, 2 information, 3 a hint: errors and
+    /// warnings are also marked in the gutter.
+    pub rank: u8,
 }
 
 /// Shows the editor for `view` filling the available space. `label` names the
@@ -395,13 +446,21 @@ pub fn editor_view(
     };
 
     // --- Focus ---------------------------------------------------------------
+    // Presses on the completion popup are the popup's.
+    let on_popup = ui
+        .input(|i| i.pointer.interact_pos())
+        .is_some_and(|p| state.completion.covers(p));
     let pointer_pressed_here =
-        ui.input(|i| i.pointer.primary_pressed()) && response.contains_pointer();
+        ui.input(|i| i.pointer.primary_pressed()) && response.contains_pointer() && !on_popup;
     if state.request_focus || pointer_pressed_here {
         response.request_focus();
         state.request_focus = false;
     }
     let focused = response.has_focus();
+    if focused && !state.was_focused {
+        state.last_activity = now;
+    }
+    state.was_focused = focused;
     if focused {
         ui.memory_mut(|m| {
             m.set_focus_lock_filter(
@@ -441,9 +500,44 @@ pub fn editor_view(
             .saturating_sub(1)
             .max(1)
     };
+    let mut source = decorations.completion;
+    let mut styler = decorations.styler;
+    let read_only = editor.buffer(buffer_id).is_some_and(|b| b.read_only);
+    let word_chars: Vec<char> = source
+        .as_deref()
+        .map(|s| s.word_chars(buffer_id).to_vec())
+        .unwrap_or_default();
     let mut ops = Vec::new();
+    // A row of the popup clicked last frame (the click took the keyboard;
+    // it comes back).
+    let clicked = state.completion.take_click();
+    if clicked {
+        ops.push(Op::AcceptCompletion { replace: false });
+        state.request_focus = true;
+    } else if !focused && !on_popup {
+        // A click on the popup takes the keyboard for a moment; anything
+        // else that does closes it.
+        state.completion.close();
+    }
     if focused {
         for event in ui.input(|i| i.events.clone()) {
+            // The completion popup's keys come before the keymap's.
+            if let Event::Key {
+                key,
+                pressed: true,
+                modifiers,
+                ..
+            } = &event
+            {
+                match state.completion.key(*key, *modifiers) {
+                    crate::completion_popup::KeyResult::Pass => {}
+                    crate::completion_popup::KeyResult::Taken => continue,
+                    crate::completion_popup::KeyResult::Accept { replace } => {
+                        ops.push(Op::AcceptCompletion { replace });
+                        continue;
+                    }
+                }
+            }
             match event {
                 Event::Key {
                     key,
@@ -479,6 +573,12 @@ pub fn editor_view(
                     Some(EditorCommand::SplitLines) => ops.push(Op::Apply(Action::SplitLines {
                         width: state.split_width(),
                     })),
+                    Some(EditorCommand::ShowCompletions) => ops.push(Op::ShowCompletions),
+                    Some(EditorCommand::ShowSignature) => state.signature_asked = true,
+                    Some(EditorCommand::NextProblem) => ops.push(Op::GoToProblem { back: false }),
+                    Some(EditorCommand::PreviousProblem) => {
+                        ops.push(Op::GoToProblem { back: true })
+                    }
                     None => {}
                 },
                 Event::Text(t)
@@ -486,6 +586,7 @@ pub fn editor_view(
                         && !t.is_empty()
                         && !t.chars().any(char::is_control) =>
                 {
+                    state.completion.typed(&t, &word_chars);
                     ops.push(Op::Apply(Action::InsertText(t)));
                 }
                 Event::Paste(t) => {
@@ -517,6 +618,7 @@ pub fn editor_view(
                 Event::Ime(ImeEvent::Commit(t)) => {
                     state.preedit = None;
                     if !t.is_empty() {
+                        state.completion.typed(&t, &word_chars);
                         ops.push(Op::Apply(Action::InsertText(t)));
                     }
                 }
@@ -538,9 +640,83 @@ pub fn editor_view(
             }
             Op::ToggleOvertype => editor.settings.overtype = !editor.settings.overtype,
             Op::BeginEndSelect { column } => begin_end_select(editor, view, state, column),
+            Op::ShowCompletions => state.completion.invoke(),
+            Op::GoToProblem { back } => {
+                let head = editor
+                    .view(view)
+                    .map_or(ByteOffset(0), |v| v.selections.primary().head);
+                // Errors, warnings and information; not hints. Round the
+                // end of the document.
+                let starts: Vec<ByteOffset> = decorations
+                    .underlines
+                    .iter()
+                    .filter(|u| u.rank <= 2)
+                    .map(|u| u.range.start)
+                    .collect();
+                let to = if back {
+                    starts.iter().rev().find(|s| **s < head).or(starts.last())
+                } else {
+                    starts.iter().find(|s| **s > head).or(starts.first())
+                };
+                if let Some(&to) = to {
+                    let _ = editor.apply(view, Action::SetSelections(SelectionSet::caret(to)));
+                    state.reveal_caret = true;
+                }
+            }
+            Op::AcceptCompletion { replace } => {
+                // The word's characters after the caret, which Tab replaces.
+                let completion = &state.completion;
+                let after = editor
+                    .view(view)
+                    .zip(editor.buffer(buffer_id))
+                    .map_or(0, |(v, b)| {
+                        let head = v.selections.primary().head;
+                        let doc = b.doc();
+                        let line_end = doc.line_end(doc.line_of(head));
+                        doc.slice(head..line_end)
+                            .chars()
+                            .take_while(|&c| completion.in_word(c, &word_chars))
+                            .count()
+                    });
+                let (doc, sels) = editor
+                    .buffer(buffer_id)
+                    .zip(editor.view(view))
+                    .map(|(b, v)| (b.doc().clone(), v.selections.clone()))
+                    .expect("view exists");
+                if let Some(action) = state.completion.accept(
+                    replace,
+                    after,
+                    source.as_deref_mut(),
+                    buffer_id,
+                    &doc,
+                    sels.primary().head,
+                    sels.len(),
+                ) && let Err(e) = editor.apply(view, action)
+                {
+                    state.last_error = Some(e);
+                }
+            }
         }
         state.reveal_caret = true;
         state.last_activity = now;
+    }
+    // The popup follows the word at the primary caret (not in read-only
+    // documents, nor with a selection or column selection).
+    {
+        let v = editor.view(view).expect("view exists");
+        let primary = v.selections.primary();
+        let caret = (primary.is_empty() && v.selections.rect().is_none()).then_some(primary.head);
+        let doc = editor.buffer(buffer_id).expect("buffer exists").doc();
+        let source = if read_only { None } else { source };
+        // Comments and strings, from the syntax (only looked at while the
+        // popup has something to do).
+        let context = match (caret, styler.as_deref_mut()) {
+            (Some(at), Some(s)) if state.completion.active() => s.context_at(doc, at),
+            _ => ochrepad_syntax::TextContext::Code,
+        };
+        state
+            .completion
+            .update(doc, buffer_id, caret, context, source);
     }
 
     // From here on the document only changes through mouse selection, which
@@ -606,7 +782,7 @@ pub fn editor_view(
     );
     let (pressed, down, pointer, dt) = ui.input(|i| {
         (
-            i.pointer.primary_pressed(),
+            i.pointer.primary_pressed() && !on_popup,
             i.pointer.primary_down(),
             i.pointer.interact_pos(),
             i.stable_dt,
@@ -708,7 +884,7 @@ pub fn editor_view(
     // --- Right click: the context menu acts where it was opened -----------------
     // As in Scintilla: a click outside the selection moves the caret there
     // (on a line number, to the line's start); on the selection it stays.
-    let secondary = ui.input(|i| i.pointer.secondary_pressed());
+    let secondary = ui.input(|i| i.pointer.secondary_pressed()) && !on_popup;
     if secondary && response.contains_pointer() {
         // On a scrollbar or the map: the menu has no line to act on.
         state.context_line = None;
@@ -988,6 +1164,17 @@ pub fn editor_view(
             ui.ctx().set_cursor_icon(CursorIcon::Text);
         }
     }
+    // The text under the pointer (for hover information).
+    let over_text = hover.filter(|p| f.content.contains(*p)).and_then(|p| {
+        let (layout, x) = layout_at(editor, view, &mut state.cache, &f, top, x_off, ui, p);
+        (x >= 0.0 && x < layout.width)
+            .then(|| hit_test(editor, view, &mut state.cache, &f, top, x_off, ui, p))
+    });
+    state.hover = match (over_text, state.hover) {
+        (Some(at), Some((was, since))) if at == was => Some((at, since)),
+        (Some(at), _) => Some((at, now)),
+        (None, _) => None,
+    };
     // Fold chevrons for every header show while the pointer is on the gutter.
     let show_chevrons = hover.is_some_and(|p| f.gutter.contains(p));
     // The name of a special character under the pointer, while it is drawn.
@@ -1017,11 +1204,12 @@ pub fn editor_view(
         focused,
         now,
         show_chevrons,
-        decorations.styler,
+        styler,
         decorations.find_highlight,
         decorations.row_style,
         decorations.changes,
         decorations.token_styles,
+        decorations.underlines,
     );
     match tip {
         Some(tip) => response.on_hover_text_at_pointer(tip),
@@ -1818,6 +2006,29 @@ fn layout_at(
     (layout, x)
 }
 
+/// A diagnostic's line under the text from `xa` to `xb`, at `y`.
+fn paint_underline(painter: &egui::Painter, xa: f32, xb: f32, y: f32, u: &Underline) {
+    if u.dotted {
+        let mut x = xa + 1.0;
+        while x < xb {
+            painter.circle_filled(Pos2::new(x, y), 0.8, u.color);
+            x += 3.0;
+        }
+        return;
+    }
+    let mut points = Vec::new();
+    let mut x = xa;
+    let mut up = true;
+    while x <= xb {
+        points.push(Pos2::new(x, if up { y - 1.5 } else { y + 0.5 }));
+        x += 2.0;
+        up = !up;
+    }
+    if points.len() > 1 {
+        painter.add(egui::Shape::line(points, Stroke::new(1.0, u.color)));
+    }
+}
+
 /// Pixel -> byte offset, through the same `LineLayout` painting uses.
 #[allow(clippy::too_many_arguments)]
 fn hit_test(
@@ -1908,6 +2119,7 @@ fn paint(
     row_style: Option<&dyn RowStyle>,
     changes: Option<&crate::change_history::LineMarks>,
     token_styles: &[(&Searcher, egui::Color32)],
+    underlines: &[Underline],
 ) {
     let Some(v) = editor.view(view) else { return };
     let doc = doc_of(editor, buffer);
@@ -2150,6 +2362,19 @@ fn paint(
         }
         paint_line_text(&row_painter, &layout, rx0, y, &f.font, f.line_h);
         paint_marks(&row_painter, &layout, rx0, y, f, symbols, &marks);
+        // Diagnostics: under the text, a cell wide at least.
+        let from = underlines.partition_point(|u| u.range.end < row_start);
+        for u in underlines[from..]
+            .iter()
+            .take_while(|u| u.range.start <= row_end)
+        {
+            if u.range.end < row_start {
+                continue;
+            }
+            let (a, b) = (u.range.start.max(row_start), u.range.end.min(row_end));
+            let (xa, xb) = (x_at(a), x_at(b).max(x_at(a) + f.cell_w));
+            paint_underline(&text_painter, xa, xb, y + f.line_h - 2.0, u);
+        }
         // Matching brackets and tag names are outlined.
         let outline = |a: ByteOffset, b: ByteOffset, color: egui::Color32| {
             let r = Rect::from_min_max(
@@ -2205,6 +2430,23 @@ fn paint(
             }
         }
 
+        // An error or warning starting on the line: a dot at the gutter's
+        // left, in the worst one's colour.
+        if rows.text_sub(row) == Some(0) {
+            let from = underlines.partition_point(|u| u.range.start < line_start);
+            let on_line = underlines[from..]
+                .iter()
+                .take_while(|u| u.range.start <= line_end)
+                .filter(|u| u.rank <= 1);
+            if let Some(u) = on_line.min_by_key(|u| u.rank) {
+                let r = (f.line_h * 0.16).max(2.0);
+                gutter_painter.circle_filled(
+                    Pos2::new(f.gutter.min.x + r + 2.0, y + f.line_h / 2.0),
+                    r,
+                    u.color,
+                );
+            }
+        }
         // The line number and fold chevron go on a line's first row. A
         // bookmarked line's number sits on a tag in the accent colour.
         if rows.text_sub(row) == Some(0) {
@@ -2323,6 +2565,20 @@ fn paint(
             })
         });
     }
+    // The completion popup (also while a click on it has the keyboard).
+    let caret_shown = {
+        let (p, on_screen) = caret_pos(v.selections.primary().head, &mut state.cache);
+        on_screen.then(|| Rect::from_min_size(p, Vec2::new(f.cell_w, f.line_h)))
+    };
+    state.caret_rect = caret_shown;
+    match caret_shown.filter(|_| state.completion.is_open()) {
+        Some(caret) => {
+            state
+                .completion
+                .paint(ui, Id::new(("ochrepad-completion", view.0)), caret, &f.font)
+        }
+        None => state.completion.paint_nothing(),
+    }
 
     // The document map.
     if let Some(strip) = f.map {
@@ -2386,31 +2642,57 @@ fn paint(
         painter.rect_filled(h_thumb.shrink(2.0), 3.0, thumb_color);
     }
     let caret_offset = rows.offset_of(rows.row_of(v.selections.primary().head), 0.0);
+    // Errors and warnings, by line.
+    let mut problems: [Vec<usize>; 2] = [Vec::new(), Vec::new()];
+    for u in underlines.iter().filter(|u| u.rank <= 1) {
+        problems[u.rank as usize].push(rows.doc().line_of(u.range.start));
+    }
+    for p in &mut problems {
+        p.sort_unstable();
+        p.dedup();
+    }
     paint_overview(
         &painter,
         f,
         &rows,
-        editor.buffer(buffer).map(|b| b.bookmarks()),
-        changes,
-        caret_offset,
+        Overview {
+            bookmarks: editor.buffer(buffer).map(|b| b.bookmarks()),
+            changes,
+            problems: &problems,
+            caret_offset,
+        },
         &visuals,
     );
     state.cache.retain_near(first, last.max(first + 1));
 }
 
-/// The overview on the vertical scrollbar: the bookmarks (right) and the
-/// changed lines (left) at their places in the document, and the caret's
-/// line across it. Worked out per pixel row, so a document with a million
-/// bookmarks costs no more than one with ten.
+/// What the scrollbar's overview shows.
+struct Overview<'a> {
+    bookmarks: Option<&'a ochrepad_core::Bookmarks>,
+    changes: Option<&'a crate::change_history::LineMarks>,
+    /// The lines with an error, and those with a warning, sorted.
+    problems: &'a [Vec<usize>; 2],
+    caret_offset: f64,
+}
+
+/// The overview on the vertical scrollbar: the changed lines (left), the
+/// bookmarks (middle) and the language server's errors and warnings
+/// (right) at their places in the document, and the caret's line across
+/// it. Worked out per pixel row, so a document with a million bookmarks
+/// costs no more than one with ten.
 fn paint_overview(
     painter: &egui::Painter,
     f: &Frame,
     rows: &DisplayMap,
-    bookmarks: Option<&ochrepad_core::Bookmarks>,
-    changes: Option<&crate::change_history::LineMarks>,
-    caret_offset: f64,
+    o: Overview<'_>,
     visuals: &egui::Visuals,
 ) {
+    let Overview {
+        bookmarks,
+        changes,
+        problems,
+        caret_offset,
+    } = o;
     let bar = f.vbar;
     let visible = rows.visible_line_count();
     // A short document maps to the part of the bar its lines fill.
@@ -2429,7 +2711,8 @@ fn paint_overview(
 
     let marks = bookmarks.filter(|b| !b.is_empty());
     let changed = changes.filter(|c| !c.is_empty());
-    if marks.is_none() && changed.is_none() {
+    let any_problems = problems.iter().any(|p| !p.is_empty());
+    if marks.is_none() && changed.is_none() && !any_problems {
         return;
     }
     let doc_lines = rows.doc().line_count();
@@ -2453,11 +2736,15 @@ fn paint_overview(
         sorted.get(i).is_some_and(|&l| l < r.end)
     };
     let accent = crate::theme::bookmark_bg(visuals);
-    let lane = |y: f32, left: bool| {
-        let (x0, x1) = if left {
-            (bar.min.x + 1.0, bar.min.x + 4.0)
-        } else {
-            (bar.min.x + 6.0, bar.max.x - 1.0)
+    // Changes, bookmarks, problems.
+    let mid = ((bar.min.x + 6.0 + bar.max.x - 1.0) / 2.0).round();
+    let lane = |y: f32, which: u8| {
+        let (x0, x1) = match which {
+            0 => (bar.min.x + 1.0, bar.min.x + 4.0),
+            // The whole lane while there are no problems to show.
+            1 if !any_problems => (bar.min.x + 6.0, bar.max.x - 1.0),
+            1 => (bar.min.x + 6.0, mid - 1.0),
+            _ => (mid, bar.max.x - 1.0),
         };
         Rect::from_min_max(Pos2::new(x0, y), Pos2::new(x1, y + 2.0))
     };
@@ -2467,7 +2754,15 @@ fn paint_overview(
         };
         let top = bar.min.y + y as f32;
         if marks.is_some_and(|m| any_in(m.lines(), &r)) {
-            painter.rect_filled(lane(top, false), 0.0, accent);
+            painter.rect_filled(lane(top, 1), 0.0, accent);
+        }
+        // An error shows over a warning.
+        if let Some(rank) = (0..2).find(|&i| any_in(&problems[i], &r)) {
+            painter.rect_filled(
+                lane(top, 2),
+                0.0,
+                crate::theme::diagnostic_color(visuals, rank as u8),
+            );
         }
         if let Some(c) = changed {
             let i = c.lines.partition_point(|m| m.0 < r.start);
@@ -2490,11 +2785,7 @@ fn paint_overview(
             }
             if let Some(kind) = kind {
                 let (red, green, blue) = crate::theme::diff_rgb(kind);
-                painter.rect_filled(
-                    lane(top, true),
-                    0.0,
-                    egui::Color32::from_rgb(red, green, blue),
-                );
+                painter.rect_filled(lane(top, 0), 0.0, egui::Color32::from_rgb(red, green, blue));
             }
         }
     }

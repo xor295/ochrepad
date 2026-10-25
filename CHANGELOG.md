@@ -10,6 +10,8 @@ people downloading the release.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-25
+
 ### Added
 
 - **A terminal.** View > Terminal (Ctrl+\`) opens a shell in a pane below
@@ -19,6 +21,33 @@ people downloading the release.
   Ctrl+click opens links and the files and lines compilers and tracebacks
   name. Terminal tabs come back with the session. The shell, its arguments
   and the scrollback are in Preferences. See `docs/terminal.md`.
+- **Completion.** A list of ways to finish the word you are typing opens
+  after two characters (or with Ctrl+Space): words and names from your open
+  documents and the open folder, the language's keywords, and the
+  functions, types and modules the highlighting finds. Typing the first
+  letters of a name's parts finds it (`gtl` for `getTextLength`). It needs
+  nothing installed, stays out of comments and strings, and remembers the
+  folder between runs so only changed files are read again. Preferences can
+  turn it off or change when it opens. See `docs/completion.md`.
+- **Language servers.** With rust-analyzer, pyright, gopls, clangd,
+  typescript-language-server or marksman installed (or another server
+  added in `lsp.json`):
+  - the server's suggestions lead the completion list, with their
+    documentation and the import a name needs;
+  - problems are underlined as you type, counted in the status bar and
+    listed in View > Problems (Alt+F8 goes to the next one);
+  - resting the pointer on a name shows what the server knows about it,
+    and typing a call's arguments shows its signature;
+  - Ctrl+Alt+T searches the project's symbols, and the Function List
+    shows the server's;
+  - F12 goes to a name's definition, Shift+F12 lists its uses, Shift+F6
+    renames it everywhere, Ctrl+. offers the server's fixes and
+    refactorings, and Alt+Shift+F formats the document (also on save, if
+    chosen).
+
+  ochrepad asks before a server first runs in a folder, since servers run
+  project code. View > Language Servers shows each server's state and log.
+  See `docs/language-servers.md`.
 - A **?** menu with **About**, which shows the version, links to the
   GitHub repository and crates.io, and the license.
 
@@ -375,7 +404,8 @@ The first release, for Windows and Linux.
   highlighting size limit; an editable keymap; recent files; drag and drop.
 - A warm light and dark theme with ochre accents.
 
-[Unreleased]: https://github.com/xor295/ochrepad/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/xor295/ochrepad/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/xor295/ochrepad/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/xor295/ochrepad/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/xor295/ochrepad/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/xor295/ochrepad/compare/v0.1.0...v0.2.0

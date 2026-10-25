@@ -27,6 +27,16 @@ pub enum MenuCommand {
     ClearStyle(Option<usize>),
     /// Open a file named in the text, at a line and column if it said.
     OpenFile(PathBuf, Option<(usize, usize)>),
+    /// Ask the language server where the name at the caret is defined.
+    GoToDefinition,
+    /// Ask it where the name is used.
+    FindReferences,
+    /// Rename the name everywhere.
+    Rename,
+    /// Format the document.
+    FormatDocument,
+    /// Show the server's code actions at the caret.
+    CodeActions,
 }
 
 /// The bytes of `text` around byte `at`, up to the characters `stop`
@@ -199,6 +209,7 @@ pub fn show(
     view: ViewId,
     state: &mut EditorViewState,
     dirs: &[&Path],
+    served: bool,
 ) -> Option<MenuCommand> {
     let mut command = None;
     let buffer = editor.view(view).map(|v| v.buffer())?;
@@ -232,6 +243,25 @@ pub fn show(
         ui.add_enabled(enabled, Button::new(label).shortcut_text(shortcut))
             .clicked()
     };
+    // A language server works on the document.
+    if served {
+        if item(ui, true, "Go to Definition", "F12") {
+            command = Some(MenuCommand::GoToDefinition);
+        }
+        if item(ui, true, "Find References", "Shift+F12") {
+            command = Some(MenuCommand::FindReferences);
+        }
+        if item(ui, editable, "Rename…", "Shift+F6") {
+            command = Some(MenuCommand::Rename);
+        }
+        if item(ui, editable, "Format Document", "Alt+Shift+F") {
+            command = Some(MenuCommand::FormatDocument);
+        }
+        if item(ui, editable, "Code Actions…", "Ctrl+.") {
+            command = Some(MenuCommand::CodeActions);
+        }
+        ui.separator();
+    }
     if let Some((path, place)) = file {
         let name = path.file_name().map_or_else(
             || path.display().to_string(),
