@@ -1060,16 +1060,27 @@ impl OchrepadApp {
             ui.ctx().request_repaint();
         }
         self.visible.clear();
-        if self.settings.completion
-            && self.completion.tick(
-                &self.editor,
-                self.highlighting.registry(),
-                self.now,
-                ui.ctx(),
-            )
-        {
+        let folder = self.tree.as_ref().map(|t| t.root().to_path_buf());
+        if !self.settings.completion {
+            self.completion.stop();
+        } else if self.completion.tick(
+            &self.editor,
+            self.highlighting.registry(),
+            folder.as_deref(),
+            self.now,
+            ui.ctx(),
+        ) {
             ui.ctx()
                 .request_repaint_after(std::time::Duration::from_millis(100));
+        }
+        if let Some((path, bytes)) = self.completion.take_cache_write() {
+            let tag = self
+                .persist
+                .worker
+                .submit(ochrepad_fileio::worker::Job::Write { path, bytes });
+            self.persist
+                .pending
+                .insert(tag, autosave::PendingJob::Other);
         }
         let editor = &self.editor;
         self.token_styles.retain(|b| editor.buffer(b).is_some());
@@ -2974,6 +2985,10 @@ impl OchrepadApp {
                     .clicked()
                 {
                     self.go_to_line = Some(String::new());
+                }
+                if let Some(note) = self.completion.folder_status() {
+                    ui.separator();
+                    ui.add(egui::Label::new(egui::RichText::new(note).weak()).truncate());
                 }
                 if let Some((note, until)) = &self.status_note {
                     if self.now < *until {

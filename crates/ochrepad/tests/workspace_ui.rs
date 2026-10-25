@@ -173,6 +173,13 @@ fn the_sidebar_looks_right() {
     let (_tmp, root) = project();
     let mut h = harness(&root, Vec2::new(760.0, 360.0));
     wait_for(&mut h, "the root listing", |h| has_row(h, "README.md"));
+    // Without the status bar's note about indexing for completion.
+    wait_for(&mut h, "the folder's index", |h| {
+        h.state()
+            .completion
+            .folder()
+            .is_some_and(|f| f.progress == ochrepad::folder_index::Progress::Ready)
+    });
     let p = row_pos(&h, "src");
     click(&mut h, p, 1);
     wait_for(&mut h, "src's listing", |h| has_row(h, "main.rs"));

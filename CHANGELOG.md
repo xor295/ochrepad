@@ -19,6 +19,14 @@ people downloading the release.
   Ctrl+click opens links and the files and lines compilers and tracebacks
   name. Terminal tabs come back with the session. The shell, its arguments
   and the scrollback are in Preferences. See `docs/terminal.md`.
+- **Completion.** A list of ways to finish the word you are typing opens
+  after two characters (or with Ctrl+Space): words and names from your open
+  documents and the open folder, the language's keywords, and the
+  functions, types and modules the highlighting finds. Typing the first
+  letters of a name's parts finds it (`gtl` for `getTextLength`). It needs
+  nothing installed, stays out of comments and strings, and remembers the
+  folder between runs so only changed files are read again. Preferences can
+  turn it off or change when it opens. See `docs/completion.md`.
 - A **?** menu with **About**, which shows the version, links to the
   GitHub repository and crates.io, and the license.
 

@@ -14,6 +14,7 @@ pub mod export;
 pub mod file_tree;
 pub mod filter_bar;
 pub mod find_panel;
+pub mod folder_index;
 pub mod fonts;
 pub mod function_list;
 pub mod highlight;

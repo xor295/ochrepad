@@ -6,6 +6,7 @@
 //! widget as a `CompletionSource`.
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
 
@@ -67,7 +68,21 @@ pub struct Completion {
     done: Option<Receiver<Done>>,
     /// What the user accepted lately, most recent last.
     accepted: Vec<String>,
+    /// The open folder's index.
+    folder: Option<crate::folder_index::FolderIndex>,
+    /// Where folder indexes are cached (the data folder's `index`).
+    index_dir: Option<PathBuf>,
+    /// Whether the window had the focus last frame.
+    focused: bool,
+    /// Since when the folder index has been busy, and the time now: the
+    /// status bar mentions it only after a moment, so small folders do not
+    /// flash a note.
+    busy_since: Option<f64>,
+    now: f64,
 }
+
+/// How long the folder index works before the status bar says so.
+const STATUS_DELAY_SECS: f64 = 1.0;
 
 /// Characters besides letters, digits and `_` that words have in
 /// `language`.
@@ -87,9 +102,38 @@ impl Completion {
         &mut self,
         editor: &Editor,
         registry: &Arc<Registry>,
+        folder: Option<&Path>,
         now: f64,
         ctx: &egui::Context,
     ) -> bool {
+        // The open folder's index: started when a folder opens, dropped
+        // when it closes, asked to look again when the window comes back.
+        if self.folder.as_ref().map(|f| f.root()) != folder {
+            self.folder = folder.map(|root| {
+                let cache = self
+                    .index_dir
+                    .as_deref()
+                    .map(|d| crate::folder_index::cache_file(d, root));
+                crate::folder_index::FolderIndex::open(
+                    root.to_path_buf(),
+                    cache,
+                    registry.clone(),
+                    ctx.clone(),
+                )
+            });
+        }
+        let focused = ctx.input(|i| i.viewport().focused.unwrap_or(true));
+        self.now = now;
+        let mut busy = false;
+        if let Some(f) = &mut self.folder {
+            f.poll();
+            if focused && !self.focused {
+                f.rescan();
+            }
+            busy = f.progress != crate::folder_index::Progress::Ready;
+        }
+        self.busy_since = busy.then(|| self.busy_since.unwrap_or(now));
+        self.focused = focused;
         if let Some(rx) = &self.done {
             while let Ok((buffer, revision, found)) = rx.try_recv() {
                 if let Some(d) = self.docs.get_mut(&buffer)
@@ -100,7 +144,7 @@ impl Completion {
             }
         }
         self.docs.retain(|b, _| editor.buffer(*b).is_some());
-        let mut waiting = false;
+        let mut waiting = busy;
         let mut jobs = Vec::new();
         for b in editor.buffers() {
             let revision = b.revision();
@@ -179,6 +223,53 @@ impl Completion {
             self.done = Some(done);
         }
         self.jobs.as_ref().is_some_and(|tx| tx.send(job).is_ok())
+    }
+
+    /// Where folder indexes are cached.
+    pub fn set_index_dir(&mut self, dir: PathBuf) {
+        self.index_dir = Some(dir);
+    }
+
+    /// A file was saved: the folder index reads it again.
+    pub fn saved(&self, path: &Path) {
+        if let Some(f) = &self.folder {
+            f.saved(path);
+        }
+    }
+
+    /// The folder index's cache to write (through the app's worker).
+    pub fn take_cache_write(&mut self) -> Option<(PathBuf, Vec<u8>)> {
+        self.folder.as_mut()?.take_cache()
+    }
+
+    /// The folder index, while a folder is open.
+    pub fn folder(&self) -> Option<&crate::folder_index::FolderIndex> {
+        self.folder.as_ref()
+    }
+
+    /// Completion was turned off: stops indexing the folder.
+    pub fn stop(&mut self) {
+        self.folder = None;
+        self.busy_since = None;
+    }
+
+    /// A note for the status bar while the folder is being indexed (after
+    /// the first second).
+    pub fn folder_status(&self) -> Option<String> {
+        use crate::folder_index::Progress;
+        if self.now - self.busy_since? < STATUS_DELAY_SECS {
+            return None;
+        }
+        let (what, done, total) = match self.folder.as_ref()?.progress {
+            Progress::Words { done, total } => ("Indexing the folder", done, total),
+            Progress::Definitions { done, total } => ("Finding definitions", done, total),
+            Progress::Ready => return None,
+        };
+        Some(if total == 0 {
+            format!("{what} for completion")
+        } else {
+            format!("{what} for completion ({done} of {total} files)")
+        })
     }
 
     /// The words counted for `buffer` (tests).
@@ -281,6 +372,35 @@ impl CompletionSource for Sources<'_> {
                     } else {
                         d.name.clone()
                     };
+                }
+            }
+        }
+        // The open folder: its words, then its definitions.
+        if let Some(snapshot) = c.folder.as_ref().and_then(|f| f.snapshot.as_ref()) {
+            let most = snapshot.words.most().max(1) as f32;
+            for (w, count) in snapshot.words.matching(&pattern) {
+                if w == req.prefix {
+                    continue;
+                }
+                let frequent = (count as f32).ln_1p() / most.ln_1p();
+                offer(&mut out, w, Kind::Word, Source::Word, 0.05 + 0.1 * frequent);
+            }
+            for (name, _) in snapshot.names.matching(&pattern) {
+                if name == req.prefix || !complete::is_identifier(name, &chars) {
+                    continue;
+                }
+                let Some(d) = snapshot.definitions.get(name) else {
+                    continue;
+                };
+                let kind = match d.kind {
+                    SymbolKind::Function => Kind::Function,
+                    SymbolKind::Type => Kind::Type,
+                    SymbolKind::Module => Kind::Module,
+                    SymbolKind::Heading => continue,
+                };
+                let e = offer(&mut out, name, kind, Source::Definition, 0.12);
+                if e.detail.is_none() {
+                    e.detail = Some(d.file.clone());
                 }
             }
         }

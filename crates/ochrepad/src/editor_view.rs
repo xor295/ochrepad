@@ -101,6 +101,9 @@ pub struct EditorViewState {
     pub symbols: Symbols,
     pub edge_column: Option<usize>,
     last_activity: f64,
+    /// Whether the editor had the focus last frame (gaining it restarts the
+    /// caret's blink, so the caret shows at once).
+    was_focused: bool,
     preedit: Option<String>,
     drag: Option<Drag>,
     bar_drag: Option<BarDrag>,
@@ -159,6 +162,7 @@ impl Default for EditorViewState {
             symbols: Symbols::default(),
             edge_column: None,
             last_activity: 0.0,
+            was_focused: false,
             preedit: None,
             drag: None,
             bar_drag: None,
@@ -424,6 +428,10 @@ pub fn editor_view(
         state.request_focus = false;
     }
     let focused = response.has_focus();
+    if focused && !state.was_focused {
+        state.last_activity = now;
+    }
+    state.was_focused = focused;
     if focused {
         ui.memory_mut(|m| {
             m.set_focus_lock_filter(

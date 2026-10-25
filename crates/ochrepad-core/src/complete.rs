@@ -527,9 +527,72 @@ pub fn words<'a>(
         })
 }
 
+/// What separates a member from what it belongs to: `.`, `::`, `->` and
+/// `?.`.
+const MEMBER_SEPARATORS: [&str; 3] = ["::", "->", "."];
+
+/// Whether `before` (a line's text up to a word) ends with a member
+/// separator after a name, a closing bracket or a quote (`items.`,
+/// `std::`, `node->`, `call().`).
+pub fn ends_with_member_separator(before: &str) -> bool {
+    MEMBER_SEPARATORS.iter().any(|sep| {
+        before.strip_suffix(sep).is_some_and(|rest| {
+            let rest = rest.strip_suffix('?').unwrap_or(rest);
+            match rest.chars().next_back() {
+                Some(c) if ")]}\"'".contains(c) => true,
+                // A name, not a number (`2.` ends a sentence or a float).
+                Some(c) if c.is_alphanumeric() || c == '_' => {
+                    let word: String = rest
+                        .chars()
+                        .rev()
+                        .take_while(|&c| c.is_alphanumeric() || c == '_')
+                        .collect();
+                    !word.ends_with(|c: char| c.is_numeric())
+                }
+                _ => false,
+            }
+        })
+    })
+}
+
+/// The words of `text` that come right after a member separator (see
+/// [`ends_with_member_separator`]): what follows a `.` in this text is
+/// likely to follow one again.
+pub fn member_words<'a>(
+    text: &'a str,
+    extra: &'a [char],
+    min_len: usize,
+) -> impl Iterator<Item = &'a str> + 'a {
+    words(text, extra, min_len).filter(move |w| {
+        // `w` is a slice of `text`: its offset is the pointers' distance.
+        let at = w.as_ptr() as usize - text.as_ptr() as usize;
+        let line_start = text[..at].rfind('\n').map_or(0, |i| i + 1);
+        ends_with_member_separator(&text[line_start..at])
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn member_separators() {
+        for yes in [
+            "items.", "std::", "node->", "call().", "list[0].", "maybe?.", "\"s\".",
+        ] {
+            assert!(ends_with_member_separator(yes), "{yes}");
+        }
+        for no in ["", ".", " .", "1.5 + 2.", "a :", "x - >", "e.g. "] {
+            assert!(!ends_with_member_separator(no), "{no}");
+        }
+        let w: Vec<&str> = member_words(
+            "let x = items.iter().map(|i| i.len());\nstd::mem::take",
+            &[],
+            3,
+        )
+        .collect();
+        assert_eq!(w, ["iter", "map", "len", "mem", "take"]);
+    }
 
     fn best(pattern: &str, labels: &[&str]) -> Vec<String> {
         rank(

@@ -50,6 +50,10 @@ A fast, native text editor in the spirit of Notepad++, written in Rust with
 - **A terminal** below your files: run builds, scripts or Claude Code, and
   Ctrl+click a compiler error to open the file at that line
   ([more](docs/terminal.md)).
+- **Completion** as you type, with nothing to install: words and names from
+  your documents and the open folder, keywords, and the functions and types
+  the highlighting finds; `gtl` finds `getTextLength`
+  ([more](docs/completion.md)).
 
 Not included (by design, for now): right-to-left text, proportional fonts,
 plugins and language servers.
