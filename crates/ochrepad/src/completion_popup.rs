@@ -9,6 +9,37 @@ use egui::{Align2, Color32, FontId, Id, Pos2, Rect, Sense, Ui, Vec2};
 use ochrepad_core::complete::{self, Candidate, Kind, Ranked};
 use ochrepad_core::{Action, BufferId, ByteOffset, Document};
 
+/// Whether `c` can be in a path typed in a string (not a quote, a space,
+/// or a character that ends an argument).
+fn is_path_char(c: char) -> bool {
+    !c.is_whitespace() && !"\"'`<>|*?(){}[],;=".contains(c)
+}
+
+/// In a string that looks like a path (`"./src/ma`, `"C:\\Users\\`,
+/// `"/etc/`), the folder part up to the caret's file name and where that
+/// name starts. Not a URL.
+fn path_at(doc: &Document, caret: ByteOffset) -> Option<(String, ByteOffset)> {
+    let line_start = doc.line_start(doc.line_of(caret));
+    let mut from = ByteOffset(caret.0.saturating_sub(1024).max(line_start.0));
+    while !doc.is_char_boundary(from) {
+        from.0 += 1;
+    }
+    let before = doc.slice(from..caret);
+    let len: usize = before
+        .chars()
+        .rev()
+        .take_while(|&c| is_path_char(c))
+        .map(char::len_utf8)
+        .sum();
+    let token = &before[before.len() - len..];
+    let sep = token.rfind(['/', '\\'])?;
+    if token.contains("://") {
+        return None;
+    }
+    let name = &token[sep + 1..];
+    Some((token[..=sep].to_owned(), ByteOffset(caret.0 - name.len())))
+}
+
 /// The most rows shown at once.
 const ROWS: usize = 10;
 /// Candidates kept after ranking.
@@ -28,6 +59,9 @@ pub struct CompletionRequest<'a> {
     /// The word comes right after a member separator (`items.`, `std::`,
     /// `node->`), in a language that has them.
     pub member: bool,
+    /// In a string that looks like a path: the folder part as typed (up
+    /// to and with its last `/` or `\`); `prefix` is the name after it.
+    pub path: Option<&'a str>,
 }
 
 /// Where candidates come from (the app's documents, keywords, folder index,
@@ -93,6 +127,9 @@ pub struct Popup {
     scroll: usize,
     invoked: bool,
     generation: u64,
+    /// Completing a file name in a path (whose characters differ from a
+    /// word's).
+    path: bool,
 }
 
 /// What a key did to the popup.
@@ -168,10 +205,20 @@ impl CompletionState {
         if text
             .chars()
             .last()
-            .is_some_and(|c| complete::is_word_char(c, word_chars))
+            .is_some_and(|c| complete::is_word_char(c, word_chars) || "/\\.-".contains(c))
             && text.chars().count() <= 4
         {
             self.typed = true;
+        }
+    }
+
+    /// Whether `c` continues the word being completed (what Tab replaces
+    /// after the caret): a file name's characters while completing a path.
+    pub fn in_word(&self, c: char, word_chars: &[char]) -> bool {
+        if self.popup.as_ref().is_some_and(|p| p.path) {
+            is_path_char(c) && !matches!(c, '/' | '\\')
+        } else {
+            complete::is_word_char(c, word_chars)
         }
     }
 
@@ -232,6 +279,10 @@ impl CompletionState {
         let index = self.clicked.take().unwrap_or(p.selected);
         let item = p.items.get(index)?;
         let text = item.candidate.text().to_owned();
+        // A folder: go on with its contents.
+        if p.path && text.ends_with('/') {
+            self.typed = true;
+        }
         if let Some(s) = source {
             s.accepted(buffer, &text);
         }
@@ -270,7 +321,17 @@ impl CompletionState {
             self.popup = None;
             return;
         };
-        let start = complete::word_start(doc, caret, source.word_chars(buffer));
+        // In a string, a path's file name; else the word at the caret.
+        let path = (context == ochrepad_syntax::TextContext::String)
+            .then(|| path_at(doc, caret))
+            .flatten();
+        let (start, path) = match path {
+            Some((dir, name_start)) => (name_start, Some(dir)),
+            None => (
+                complete::word_start(doc, caret, source.word_chars(buffer)),
+                None,
+            ),
+        };
         let prefix = doc.slice(start..caret);
         // (Only looked at when the popup has something to do: this runs
         // every frame.)
@@ -284,8 +345,15 @@ impl CompletionState {
             }
             complete::ends_with_member_separator(&doc.slice(from..start))
         };
-        // After a separator one character is enough to open by itself.
-        let min_chars = if member { 1 } else { self.settings.min_chars };
+        // After a separator one character is enough to open by itself; in
+        // a path, a `/` is.
+        let min_chars = if path.is_some() {
+            0
+        } else if member {
+            1
+        } else {
+            self.settings.min_chars
+        };
         let open = self.popup.is_some();
         // The caret left the word the popup was for.
         if self.popup.as_ref().is_some_and(|p| p.start != start) {
@@ -295,8 +363,9 @@ impl CompletionState {
         let invoked = invoke
             || self.popup.as_ref().is_some_and(|p| p.invoked)
             || waiting.as_ref().is_some_and(|w| w.invoked);
-        // Not by itself in comments and strings (Ctrl+Space still works).
-        if !invoked && context != ochrepad_syntax::TextContext::Code {
+        // Not by itself in comments and strings (Ctrl+Space still works),
+        // except for paths.
+        if !invoked && path.is_none() && context != ochrepad_syntax::TextContext::Code {
             self.popup = None;
             return;
         }
@@ -333,6 +402,7 @@ impl CompletionState {
             prefix: &prefix,
             invoked,
             member,
+            path: path.as_deref(),
         };
         let candidates = source.candidates(&req);
         let items = if prefix.is_empty() {
@@ -387,6 +457,7 @@ impl CompletionState {
             scroll: 0,
             invoked,
             generation,
+            path: path.is_some(),
         };
         p.reveal();
         self.popup = Some(p);

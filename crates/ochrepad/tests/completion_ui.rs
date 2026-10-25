@@ -333,3 +333,35 @@ fn in_prose_a_period_ends_a_sentence() {
     typ(&mut h, "t");
     assert!(labels(&h).contains(&"items".to_owned()));
 }
+
+#[test]
+fn paths_in_strings_complete_from_the_documents_folder() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("src")).unwrap();
+    std::fs::create_dir_all(dir.path().join("assets")).unwrap();
+    for f in ["src/main.rs", "src/lib.rs", "notes.txt", ".hidden"] {
+        std::fs::write(dir.path().join(f), "").unwrap();
+    }
+    let file = dir.path().join("app.py");
+    std::fs::write(&file, "x = 1\n").unwrap();
+    let mut h = harness("");
+    h.state_mut().open_path(&file);
+    h.run();
+    key(&mut h, Modifiers::COMMAND, Key::End);
+    typ(&mut h, "open(\"./");
+    wait_until(&mut h, "the folder's listing", |h| !labels(h).is_empty());
+    let mut shown = labels(&h);
+    shown.sort();
+    assert_eq!(shown, ["app.py", "assets/", "notes.txt", "src/"]);
+    typ(&mut h, "s");
+    assert_eq!(labels(&h)[0], "src/");
+    // A folder goes on with its contents.
+    key(&mut h, Modifiers::NONE, Key::Enter);
+    wait_until(&mut h, "src's listing", |h| labels(h).len() == 2);
+    typ(&mut h, "m");
+    key(&mut h, Modifiers::NONE, Key::Enter);
+    assert!(text(&h).contains("open(\"./src/main.rs"), "{}", text(&h));
+    // Plain words in strings still need Ctrl+Space.
+    typ(&mut h, " nota");
+    assert!(labels(&h).is_empty());
+}

@@ -50,6 +50,18 @@ a guess from the text, not an understanding of types (a language server
 would know which members `items` has). In plain text and Markdown a period
 ends a sentence, so none of this applies.
 
+## Paths in strings
+
+In a string that looks like a path (`"./`, `"../`, `"src/`, `"C:\`, `"/`),
+the list shows the files and folders in that folder as soon as you type the
+`/`. A relative path is relative to the document's folder (or the open
+folder, for a document not saved yet). Picking a folder goes on with its
+contents. Names starting with `.` are shown once you type the `.`.
+
+Only folders on this computer are listed: network paths (`\\server\share`)
+are not, because on Windows even looking at one sends your credentials to
+that server.
+
 ## Where suggestions come from
 
 | Marker | Source |

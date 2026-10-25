@@ -609,6 +609,7 @@ pub fn editor_view(
             Op::ShowCompletions => state.completion.invoke(),
             Op::AcceptCompletion { replace } => {
                 // The word's characters after the caret, which Tab replaces.
+                let completion = &state.completion;
                 let after = editor
                     .view(view)
                     .zip(editor.buffer(buffer_id))
@@ -618,7 +619,7 @@ pub fn editor_view(
                         let line_end = doc.line_end(doc.line_of(head));
                         doc.slice(head..line_end)
                             .chars()
-                            .take_while(|&c| ochrepad_core::complete::is_word_char(c, &word_chars))
+                            .take_while(|&c| completion.in_word(c, &word_chars))
                             .count()
                     });
                 if let Some(action) =

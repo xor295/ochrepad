@@ -54,6 +54,8 @@ struct DocWords {
     word_chars: Vec<char>,
     /// The file's name, for the popup's details.
     name: Option<String>,
+    /// The file's folder (paths typed in the document are relative to it).
+    folder: Option<PathBuf>,
 }
 
 /// A counting job and its result.
@@ -85,6 +87,9 @@ pub struct Completion {
     /// flash a note.
     busy_since: Option<f64>,
     now: f64,
+    /// Folder listings for paths typed in strings.
+    paths: crate::path_completion::PathLister,
+    ctx: Option<egui::Context>,
 }
 
 /// How long the folder index works before the status bar says so.
@@ -136,6 +141,10 @@ impl Completion {
         }
         let focused = ctx.input(|i| i.viewport().focused.unwrap_or(true));
         self.now = now;
+        if self.ctx.is_none() {
+            self.ctx = Some(ctx.clone());
+        }
+        self.paths.poll(now);
         let mut busy = false;
         if let Some(f) = &mut self.folder {
             f.poll();
@@ -169,13 +178,13 @@ impl Completion {
                 language: None,
                 word_chars: Vec::new(),
                 name: None,
+                folder: None,
             });
-            d.name = b
-                .meta
-                .path
-                .as_deref()
+            let path = b.meta.path.as_deref();
+            d.name = path
                 .and_then(|p| p.file_name())
                 .map(|n| n.to_string_lossy().into_owned());
+            d.folder = path.and_then(|p| p.parent()).map(Path::to_path_buf);
             if d.language != language {
                 d.word_chars = word_chars(language.as_deref());
                 d.language = language;
@@ -326,8 +335,53 @@ pub struct Sources<'a> {
     completion: &'a mut Completion,
 }
 
+impl Sources<'_> {
+    /// The names in the folder a path typed in a string names (relative to
+    /// the document's folder, or the open folder's for a new document).
+    fn path_candidates(&mut self, req: &CompletionRequest<'_>, dir: &str) -> Vec<Candidate> {
+        let c = &mut *self.completion;
+        let base = c
+            .docs
+            .get(&req.buffer)
+            .and_then(|d| d.folder.clone())
+            .or_else(|| c.folder.as_ref().map(|f| f.root().to_path_buf()));
+        let (Some(folder), Some(ctx)) = (
+            crate::path_completion::resolve(dir, base.as_deref()),
+            c.ctx.clone(),
+        ) else {
+            return Vec::new();
+        };
+        let Some(entries) = c.paths.entries(&folder, c.now, &ctx) else {
+            return Vec::new();
+        };
+        // Folders end with the separator the path already uses.
+        let sep = if dir.ends_with('\\') { '\\' } else { '/' };
+        let pattern = complete::Pattern::new(req.prefix);
+        entries
+            .iter()
+            // Hidden names only when asked for.
+            .filter(|e| !e.name.starts_with('.') || req.prefix.starts_with('.'))
+            .filter(|e| pattern.is_empty() || pattern.might_match(&e.name))
+            .map(|e| {
+                let label = if e.dir {
+                    format!("{}{sep}", e.name)
+                } else {
+                    e.name.clone()
+                };
+                let mut cand = Candidate::new(label, Kind::Path, Source::Path);
+                // Folders first when nothing tells them apart.
+                cand.boost = if e.dir { 0.1 } else { 0.0 };
+                cand
+            })
+            .collect()
+    }
+}
+
 impl CompletionSource for Sources<'_> {
     fn candidates(&mut self, req: &CompletionRequest<'_>) -> Vec<Candidate> {
+        if let Some(dir) = req.path {
+            return self.path_candidates(req, dir);
+        }
         if let Some(folder) = self.completion.folder.as_mut() {
             folder.ask(req.prefix);
         }
@@ -473,11 +527,13 @@ impl CompletionSource for Sources<'_> {
     }
 
     fn generation(&self) -> u64 {
-        self.completion.folder.as_ref().map_or(0, |f| f.answered)
+        let c = &self.completion;
+        c.folder.as_ref().map_or(0, |f| f.answered) + c.paths.answered
     }
 
     fn waiting(&self) -> bool {
-        self.completion.folder.as_ref().is_some_and(|f| f.waiting())
+        let c = &self.completion;
+        c.folder.as_ref().is_some_and(|f| f.waiting()) || c.paths.waiting()
     }
 
     fn members(&self, buffer: BufferId) -> bool {

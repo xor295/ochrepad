@@ -26,6 +26,7 @@ pub mod line_set;
 pub mod log_rules;
 pub mod logo;
 pub mod macro_ui;
+pub mod path_completion;
 pub mod preview;
 pub mod safe_images;
 pub mod search_results;
