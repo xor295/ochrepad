@@ -365,3 +365,28 @@ fn paths_in_strings_complete_from_the_documents_folder() {
     typ(&mut h, " nota");
     assert!(labels(&h).is_empty());
 }
+
+#[test]
+fn the_other_documents_and_the_folder_can_be_left_out() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.txt"), "folderword\n").unwrap();
+    let mut h = harness("elsewhere_defined\n");
+    h.state_mut().settings.completion_other_documents = false;
+    h.state_mut().settings.completion_folder = false;
+    h.state_mut().open_folder(dir.path());
+    h.state_mut().new_file();
+    h.run();
+    for _ in 0..100 {
+        h.step();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    h.run();
+    assert!(h.state().completion.folder().is_none(), "not indexed");
+    typ(&mut h, "else");
+    assert!(labels(&h).is_empty());
+    // Turned back on, the other document's words come back.
+    key(&mut h, Modifiers::NONE, Key::Escape);
+    h.state_mut().settings.completion_other_documents = true;
+    typ(&mut h, " else");
+    assert_eq!(labels(&h), ["elsewhere_defined"]);
+}

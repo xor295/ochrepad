@@ -116,6 +116,11 @@ pub struct AppSettings {
     pub completion_min_chars: usize,
     /// Enter accepts a completion (Tab always does).
     pub completion_enter_accepts: bool,
+    /// Completion offers the words of the other open documents.
+    pub completion_other_documents: bool,
+    /// Completion offers the open folder's words (which are indexed on a
+    /// thread).
+    pub completion_folder: bool,
     pub recent_folders: Vec<PathBuf>,
     pub recent_files: Vec<PathBuf>,
 }
@@ -165,6 +170,8 @@ impl Default for AppSettings {
             completion_auto: true,
             completion_min_chars: 2,
             completion_enter_accepts: true,
+            completion_other_documents: true,
+            completion_folder: true,
             recent_folders: Vec::new(),
             recent_files: Vec::new(),
         }
@@ -407,6 +414,19 @@ impl AppSettings {
                         "Enter accepts a suggestion (Tab always does)",
                     ),
                 );
+                ui.end_row();
+
+                ui.label("");
+                ui.add_enabled_ui(self.completion, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label("Also from");
+                        ui.checkbox(&mut self.completion_other_documents, "other open documents");
+                        ui.checkbox(&mut self.completion_folder, "the open folder")
+                            .on_hover_text(
+                                "Its files are read in the background, and what is found is kept                                  in ochrepad's data folder",
+                            );
+                    });
+                });
                 ui.end_row();
 
                 ui.label("Terminal shell");

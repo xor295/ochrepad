@@ -89,6 +89,9 @@ pub struct Completion {
     now: f64,
     /// Folder listings for paths typed in strings.
     paths: crate::path_completion::PathLister,
+    /// Only the document's own words, not the other open documents' (a
+    /// preference).
+    pub only_own_document: bool,
     ctx: Option<egui::Context>,
 }
 
@@ -425,6 +428,9 @@ impl CompletionSource for Sources<'_> {
         // last, and their definitions.
         for (buffer, d) in &c.docs {
             let is_own = *buffer == req.buffer;
+            if !is_own && c.only_own_document {
+                continue;
+            }
             let most = d.found.words.most().max(1) as f32;
             for (w, count) in d.found.words.best(&pattern, PER_SOURCE) {
                 let frequent = (count as f32).ln_1p() / most.ln_1p();

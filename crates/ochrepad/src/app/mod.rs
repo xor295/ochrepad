@@ -1060,7 +1060,12 @@ impl OchrepadApp {
             ui.ctx().request_repaint();
         }
         self.visible.clear();
-        let folder = self.tree.as_ref().map(|t| t.root().to_path_buf());
+        let folder = self
+            .tree
+            .as_ref()
+            .filter(|_| self.settings.completion_folder)
+            .map(|t| t.root().to_path_buf());
+        self.completion.only_own_document = !self.settings.completion_other_documents;
         if !self.settings.completion {
             self.completion.stop();
         } else if self.completion.tick(

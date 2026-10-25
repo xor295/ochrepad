@@ -91,7 +91,8 @@ back into focus.
 **Settings > Preferences > Completion** turns completion on or off, sets
 whether the list opens while you type and after how many characters (1 to
 5), and whether Enter inserts a suggestion (Tab always does; with Enter off,
-Enter always breaks the line).
+Enter always breaks the line). **Also from** leaves out the other open documents'
+words, or the open folder's (which then is not indexed at all).
 
 The key that opens the list is `"ShowCompletions"` in the keymap (see
 [Key bindings](keymap.md)).
