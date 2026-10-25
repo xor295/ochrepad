@@ -179,6 +179,41 @@ fn ctrl_click_on_a_compiler_location_opens_the_file_there() {
 }
 
 #[test]
+fn a_terminal_not_shown_still_notices_its_shell_ending() {
+    let mut h = harness();
+    key(&mut h, Modifiers::COMMAND, Key::Backtick);
+    let first = only_terminal(&h);
+    assert!(wait_for(&mut h, |a| screen(a, first)
+        .iter()
+        .any(|l| !l.is_empty())));
+    // A second terminal in the same pane hides the first.
+    key(&mut h, Modifiers::COMMAND | Modifiers::SHIFT, Key::Backtick);
+    assert_ne!(h.state().focused_terminal(), Some(first));
+    h.state()
+        .terminals
+        .get(first)
+        .unwrap()
+        .write(b"exit\r".to_vec());
+    assert!(wait_for(&mut h, |a| a
+        .terminals
+        .get(first)
+        .is_some_and(|t| t.tab_title().ends_with("(ended)"))));
+}
+
+#[test]
+fn file_close_closes_a_focused_terminal() {
+    let mut h = harness();
+    key(&mut h, Modifiers::COMMAND, Key::Backtick);
+    let id = only_terminal(&h);
+    h.get_by_label("File").click();
+    h.run();
+    h.get_by_label_contains("Close Ctrl+W").click();
+    h.run();
+    assert!(h.state().terminals.get(id).is_none());
+    assert_eq!(h.state().tabs().len(), 1, "the editor stays");
+}
+
+#[test]
 fn a_terminal_looks_right() {
     let mut app = OchrepadApp::new();
     // No shell starts, so the screen holds only what is fed to it.

@@ -39,6 +39,9 @@ const FOLLOW_SECS: f64 = 0.1;
 const FOLLOW_TAIL: u64 = 4096;
 /// More text than this appended at once is read by reloading the file.
 const FOLLOW_MAX_APPEND: u64 = 64 * 1024 * 1024;
+/// Files larger than this ask before reloading even with silent reloads on:
+/// reading them would hold up the window, change after change.
+const SILENT_RELOAD_MAX: u64 = 16 * 1024 * 1024;
 
 type Stamp = (SystemTime, u64);
 
@@ -237,8 +240,12 @@ impl OchrepadApp {
         if change == DiskChange::Modified
             && self.settings.reload_silently
             && self.editor.buffer(buffer).is_some_and(|b| !b.is_dirty())
+            && std::fs::metadata(&path).is_ok_and(|m| m.len() <= SILENT_RELOAD_MAX)
         {
-            self.reload_from_disk(buffer);
+            if !self.reload_from_disk(buffer) {
+                // Said once (in the message); not again for every change.
+                self.record_disk_stamp(buffer);
+            }
             return;
         }
         if !self.external.queue.iter().any(|(b, _)| *b == buffer) {

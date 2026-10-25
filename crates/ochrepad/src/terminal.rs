@@ -61,9 +61,16 @@ impl ShellCommand {
     }
 }
 
+/// The platform's shell (below), worked out once: on Windows it looks
+/// through `PATH` on disk, which must not happen every frame.
+pub fn default_shell() -> ShellCommand {
+    static SHELL: std::sync::OnceLock<ShellCommand> = std::sync::OnceLock::new();
+    SHELL.get_or_init(platform_shell).clone()
+}
+
 /// Windows: PowerShell 7 when it is on `PATH`, else Windows PowerShell.
 #[cfg(windows)]
-pub fn default_shell() -> ShellCommand {
+fn platform_shell() -> ShellCommand {
     let on_path = |exe: &str| {
         std::env::var_os("PATH")
             .is_some_and(|p| std::env::split_paths(&p).any(|dir| dir.join(exe).is_file()))
@@ -81,7 +88,7 @@ pub fn default_shell() -> ShellCommand {
 
 /// Linux: `$SHELL`, else `/bin/sh`.
 #[cfg(not(windows))]
-pub fn default_shell() -> ShellCommand {
+fn platform_shell() -> ShellCommand {
     let program = std::env::var("SHELL")
         .ok()
         .filter(|s| !s.trim().is_empty())
@@ -160,6 +167,8 @@ pub struct Terminal {
     /// The title the program set (OSC 0/2), if any.
     pub title: Option<String>,
     pub ended: Option<Ended>,
+    /// The I/O thread finished (after reading the shell's last output).
+    io_done: bool,
     /// The line saying the shell ended was written.
     announced: bool,
     /// The widget's state.
@@ -192,6 +201,7 @@ impl Terminal {
             started: false,
             title: None,
             ended: None,
+            io_done: false,
             announced: false,
             view: Default::default(),
         }
@@ -269,6 +279,7 @@ impl Terminal {
         self.shutdown();
         self.started = false;
         self.ended = None;
+        self.io_done = false;
         self.announced = false;
         self.title = None;
         self.start(ctx, self.size);
@@ -322,13 +333,19 @@ impl Terminal {
                 TermEvent::ChildExit(status) => {
                     self.ended = Some(Ended::Exited(status.code()));
                 }
-                TermEvent::Exit if self.ended.is_none() => {
-                    self.ended = Some(Ended::Exited(None));
+                TermEvent::Exit => {
+                    self.io_done = true;
+                    if self.ended.is_none() {
+                        self.ended = Some(Ended::Exited(None));
+                    }
                 }
                 _ => {}
             }
         }
+        // Only once the I/O thread is done, so the line comes after the
+        // shell's last output and is not parsed alongside it.
         if let Some(Ended::Exited(code)) = self.ended
+            && self.io_done
             && !self.announced
         {
             self.announced = true;
@@ -412,7 +429,8 @@ fn spawn(
     term: Arc<FairMutex<Term<Listener>>>,
     listener: Listener,
 ) -> std::io::Result<Notifier> {
-    let env = HashMap::from([
+    #[allow(unused_mut)]
+    let mut env = HashMap::from([
         ("TERM".to_owned(), "xterm-256color".to_owned()),
         ("COLORTERM".to_owned(), "truecolor".to_owned()),
         ("TERM_PROGRAM".to_owned(), "ochrepad".to_owned()),
@@ -421,6 +439,12 @@ fn spawn(
             env!("CARGO_PKG_VERSION").to_owned(),
         ),
     ]);
+    // alacritty sets WINDOWID and ALACRITTY_WINDOW_ID to the number given
+    // to `tty::new`; it names no X11 window, and this is not Alacritty.
+    #[cfg(not(windows))]
+    for name in ["WINDOWID", "ALACRITTY_WINDOW_ID"] {
+        env.insert(name.to_owned(), String::new());
+    }
     let options = tty::Options {
         shell: Some(tty::Shell::new(
             program_arg(&shell.program),

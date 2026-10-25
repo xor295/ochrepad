@@ -165,7 +165,7 @@ changes or deletes one of them, ochrepad notices a moment after the change (so
 a program that writes a file in several steps is only noticed once).
 
 A file with no unsaved changes simply reloads, as Notepad++ does with "Update
-silently". To be asked instead, turn off **Settings > Preferences > Files
+silently" (files over 16 MB still ask, as reading one takes a moment). To be asked instead, turn off **Settings > Preferences > Files
 changed elsewhere: Reload them without asking**. Otherwise ochrepad asks what
 to do:
 

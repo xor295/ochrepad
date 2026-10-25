@@ -1028,6 +1028,11 @@ impl OchrepadApp {
         if self.results.poll() {
             ui.ctx().request_repaint();
         }
+        // Terminals in tabs not shown still answer their programs and
+        // notice their shells ending.
+        for t in self.terminals.iter_mut() {
+            crate::terminal_view::poll(ui, t);
+        }
         if self.results.open {
             let match_bg = crate::theme::match_bg(ui.visuals());
             let go = Panel::bottom("search-results")
@@ -1619,9 +1624,10 @@ impl OchrepadApp {
         }
         ui.separator();
         if item(ui, "Close", "Ctrl+W") {
-            match viewer {
-                Some(id) => self.close_viewer(id),
-                None => self.close_view(self.active),
+            match (self.focused_terminal(), viewer) {
+                (Some(id), _) => self.close_terminal(id),
+                (None, Some(id)) => self.close_viewer(id),
+                (None, None) => self.close_view(self.active),
             }
         }
         if ui

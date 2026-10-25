@@ -201,6 +201,13 @@ impl Grid {
     }
 }
 
+/// Handles what `t`'s program reported (titles, answers to its queries,
+/// its exit), whether or not its tab is drawn this frame.
+pub fn poll(ui: &Ui, t: &mut Terminal) {
+    let colors = Colors::new(ui.visuals());
+    t.poll(ui.ctx(), &|i| colors.rgb(i));
+}
+
 /// What the widget did that the app acts on.
 pub struct TerminalOutput {
     pub response: Response,
