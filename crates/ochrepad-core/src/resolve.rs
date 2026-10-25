@@ -103,6 +103,24 @@ pub(crate) fn resolve(
                 Edit::new(s.start(), s.end(), text.as_str())
             })
         }
+        Action::Complete {
+            before,
+            after,
+            text,
+        } => {
+            // Each caret's range stops where the one before it ended and at
+            // the next selection, so close carets never overlap.
+            let ranges = sels.ranges();
+            let mut last_end = ByteOffset(0);
+            edit_each(doc, sels, EditKind::Other, |i, s| {
+                let edit = complete_edit(doc, s, *before, *after, text);
+                let next = ranges.get(i + 1).map_or(doc.len(), Selection::start);
+                let start = edit.start.max(last_end).min(s.start());
+                let end = edit.end.min(next).max(s.end());
+                last_end = end;
+                Edit::new(start, end, text.as_str())
+            })
+        }
         Action::Paste(text) => {
             // One line per selection when the counts match (e.g. a multi-caret
             // copy pasted back), otherwise the whole text at every selection.
@@ -262,6 +280,7 @@ pub(crate) fn resolve(
         }
         // Handled by `resolve_search` / `Editor`.
         Action::Undo
+        | Action::Edits(_)
         | Action::Redo
         | Action::Fold
         | Action::Unfold
@@ -754,4 +773,76 @@ pub fn word_at(doc: &Document, p: ByteOffset) -> (ByteOffset, ByteOffset) {
         end = n;
     }
     (start, end)
+}
+
+/// [`Action::Edits`]: the ranges replaced, each selection mapped through
+/// them. `None` if a range is outside `doc`, off a character boundary, or
+/// overlaps another (inserts at one place are kept in order).
+pub(crate) fn edits(
+    doc: &Document,
+    sels: &SelectionSet,
+    edits: &[crate::action::TextEdit],
+) -> Option<Resolved> {
+    let mut sorted: Vec<&crate::action::TextEdit> = edits.iter().collect();
+    sorted.sort_by_key(|e| (e.start, e.end));
+    let fits = |p: ByteOffset| p <= doc.len() && doc.is_char_boundary(p);
+    let apart = sorted.windows(2).all(|w| w[0].end <= w[1].start);
+    if !apart
+        || sorted
+            .iter()
+            .any(|e| e.start > e.end || !fits(e.start) || !fits(e.end))
+    {
+        return None;
+    }
+    let changes = ChangeSet::new(
+        doc.len(),
+        sorted
+            .iter()
+            .map(|e| Edit::new(e.start, e.end, e.text.as_str()))
+            .collect(),
+    );
+    let after = sels.map(|s| {
+        Selection::new(
+            changes.map_position(s.anchor, Bias::After),
+            changes.map_position(s.head, Bias::After),
+        )
+    });
+    Some(if changes.is_empty() {
+        Resolved::Selections(after)
+    } else {
+        Resolved::Edit {
+            changes,
+            after,
+            kind: EditKind::Other,
+        }
+    })
+}
+
+/// [`Action::Complete`] at one selection: the selection itself, or the
+/// `before` characters before the caret and the `after` after it, within
+/// its line.
+fn complete_edit(doc: &Document, s: &Selection, before: usize, after: usize, text: &str) -> Edit {
+    if !s.is_empty() {
+        return Edit::new(s.start(), s.end(), text);
+    }
+    let line = doc.line_of(s.head);
+    let (line_start, line_end) = (doc.line_start(line), doc.line_end(line));
+    let back: usize = doc
+        .slice(line_start..s.head)
+        .chars()
+        .rev()
+        .take(before)
+        .map(char::len_utf8)
+        .sum();
+    let ahead: usize = doc
+        .slice(s.head..line_end)
+        .chars()
+        .take(after)
+        .map(char::len_utf8)
+        .sum();
+    Edit::new(
+        ByteOffset(s.head.0 - back),
+        ByteOffset(s.head.0 + ahead),
+        text,
+    )
 }

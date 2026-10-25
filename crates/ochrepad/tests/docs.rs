@@ -145,12 +145,14 @@ fn name(action: &Action) -> &'static str {
         Action::RemoveBookmarkedLines => "RemoveBookmarkedLines",
         Action::RemoveUnbookmarkedLines => "RemoveUnbookmarkedLines",
         Action::ReplaceBookmarkedLines(_) => "ReplaceBookmarkedLines",
+        Action::Complete { .. } => "Complete",
+        Action::Edits(_) => "Edits",
         Action::Undo => "Undo",
         Action::Redo => "Redo",
     }
 }
 
-const ALL: [&str; 79] = [
+const ALL: [&str; 81] = [
     "InsertText",
     "Paste",
     "InsertTab",
@@ -228,12 +230,15 @@ const ALL: [&str; 79] = [
     "RemoveBookmarkedLines",
     "RemoveUnbookmarkedLines",
     "ReplaceBookmarkedLines",
+    "Complete",
+    "Edits",
     "Undo",
     "Redo",
 ];
 
-/// Mouse-only actions: named in the docs, without an example.
-const MOUSE_ONLY: [&str; 2] = ["SetSelections", "ColumnSelect"];
+/// Actions with absolute positions (mouse selections, a language
+/// server's edits): named in the docs, without an example.
+const MOUSE_ONLY: [&str; 3] = ["SetSelections", "ColumnSelect", "Edits"];
 
 #[test]
 fn keymap_examples_in_the_docs_are_valid_keymaps() {

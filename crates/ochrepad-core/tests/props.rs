@@ -156,6 +156,19 @@ fn action() -> impl Strategy<Value = Action> {
                 .collect();
             Action::SetSelections(SelectionSet::new(ranges, 0))
         }),
+        2 => (0usize..4, 0usize..3, short_text())
+            .prop_map(|(before, after, text)| Action::Complete { before, after, text }),
+        1 => prop::collection::vec((0usize..300, 0usize..300, short_text()), 0..4).prop_map(|v| {
+            Action::Edits(
+                v.into_iter()
+                    .map(|(a, b, text)| ochrepad_core::TextEdit {
+                        start: ByteOffset(a.min(b)),
+                        end: ByteOffset(a.max(b)),
+                        text,
+                    })
+                    .collect(),
+            )
+        }),
         2 => Just(Action::Undo),
         1 => Just(Action::Redo),
         2 => prop_oneof![

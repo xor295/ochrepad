@@ -164,12 +164,16 @@ fn match_positions(pattern: &str, label: &str, want: bool) -> Option<(i64, Vec<u
     // A prefix, ignoring case: the best kind of match.
     if ll[..pl.len()] == pl[..] {
         let same = p.iter().zip(&l).filter(|(a, b)| a == b).count() as i64;
-        let score = PREFIX
-            + AT_START
-            + pl.len() as i64 * (CHAR + RUN)
-            + same * SAME_CASE
+        let score = PREFIX + AT_START + pl.len() as i64 * (CHAR + RUN) + same * SAME_CASE
             - (l.len() - p.len()) as i64 / 4;
-        return Some((score, if want { (0..p.len()).collect() } else { Vec::new() }));
+        return Some((
+            score,
+            if want {
+                (0..p.len()).collect()
+            } else {
+                Vec::new()
+            },
+        ));
     }
     // Otherwise the best placement: dp[i][j] is the best score with
     // pattern char i at label char j. Short patterns only match at part
@@ -257,7 +261,11 @@ fn match_positions(pattern: &str, label: &str, want: bool) -> Option<(i64, Vec<u
 /// The candidates that match `pattern`, best first, without duplicate
 /// labels (the best-ranked one is kept). A candidate equal to the pattern
 /// is left out: there is nothing to complete. At most `limit` are kept.
-pub fn rank(pattern: &str, candidates: impl IntoIterator<Item = Candidate>, limit: usize) -> Vec<Ranked> {
+pub fn rank(
+    pattern: &str,
+    candidates: impl IntoIterator<Item = Candidate>,
+    limit: usize,
+) -> Vec<Ranked> {
     let mut ranked: Vec<Ranked> = candidates
         .into_iter()
         .filter(|c| c.label != pattern)
@@ -307,7 +315,11 @@ pub fn word_start(doc: &Document, caret: ByteOffset, extra: &[char]) -> ByteOffs
 
 /// The words of `text`: runs of word chars at least `min_len` chars long
 /// that do not start with a digit.
-pub fn words<'a>(text: &'a str, extra: &'a [char], min_len: usize) -> impl Iterator<Item = &'a str> + 'a {
+pub fn words<'a>(
+    text: &'a str,
+    extra: &'a [char],
+    min_len: usize,
+) -> impl Iterator<Item = &'a str> + 'a {
     text.split(move |c: char| !is_word_char(c, extra))
         .filter(move |w| {
             !w.is_empty()
@@ -323,7 +335,9 @@ mod tests {
     fn best(pattern: &str, labels: &[&str]) -> Vec<String> {
         rank(
             pattern,
-            labels.iter().map(|l| Candidate::new(*l, Kind::Word, Source::Word)),
+            labels
+                .iter()
+                .map(|l| Candidate::new(*l, Kind::Word, Source::Word)),
             50,
         )
         .into_iter()
@@ -341,7 +355,10 @@ mod tests {
             "GTLookup",
             "getter",
         ];
-        assert_eq!(best("get", &labels)[..3], ["getter", "getTextLength", "get_text_length"]);
+        assert_eq!(
+            best("get", &labels)[..3],
+            ["getter", "getTextLength", "get_text_length"]
+        );
         let r = best("gtl", &labels);
         assert!(r.contains(&"getTextLength".to_owned()));
         assert!(r.contains(&"get_text_length".to_owned()));
@@ -353,13 +370,22 @@ mod tests {
     #[test]
     fn short_patterns_match_initials_not_scattered_letters() {
         assert!(match_score("gt", "getText").is_some());
-        assert!(match_score("gt", "gutter").is_none(), "t is not a part start");
+        assert!(
+            match_score("gt", "gutter").is_none(),
+            "t is not a part start"
+        );
         assert!(match_score("gt", "giraffe_tail").is_some());
-        assert!(match_score("gr", "magnifier").is_none(), "not at a part start");
+        assert!(
+            match_score("gr", "magnifier").is_none(),
+            "not at a part start"
+        );
         assert!(match_score("xy", "xylophone").is_some());
         // Three or more: any subsequence from a part start.
         assert!(match_score("gtt", "gutter").is_some());
-        assert!(match_score("utt", "gutter").is_none(), "must start at a part");
+        assert!(
+            match_score("utt", "gutter").is_none(),
+            "must start at a part"
+        );
     }
 
     #[test]
@@ -436,7 +462,10 @@ mod tests {
         assert_eq!(word_start(&doc, caret, &[]), caret);
         let doc = Document::new("color: var(--main-bg");
         let caret = doc.len();
-        assert_eq!(doc.slice(word_start(&doc, caret, &['-'])..caret), "--main-bg");
+        assert_eq!(
+            doc.slice(word_start(&doc, caret, &['-'])..caret),
+            "--main-bg"
+        );
     }
 
     #[test]

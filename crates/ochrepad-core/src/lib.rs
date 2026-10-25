@@ -30,7 +30,7 @@ pub mod text_tools;
 pub mod transform;
 pub mod view;
 
-pub use action::{Action, ActionError, Direction, Motion};
+pub use action::{Action, ActionError, Direction, Motion, TextEdit};
 pub use bookmarks::Bookmarks;
 pub use buffer::{Buffer, BufferId, CommentSyntax, FileMeta, Indent, LineEdit, LineEnding};
 pub use changeset::{Bias, ChangeSet, Edit};

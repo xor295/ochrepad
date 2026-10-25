@@ -109,6 +109,7 @@ Motions for `MoveCursor`:
 | `{"Action": {"InsertText": "→"}}` | Types the given text at every caret. |
 | `{"Action": {"Paste": "TODO: "}}` | Inserts fixed text like paste does: with several carets and as many lines as carets, one line goes to each. |
 | `{"Action": {"PasteBlock": "a\nb\nc"}}` | Inserts the lines as a column block, one per line from the caret down. |
+| `{"Action": {"Complete": {"before": 0, "after": 0, "text": "println!"}}}` | What accepting a completion does: at every caret, replaces the `before` characters before it and the `after` characters after it (within the line) with the text, as one undo step. |
 | `{"Action": "DeleteBackward"}` | Backspace. |
 | `{"Action": "DeleteForward"}` | Delete. |
 | `{"Action": "DeleteWordBackward"}` | Deletes to the previous word boundary. |
@@ -227,4 +228,5 @@ In JSON, a backslash is written twice (`"\\s+$"`).
 ### Not for key bindings
 
 `SetSelections` and `ColumnSelect` are how mouse clicks and drags select
-text. They take absolute positions, so they make no sense on a key.
+text, and `Edits` is how a language server's changes (formatting, a rename)
+are applied. They take absolute positions, so they make no sense on a key.
