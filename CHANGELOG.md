@@ -8,6 +8,8 @@ adds features and a patch version fixes bugs).
 Each release's section becomes its GitHub release notes, so write it for
 people downloading the release.
 
+## [Unreleased]
+
 ## [0.4.0] - 2026-10-25
 
 ### Added
@@ -402,7 +404,8 @@ The first release, for Windows and Linux.
   highlighting size limit; an editable keymap; recent files; drag and drop.
 - A warm light and dark theme with ochre accents.
 
-[Unreleased]: https://github.com/xor295/ochrepad/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/xor295/ochrepad/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/xor295/ochrepad/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/xor295/ochrepad/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/xor295/ochrepad/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/xor295/ochrepad/compare/v0.1.0...v0.2.0

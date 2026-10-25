@@ -2868,7 +2868,7 @@ dependencies = [
 
 [[package]]
 name = "ochrepad"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "alacritty_terminal",
  "eframe",
@@ -2893,7 +2893,7 @@ dependencies = [
 
 [[package]]
 name = "ochrepad-core"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "md-5",
  "proptest",
@@ -2910,7 +2910,7 @@ dependencies = [
 
 [[package]]
 name = "ochrepad-fileio"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "chardetng",
  "directories",
@@ -2927,7 +2927,7 @@ dependencies = [
 
 [[package]]
 name = "ochrepad-lsp"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "lsp-types",
  "ochrepad-core",
@@ -2938,7 +2938,7 @@ dependencies = [
 
 [[package]]
 name = "ochrepad-syntax"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "ochrepad-core",
  "proptest",
