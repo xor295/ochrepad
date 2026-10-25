@@ -50,6 +50,64 @@ pub fn line_col_to_byte(doc: &Document, lc: LineCol) -> ByteOffset {
     ByteOffset((start.0 + lc.col.0).min(doc.line_end(lc.line).0))
 }
 
+/// What a language server's columns count (LSP's position encodings).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ColumnUnits {
+    Utf8,
+    /// The protocol's default.
+    Utf16,
+    Utf32,
+}
+
+impl ColumnUnits {
+    fn of(self, c: char) -> usize {
+        match self {
+            ColumnUnits::Utf8 => c.len_utf8(),
+            ColumnUnits::Utf16 => c.len_utf16(),
+            ColumnUnits::Utf32 => 1,
+        }
+    }
+}
+
+/// `pos` as a language server's (line, column), the column in `units`
+/// from the line's start. Numbers past `u32` saturate.
+pub fn to_lsp_position(doc: &Document, pos: ByteOffset, units: ColumnUnits) -> (u32, u32) {
+    let line = doc.line_of(pos);
+    let start = doc.line_start(line);
+    let column = match units {
+        ColumnUnits::Utf8 => pos.0 - start.0,
+        _ => doc.slice(start..pos).chars().map(|c| units.of(c)).sum(),
+    };
+    (sat(line), sat(column))
+}
+
+/// The offset a language server's (line, column) names. Clamped, since a
+/// server's numbers are not to be trusted: a line past the end is the end
+/// of the document, a column past the line's end is the line's end, and a
+/// column inside a character is that character's start.
+pub fn from_lsp_position(doc: &Document, line: u32, column: u32, units: ColumnUnits) -> ByteOffset {
+    let line = line as usize;
+    if line >= doc.line_count() {
+        return doc.len();
+    }
+    let (start, end) = (doc.line_start(line), doc.line_end(line));
+    let mut left = column as usize;
+    let mut at = start.0;
+    for c in doc.slice(start..end).chars() {
+        let n = units.of(c);
+        if left < n {
+            break;
+        }
+        left -= n;
+        at += c.len_utf8();
+    }
+    ByteOffset(at)
+}
+
+fn sat(n: usize) -> u32 {
+    u32::try_from(n).unwrap_or(u32::MAX)
+}
+
 /// The next grapheme boundary after `pos` (or the end of the document).
 pub fn next_grapheme_boundary(doc: &Document, pos: ByteOffset) -> ByteOffset {
     let len = doc.len();
@@ -299,6 +357,37 @@ pub fn wrap_line(text: &str, width: usize, tab_width: usize) -> Wrapped {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lsp_positions_count_the_servers_units_and_clamp() {
+        let doc = Document::new(
+            "a😀b
+xy",
+        );
+        let b = ByteOffset(5);
+        assert_eq!(to_lsp_position(&doc, b, ColumnUnits::Utf8), (0, 5));
+        assert_eq!(to_lsp_position(&doc, b, ColumnUnits::Utf16), (0, 3));
+        assert_eq!(to_lsp_position(&doc, b, ColumnUnits::Utf32), (0, 2));
+        // Inside the emoji's surrogate pair: its start.
+        assert_eq!(
+            from_lsp_position(&doc, 0, 2, ColumnUnits::Utf16),
+            ByteOffset(1)
+        );
+        assert_eq!(
+            from_lsp_position(&doc, 0, 3, ColumnUnits::Utf8),
+            ByteOffset(1)
+        );
+        // Past the line's end, past the last line.
+        assert_eq!(
+            from_lsp_position(&doc, 0, 99, ColumnUnits::Utf16),
+            ByteOffset(6)
+        );
+        assert_eq!(from_lsp_position(&doc, 9, 0, ColumnUnits::Utf16), doc.len());
+        assert_eq!(
+            from_lsp_position(&doc, 1, u32::MAX, ColumnUnits::Utf8),
+            doc.len()
+        );
+    }
 
     /// The rows of `text` wrapped at `width` (tab width 4).
     fn rows(text: &str, width: usize) -> Vec<&str> {
