@@ -232,6 +232,15 @@ impl OchrepadApp {
         {
             return;
         }
+        // An unmodified document simply follows its file (Notepad++'s
+        // "Update silently"); a failed reload says why.
+        if change == DiskChange::Modified
+            && self.settings.reload_silently
+            && self.editor.buffer(buffer).is_some_and(|b| !b.is_dirty())
+        {
+            self.reload_from_disk(buffer);
+            return;
+        }
         if !self.external.queue.iter().any(|(b, _)| *b == buffer) {
             self.external.queue.push_back((buffer, change));
         }

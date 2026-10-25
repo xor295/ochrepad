@@ -42,7 +42,7 @@ A fast, native text editor in the spirit of Notepad++, written in Rust with
   kept, and saves are atomic ([more](docs/file-handling.md)).
 - **Nothing lost**: unsaved work is backed up every few seconds and comes
   back with your tabs next time. When another program changes an open
-  file, ochrepad offers to reload it ([more](docs/backups-and-session.md)).
+  file, ochrepad reloads it, or asks first if you have unsaved changes ([more](docs/backups-and-session.md)).
 - **Logs and huge files**: filter lines, color log levels, follow a growing
   file (tail -f), and open multi-gigabyte files read-only in an instant
   ([more](docs/logs.md)).

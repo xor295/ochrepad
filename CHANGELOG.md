@@ -15,6 +15,13 @@ people downloading the release.
 - A **?** menu with **About**, which shows the version, links to the
   GitHub repository and crates.io, and the license.
 
+### Changed
+
+- A file changed by another program reloads without asking when it has no
+  unsaved changes, as Notepad++'s "Update silently" does. **Settings >
+  Preferences > Files changed elsewhere** turns this off. Files with unsaved
+  changes, and deleted files, still ask.
+
 ## [0.3.1] - 2026-10-22
 
 ### Changed

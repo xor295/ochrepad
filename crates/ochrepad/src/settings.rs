@@ -99,6 +99,9 @@ pub struct AppSettings {
     pub sidebar_width: f32,
     /// View > Always on Top.
     pub always_on_top: bool,
+    /// A file changed by another program reloads without asking when it
+    /// has no unsaved changes (Notepad++'s "Update silently").
+    pub reload_silently: bool,
     pub recent_folders: Vec<PathBuf>,
     pub recent_files: Vec<PathBuf>,
 }
@@ -140,6 +143,7 @@ impl Default for AppSettings {
             show_sidebar: true,
             sidebar_width: 240.0,
             always_on_top: false,
+            reload_silently: true,
             recent_folders: Vec::new(),
             recent_files: Vec::new(),
         }
@@ -301,6 +305,13 @@ impl AppSettings {
 
                 ui.label("");
                 ui.checkbox(&mut self.write_through, "Also save files that have a name");
+                ui.end_row();
+
+                ui.label("Files changed elsewhere");
+                ui.checkbox(
+                    &mut self.reload_silently,
+                    "Reload them without asking when they have no unsaved changes",
+                );
                 ui.end_row();
 
                 ui.label("Undo history");

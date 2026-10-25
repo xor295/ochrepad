@@ -225,10 +225,31 @@ fn rewrite(path: &Path, text: &str) {
 }
 
 #[test]
+fn a_clean_file_changed_elsewhere_reloads_without_asking() {
+    let d = Dirs::new();
+    let file = d.file("watched.txt", "first\n");
+    let mut h = app(&d);
+    h.state_mut().open_path(&file);
+    h.run();
+    rewrite(&file, "second\n");
+    assert!(wait_for(&mut h, |a| a.buffer().doc().to_string() == "second\n"));
+    assert!(h.state().pending_disk_changes().is_empty());
+    assert!(
+        h.query_by_label_contains("was changed by another program")
+            .is_none()
+    );
+    assert!(!h.state().buffer().is_dirty());
+    // Undo brings back the text before the reload.
+    key(&mut h, Modifiers::COMMAND, Key::Z);
+    assert_eq!(text(&h), "first\n");
+}
+
+#[test]
 fn a_clean_file_changed_elsewhere_can_be_reloaded() {
     let d = Dirs::new();
     let file = d.file("watched.txt", "first\n");
     let mut h = app(&d);
+    h.state_mut().settings.reload_silently = false;
     h.state_mut().open_path(&file);
     h.run();
     rewrite(&file, "second\n");
