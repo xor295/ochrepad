@@ -42,6 +42,12 @@ pub trait CompletionSource {
     fn generation(&self) -> u64 {
         0
     }
+    /// Whether more candidates may come for the last request (a thread or
+    /// a server is still looking): an empty list then waits instead of
+    /// closing, until the generation changes.
+    fn waiting(&self) -> bool {
+        false
+    }
     /// The user accepted `text` for `prefix` (ranking learns from it).
     fn accepted(&mut self, _buffer: BufferId, _text: &str) {}
 }
@@ -107,6 +113,16 @@ pub struct CompletionState {
     /// Where the popup was drawn last frame: presses there are not the
     /// editor's.
     drawn: Option<Rect>,
+    /// Nothing to show yet, but the source is still looking.
+    waiting: Option<Waiting>,
+}
+
+/// A popup that had nothing to show while its source was still looking.
+struct Waiting {
+    start: ByteOffset,
+    prefix: String,
+    invoked: bool,
+    generation: u64,
 }
 
 impl CompletionState {
@@ -116,6 +132,7 @@ impl CompletionState {
 
     pub fn close(&mut self) {
         self.popup = None;
+        self.waiting = None;
     }
 
     /// The popup was not drawn this frame (its caret is off screen).
@@ -125,7 +142,7 @@ impl CompletionState {
 
     /// Whether the popup is open or about to open (typed, Ctrl+Space).
     pub fn active(&self) -> bool {
-        self.popup.is_some() || self.typed || self.invoke
+        self.popup.is_some() || self.typed || self.invoke || self.waiting.is_some()
     }
 
     /// Whether `p` is on the popup (as drawn last frame).
@@ -236,6 +253,7 @@ impl CompletionState {
             std::mem::take(&mut self.invoke),
             std::mem::take(&mut self.typed),
         );
+        let waiting = self.waiting.take();
         let Some(source) = source else {
             self.popup = None;
             return;
@@ -251,7 +269,10 @@ impl CompletionState {
         if self.popup.as_ref().is_some_and(|p| p.start != start) {
             self.popup = None;
         }
-        let invoked = invoke || self.popup.as_ref().is_some_and(|p| p.invoked);
+        let waiting = waiting.filter(|w| w.start == start);
+        let invoked = invoke
+            || self.popup.as_ref().is_some_and(|p| p.invoked)
+            || waiting.as_ref().is_some_and(|w| w.invoked);
         // Not by itself in comments and strings (Ctrl+Space still works).
         if !invoked && context != ochrepad_syntax::TextContext::Code {
             self.popup = None;
@@ -259,12 +280,22 @@ impl CompletionState {
         }
         let wanted = invoke
             || (open && self.popup.is_some())
+            || waiting.is_some()
             || (typed && self.settings.auto && prefix.chars().count() >= self.settings.min_chars);
         if !wanted || (!invoked && prefix.chars().count() < self.settings.min_chars) {
             self.popup = None;
             return;
         }
         let generation = source.generation();
+        // Still waiting, and nothing new to ask.
+        if let Some(w) = waiting
+            && !invoke
+            && w.prefix == prefix
+            && w.generation == generation
+        {
+            self.waiting = Some(w);
+            return;
+        }
         let stale = self
             .popup
             .as_ref()
@@ -304,6 +335,14 @@ impl CompletionState {
         };
         if items.is_empty() {
             self.popup = None;
+            if source.waiting() {
+                self.waiting = Some(Waiting {
+                    start,
+                    prefix,
+                    invoked,
+                    generation,
+                });
+            }
             return;
         }
         // Keep the selected item when the list is refreshed.

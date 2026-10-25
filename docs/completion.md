@@ -54,7 +54,11 @@ picked recently. Words shorter than three characters are not offered.
 When a folder is open (**File > Open Folder**), ochrepad reads its files in
 the background, respecting `.gitignore`, and the status bar says so while
 it does. Files over 2 MB, binary files and files past the first 20,000 are
-left out. What it learns is kept in ochrepad's data folder, so the next time
+left out, and definitions are only looked for in files up to 256 KB (larger
+ones are mostly generated). The first time, words are ready within seconds
+even for a large folder; finding definitions takes longer (a few seconds for
+a few hundred files, minutes for tens of thousands) and uses up to four
+processor cores. What it learns is kept in ochrepad's data folder, so the next time
 the folder opens it only reads the files that changed. A file you save is
 read again at once; files other programs change (a build, `git`, the
 terminal) are noticed within 30 seconds, or when ochrepad's window comes

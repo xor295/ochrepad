@@ -25,6 +25,10 @@ const NEARBY_LINES: usize = 150;
 /// Documents larger than this are not counted (their nearby lines still
 /// are).
 const MAX_DOC_BYTES: usize = 16 << 20;
+/// The best matches taken from each document's and the folder's words
+/// (and the folder's names) before ranking: a large folder has hundreds of
+/// thousands, too many to rank on every keystroke.
+const PER_SOURCE: usize = 200;
 /// Definitions are looked for in documents up to this size (the syntax
 /// parser is slower than counting words).
 const MAX_SYMBOL_BYTES: usize = 2 << 20;
@@ -309,6 +313,9 @@ pub struct Sources<'a> {
 
 impl CompletionSource for Sources<'_> {
     fn candidates(&mut self, req: &CompletionRequest<'_>) -> Vec<Candidate> {
+        if let Some(folder) = self.completion.folder.as_mut() {
+            folder.ask(req.prefix);
+        }
         let c = &*self.completion;
         let own = c.docs.get(&req.buffer);
         let chars = own.map(|d| d.word_chars.clone()).unwrap_or_default();
@@ -342,7 +349,7 @@ impl CompletionSource for Sources<'_> {
         for (buffer, d) in &c.docs {
             let is_own = *buffer == req.buffer;
             let most = d.found.words.most().max(1) as f32;
-            for (w, count) in d.found.words.matching(&pattern) {
+            for (w, count) in d.found.words.best(&pattern, PER_SOURCE) {
                 let frequent = (count as f32).ln_1p() / most.ln_1p();
                 let boost = if is_own { 0.25 } else { 0.1 } + 0.15 * frequent;
                 offer(&mut out, w, Kind::Word, Source::Word, boost);
@@ -375,23 +382,22 @@ impl CompletionSource for Sources<'_> {
                 }
             }
         }
-        // The open folder: its words, then its definitions.
-        if let Some(snapshot) = c.folder.as_ref().and_then(|f| f.snapshot.as_ref()) {
-            let most = snapshot.words.most().max(1) as f32;
-            for (w, count) in snapshot.words.matching(&pattern) {
-                if w == req.prefix {
+        // The open folder: its best words and names, found on a thread
+        // (asked above). Until the answer for this prefix comes, the last
+        // answer's that still match (typing on narrows them).
+        if let Some(m) = c.folder.as_ref().and_then(|f| f.matches.as_ref()) {
+            let most = m.snapshot.words.most().max(1) as f32;
+            for (w, count) in &m.words {
+                if w == req.prefix || !matches(w) {
                     continue;
                 }
-                let frequent = (count as f32).ln_1p() / most.ln_1p();
+                let frequent = (*count as f32).ln_1p() / most.ln_1p();
                 offer(&mut out, w, Kind::Word, Source::Word, 0.05 + 0.1 * frequent);
             }
-            for (name, _) in snapshot.names.matching(&pattern) {
-                if name == req.prefix || !complete::is_identifier(name, &chars) {
+            for (name, d) in &m.names {
+                if name == req.prefix || !matches(name) || !complete::is_identifier(name, &chars) {
                     continue;
                 }
-                let Some(d) = snapshot.definitions.get(name) else {
-                    continue;
-                };
                 let kind = match d.kind {
                     SymbolKind::Function => Kind::Function,
                     SymbolKind::Type => Kind::Type,
@@ -419,6 +425,14 @@ impl CompletionSource for Sources<'_> {
             }
         }
         out.into_values().collect()
+    }
+
+    fn generation(&self) -> u64 {
+        self.completion.folder.as_ref().map_or(0, |f| f.answered)
+    }
+
+    fn waiting(&self) -> bool {
+        self.completion.folder.as_ref().is_some_and(|f| f.waiting())
     }
 
     fn word_chars(&self, buffer: BufferId) -> &[char] {

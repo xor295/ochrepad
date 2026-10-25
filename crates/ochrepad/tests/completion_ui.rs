@@ -256,3 +256,54 @@ fn definitions_from_open_documents_are_offered_as_such() {
     assert_eq!(c.kind, ochrepad_core::complete::Kind::Function);
     assert_eq!(c.source, ochrepad_core::complete::Source::Definition);
 }
+
+/// Steps in real time until `done`, for at most 20 seconds.
+fn wait_until(
+    h: &mut Harness<'_, OchrepadApp>,
+    what: &str,
+    done: impl Fn(&Harness<'_, OchrepadApp>) -> bool,
+) {
+    let start = std::time::Instant::now();
+    while !done(h) {
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(20),
+            "timed out waiting for {what}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        h.step();
+    }
+}
+
+#[test]
+fn words_and_definitions_from_the_open_folder() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("lib.rs"),
+        "pub fn zebrafish_count() -> u32 { 0 }\n// a zebrafinch\n",
+    )
+    .unwrap();
+    let mut h = harness("");
+    h.state_mut().open_folder(dir.path());
+    h.run();
+    wait_until(&mut h, "the folder's index", |h| {
+        h.state()
+            .completion
+            .folder()
+            .is_some_and(|f| f.progress == ochrepad::folder_index::Progress::Ready)
+    });
+    rust(&mut h);
+    // Only the folder has these words: the popup waits for its thread.
+    typ(&mut h, "zeb");
+    wait_until(&mut h, "the folder's answer", |h| labels(h).len() == 2);
+    let shown = h.state().view_state().unwrap().completion.shown();
+    let fish = shown.iter().find(|c| c.label == "zebrafish_count");
+    let fish = fish.expect("offered");
+    assert_eq!(fish.kind, ochrepad_core::complete::Kind::Function);
+    assert_eq!(fish.detail.as_deref(), Some("lib.rs"));
+    assert!(shown.iter().any(|c| c.label == "zebrafinch"));
+    // Typing on narrows the list at once, then the folder answers again.
+    typ(&mut h, "rafinc");
+    assert_eq!(labels(&h), ["zebrafinch"], "from the last answer");
+    key(&mut h, Modifiers::NONE, Key::Enter);
+    assert_eq!(text(&h), "zebrafinch");
+}

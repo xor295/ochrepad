@@ -14,6 +14,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -24,6 +25,11 @@ use serde::{Deserialize, Serialize};
 
 /// Files larger than this are left out.
 pub const MAX_FILE: u64 = 2 << 20;
+/// Definitions are looked for in files up to this size (larger ones are
+/// mostly generated, and parsing is the slow part).
+pub const MAX_DEFINITIONS_FILE: u64 = 256 << 10;
+/// At most this many threads look for definitions (one core is left free).
+const MAX_WORKERS: usize = 4;
 /// At most this many files are indexed.
 pub const MAX_FILES: usize = 20_000;
 /// How often files changed by other programs are looked for.
@@ -79,6 +85,20 @@ enum Update {
     Cache(Vec<u8>),
 }
 
+/// How many of the best words, and of the best names, a query answers.
+pub const QUERY_LIMIT: usize = 200;
+
+/// The folder's best matches for a pattern (see [`FolderIndex::ask`]).
+pub struct FolderMatches {
+    pub pattern: String,
+    /// The snapshot they were found in.
+    pub snapshot: Arc<Snapshot>,
+    /// Words, with how often each occurs.
+    pub words: Vec<(String, u32)>,
+    /// Defined names, with their first definition.
+    pub names: Vec<(String, Definition)>,
+}
+
 /// The index of one folder, as the app holds it.
 pub struct FolderIndex {
     root: PathBuf,
@@ -88,6 +108,23 @@ pub struct FolderIndex {
     pub progress: Progress,
     cache_file: Option<PathBuf>,
     cache_out: Option<Vec<u8>>,
+    /// Set when this is dropped: the thread stops, even in a long pass.
+    stop: Arc<AtomicBool>,
+    /// Patterns for the query thread, and its answers: matching a large
+    /// folder's words can take longer than a frame.
+    queries: Sender<(Arc<Snapshot>, String)>,
+    answers: Receiver<FolderMatches>,
+    /// The latest answer, and the pattern asked last.
+    pub matches: Option<FolderMatches>,
+    asked: Option<(String, Arc<Snapshot>)>,
+    /// Counts answers (the completion popup asks again when it changes).
+    pub answered: u64,
+}
+
+impl Drop for FolderIndex {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+    }
 }
 
 impl FolderIndex {
@@ -102,6 +139,25 @@ impl FolderIndex {
         let (commands, command_rx) = channel();
         let (update_tx, updates) = channel();
         let (thread_root, thread_cache) = (root.clone(), cache_file.clone());
+        let stop = Arc::new(AtomicBool::new(false));
+        let thread_stop = stop.clone();
+        let (queries, query_rx) = channel::<(Arc<Snapshot>, String)>();
+        let (answer_tx, answers) = channel();
+        let query_ctx = ctx.clone();
+        let _ = std::thread::Builder::new()
+            .name("ochrepad-folder-query".into())
+            .spawn(move || {
+                // Only the latest question matters.
+                while let Ok(mut q) = query_rx.recv() {
+                    while let Ok(newer) = query_rx.try_recv() {
+                        q = newer;
+                    }
+                    if answer_tx.send(answer(q.0, q.1)).is_err() {
+                        return;
+                    }
+                    query_ctx.request_repaint();
+                }
+            });
         let _ = std::thread::Builder::new()
             .name("ochrepad-folder-index".into())
             .spawn(move || {
@@ -113,6 +169,7 @@ impl FolderIndex {
                     truncated: false,
                     updates: update_tx,
                     ctx,
+                    stop: thread_stop,
                 };
                 indexer.run(thread_cache.as_deref(), &command_rx);
             });
@@ -124,7 +181,52 @@ impl FolderIndex {
             progress: Progress::Words { done: 0, total: 0 },
             cache_file,
             cache_out: None,
+            stop,
+            queries,
+            answers,
+            matches: None,
+            asked: None,
+            answered: 0,
         }
+    }
+
+    /// Asks for the folder's best matches of `pattern` (answered on a
+    /// thread; [`Self::poll`] takes the answer). Asking again for the same
+    /// pattern in the same snapshot does nothing.
+    pub fn ask(&mut self, pattern: &str) {
+        let Some(snapshot) = &self.snapshot else {
+            return;
+        };
+        if self
+            .asked
+            .as_ref()
+            .is_some_and(|(p, s)| p == pattern && Arc::ptr_eq(s, snapshot))
+        {
+            return;
+        }
+        let _ = self.queries.send((snapshot.clone(), pattern.to_owned()));
+        self.asked = Some((pattern.to_owned(), snapshot.clone()));
+    }
+
+    /// Whether the latest answer is for `pattern` in the current snapshot.
+    pub fn answered_for(&self, pattern: &str) -> bool {
+        self.matches.as_ref().is_some_and(|m| {
+            m.pattern == pattern
+                && self
+                    .snapshot
+                    .as_ref()
+                    .is_some_and(|s| Arc::ptr_eq(s, &m.snapshot))
+        })
+    }
+
+    /// Whether a question is still unanswered.
+    pub fn waiting(&self) -> bool {
+        self.asked.as_ref().is_some_and(|(pattern, snapshot)| {
+            !self
+                .matches
+                .as_ref()
+                .is_some_and(|m| &m.pattern == pattern && Arc::ptr_eq(&m.snapshot, snapshot))
+        })
     }
 
     pub fn root(&self) -> &Path {
@@ -141,6 +243,11 @@ impl FolderIndex {
                 Update::Snapshot(s) => self.snapshot = Some(s),
                 Update::Cache(bytes) => self.cache_out = Some(bytes),
             }
+        }
+        while let Ok(m) = self.answers.try_recv() {
+            self.matches = Some(m);
+            self.answered += 1;
+            changed = true;
         }
         changed
     }
@@ -159,6 +266,29 @@ impl FolderIndex {
     pub fn take_cache(&mut self) -> Option<(PathBuf, Vec<u8>)> {
         let bytes = self.cache_out.take()?;
         Some((self.cache_file.clone()?, bytes))
+    }
+}
+
+/// The query thread's work: the best words and names for `pattern`.
+fn answer(snapshot: Arc<Snapshot>, pattern: String) -> FolderMatches {
+    let prepared = complete::Pattern::new(&pattern);
+    let words = snapshot
+        .words
+        .best(&prepared, QUERY_LIMIT)
+        .into_iter()
+        .map(|(w, c)| (w.to_owned(), c))
+        .collect();
+    let names = snapshot
+        .names
+        .best(&prepared, QUERY_LIMIT)
+        .into_iter()
+        .filter_map(|(n, _)| Some((n.to_owned(), snapshot.definitions.get(n)?.clone())))
+        .collect();
+    FolderMatches {
+        pattern,
+        snapshot,
+        words,
+        names,
     }
 }
 
@@ -200,6 +330,42 @@ struct Indexer {
     truncated: bool,
     updates: Sender<Update>,
     ctx: egui::Context,
+    stop: Arc<AtomicBool>,
+}
+
+/// The definitions in the file at `path` (none for a file too large, not
+/// text, or in a language without them); `None` when `stop` was set.
+fn definitions_of(
+    registry: &Registry,
+    path: &Path,
+    stop: &AtomicBool,
+) -> Option<Vec<(String, SymbolKind, usize)>> {
+    if stop.load(Ordering::Relaxed) {
+        return None;
+    }
+    let small = std::fs::metadata(path).is_ok_and(|m| m.len() <= MAX_DEFINITIONS_FILE);
+    let Some(decoded) = small.then(|| ochrepad_fileio::load(path).ok()).flatten() else {
+        return Some(Vec::new());
+    };
+    let name = path.file_name().map(|n| n.to_string_lossy().into_owned());
+    let first = decoded.text.lines().next().unwrap_or("");
+    let language = registry.detect(name.as_deref(), first);
+    if language == ochrepad_syntax::PLAIN_TEXT {
+        return Some(Vec::new());
+    }
+    let doc = Document::new(&decoded.text);
+    let symbols = registry.symbols(&language, &doc, &|| stop.load(Ordering::Relaxed))?;
+    Some(
+        symbols
+            .into_iter()
+            .filter(|s| s.kind != SymbolKind::Heading)
+            .map(|s| {
+                let name = s.name.strip_prefix("impl ").unwrap_or(&s.name).to_owned();
+                (name, s.kind, s.line)
+            })
+            .filter(|(name, _, _)| complete::is_identifier(name, &[]))
+            .collect(),
+    )
 }
 
 fn stamp(meta: &std::fs::Metadata) -> (u64, u32) {
@@ -366,6 +532,9 @@ impl Indexer {
         let total = found.len();
         let mut last_sent = Instant::now();
         for (done, (rel, path, size, modified)) in found.iter().enumerate() {
+            if self.stopped() {
+                return;
+            }
             match cached.remove(rel) {
                 Some(e) if e.size == *size && e.modified == *modified => {
                     self.files.insert(rel.clone(), e);
@@ -378,24 +547,56 @@ impl Indexer {
             }
         }
         self.publish();
-        let pending: Vec<String> = self
+        let pending: Vec<(String, PathBuf)> = self
             .files
             .iter()
             .filter(|(_, e)| e.definitions.is_none())
-            .map(|(rel, _)| rel.clone())
+            .map(|(rel, _)| (rel.clone(), self.path_of(rel)))
             .collect();
         let total = pending.len();
-        let mut last_published = Instant::now();
-        for (done, rel) in pending.iter().enumerate() {
-            self.find_definitions(rel);
-            if last_sent.elapsed() > Duration::from_millis(250) {
-                last_sent = Instant::now();
-                self.send(Update::Progress(Progress::Definitions { done, total }));
+        let workers = std::thread::available_parallelism()
+            .map_or(1, |n| n.get().saturating_sub(1))
+            .clamp(1, MAX_WORKERS);
+        let next = AtomicUsize::new(0);
+        let (tx, rx) = channel();
+        let (registry, stop) = (self.registry.clone(), self.stop.clone());
+        std::thread::scope(|scope| {
+            for _ in 0..workers {
+                let (tx, next, pending) = (tx.clone(), &next, &pending);
+                let (registry, stop) = (&registry, &stop);
+                scope.spawn(move || {
+                    loop {
+                        let i = next.fetch_add(1, Ordering::Relaxed);
+                        let Some((rel, path)) = pending.get(i) else {
+                            break;
+                        };
+                        let Some(found) = definitions_of(registry, path, stop) else {
+                            break;
+                        };
+                        if tx.send((rel, found)).is_err() {
+                            break;
+                        }
+                    }
+                });
             }
-            if last_published.elapsed() > Duration::from_secs(2) {
-                last_published = Instant::now();
-                self.publish();
+            drop(tx);
+            let mut last_published = Instant::now();
+            for (done, (rel, found)) in rx.iter().enumerate() {
+                if let Some(e) = self.files.get_mut(rel) {
+                    e.definitions = Some(found);
+                }
+                if last_sent.elapsed() > Duration::from_millis(250) {
+                    last_sent = Instant::now();
+                    self.send(Update::Progress(Progress::Definitions { done, total }));
+                }
+                if last_published.elapsed() > Duration::from_secs(2) {
+                    last_published = Instant::now();
+                    self.publish();
+                }
             }
+        });
+        if self.stopped() {
+            return;
         }
         self.publish();
         self.send(Update::Progress(Progress::Ready));
@@ -433,33 +634,23 @@ impl Indexer {
     /// The definitions of `rel` (read again: the words pass does not keep
     /// the text).
     fn find_definitions(&mut self, rel: &str) {
-        let path = rel
-            .split('/')
-            .fold(self.root.clone(), |p, part| p.join(part));
-        let found = ochrepad_fileio::load(&path).ok().and_then(|decoded| {
-            let name = path.file_name().map(|n| n.to_string_lossy().into_owned());
-            let first = decoded.text.lines().next().unwrap_or("");
-            let language = self.registry.detect(name.as_deref(), first);
-            if language == ochrepad_syntax::PLAIN_TEXT {
-                return Some(Vec::new());
-            }
-            let doc = Document::new(&decoded.text);
-            let symbols = self.registry.symbols(&language, &doc, &|| false)?;
-            Some(
-                symbols
-                    .into_iter()
-                    .filter(|s| s.kind != SymbolKind::Heading)
-                    .map(|s| {
-                        let name = s.name.strip_prefix("impl ").unwrap_or(&s.name).to_owned();
-                        (name, s.kind, s.line)
-                    })
-                    .filter(|(name, _, _)| complete::is_identifier(name, &[]))
-                    .collect(),
-            )
-        });
-        if let Some(e) = self.files.get_mut(rel) {
-            e.definitions = Some(found.unwrap_or_default());
+        let path = self.path_of(rel);
+        if let Some(found) = definitions_of(&self.registry, &path, &self.stop)
+            && let Some(e) = self.files.get_mut(rel)
+        {
+            e.definitions = Some(found);
         }
+    }
+
+    /// `rel`'s absolute path.
+    fn path_of(&self, rel: &str) -> PathBuf {
+        rel.split('/')
+            .fold(self.root.clone(), |p, part| p.join(part))
+    }
+
+    /// The app dropped the index (the folder closed, or the app quit).
+    fn stopped(&self) -> bool {
+        self.stop.load(Ordering::Relaxed)
     }
 
     /// Looks for files added, changed or removed since; returns whether any

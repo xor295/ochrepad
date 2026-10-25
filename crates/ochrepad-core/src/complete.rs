@@ -417,6 +417,51 @@ impl WordIndex {
     }
 }
 
+impl WordIndex {
+    /// The `limit` words `pattern` matches best (the most frequent, for an
+    /// empty pattern), with their counts, in no particular order. Nothing
+    /// is allocated per word, so a large index stays quick: `rank` then
+    /// sorts out only these.
+    pub fn best(&self, pattern: &Pattern, limit: usize) -> Vec<(&str, u32)> {
+        use std::cmp::Reverse;
+        use std::collections::BinaryHeap;
+        if limit == 0 {
+            return Vec::new();
+        }
+        // The worst kept is on top, to be pushed out by a better one.
+        let mut heap: BinaryHeap<Reverse<(i64, u32, &str)>> = BinaryHeap::with_capacity(limit + 1);
+        fn consider<'a>(
+            heap: &mut BinaryHeap<Reverse<(i64, u32, &'a str)>>,
+            limit: usize,
+            entry: (i64, u32, &'a str),
+        ) {
+            let entry = Reverse(entry);
+            if heap.len() < limit {
+                heap.push(entry);
+            } else if heap.peek().is_some_and(|worst| entry < *worst) {
+                heap.pop();
+                heap.push(entry);
+            }
+        }
+        match pattern.lower.first() {
+            None => {
+                for (w, c) in &self.words {
+                    consider(&mut heap, limit, (0, *c, w));
+                }
+            }
+            Some(first) => {
+                for &i in self.by_initial.get(first).map_or(&[][..], |v| v.as_slice()) {
+                    let (w, c) = &self.words[i as usize];
+                    if let Some(score) = pattern.score(w) {
+                        consider(&mut heap, limit, (score, *c, w));
+                    }
+                }
+            }
+        }
+        heap.into_iter().map(|Reverse((_, c, w))| (w, c)).collect()
+    }
+}
+
 /// The candidates that match `pattern`, best first, without duplicate
 /// labels (the best-ranked one is kept). A candidate equal to the pattern
 /// is left out: there is nothing to complete. At most `limit` are kept.
@@ -688,6 +733,27 @@ mod tests {
             10,
         );
         assert_eq!(r[0].candidate.label, "for");
+    }
+
+    #[test]
+    fn the_best_words_of_a_large_index() {
+        let mut counts: Vec<(String, u32)> = (0..5000)
+            .map(|i| (format!("filler_{i}_word"), 1 + i % 7))
+            .collect();
+        counts.push(("getTextLength".into(), 1));
+        counts.push(("get_total".into(), 2));
+        let index = WordIndex::new(counts);
+        let best = index.best(&Pattern::new("gtl"), 3);
+        let mut labels: Vec<&str> = best.iter().map(|(w, _)| *w).collect();
+        labels.sort();
+        assert_eq!(labels, ["getTextLength", "get_total"]);
+        // Prefix matches beat scattered ones, and only `limit` are kept.
+        let best = index.best(&Pattern::new("fil"), 10);
+        assert_eq!(best.len(), 10);
+        // An empty pattern keeps the most frequent.
+        let best = index.best(&Pattern::new(""), 5);
+        assert!(best.iter().all(|&(_, c)| c == 7), "{best:?}");
+        assert!(index.best(&Pattern::new("zzz"), 5).is_empty());
     }
 
     #[test]
