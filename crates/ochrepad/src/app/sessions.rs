@@ -249,7 +249,7 @@ impl OchrepadApp {
                         first_line: usize::try_from(v.state.top_line()).unwrap_or(usize::MAX),
                     }
                 }
-                Tab::Preview(_) | Tab::Compare(_) => continue,
+                Tab::Preview(_) | Tab::Compare(_) | Tab::Terminal(_) => continue,
             };
             // A file opened from the command line may have a relative path,
             // which loading would take from the session file's folder.
@@ -416,7 +416,7 @@ impl OchrepadApp {
                     v.state.scroll_to_line(entry.first_line as u64);
                 }
             }
-            Tab::Preview(_) | Tab::Compare(_) => {}
+            Tab::Preview(_) | Tab::Compare(_) | Tab::Terminal(_) => {}
         }
     }
 }

@@ -469,7 +469,7 @@ impl OchrepadApp {
         session.layout = Some(self.dock.filter_map_tabs(|t| match t {
             Tab::Editor(v) => tab_index.get(v).copied(),
             Tab::Viewer(id) => viewer_index.get(id).map(|i| editors + i),
-            Tab::Preview(_) | Tab::Compare(_) => None,
+            Tab::Preview(_) | Tab::Compare(_) | Tab::Terminal(_) => None,
         }));
         session.active = tab_index.get(&self.active).copied();
         session.workspace = self.session_workspace();

@@ -28,6 +28,7 @@ pub mod safe_images;
 pub mod search_results;
 pub mod settings;
 pub mod terminal;
+pub mod terminal_glyphs;
 pub mod terminal_keys;
 pub mod terminal_view;
 pub mod theme;

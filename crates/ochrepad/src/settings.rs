@@ -102,6 +102,12 @@ pub struct AppSettings {
     /// A file changed by another program reloads without asking when it
     /// has no unsaved changes (Notepad++'s "Update silently").
     pub reload_silently: bool,
+    /// The terminal's shell; empty for the default (`terminal::default_shell`).
+    pub terminal_shell: String,
+    /// Its arguments, separated by spaces.
+    pub terminal_args: String,
+    /// Lines a terminal keeps above its screen.
+    pub terminal_scrollback: usize,
     pub recent_folders: Vec<PathBuf>,
     pub recent_files: Vec<PathBuf>,
 }
@@ -144,6 +150,9 @@ impl Default for AppSettings {
             sidebar_width: 240.0,
             always_on_top: false,
             reload_silently: true,
+            terminal_shell: String::new(),
+            terminal_args: String::new(),
+            terminal_scrollback: 10_000,
             recent_folders: Vec::new(),
             recent_files: Vec::new(),
         }
@@ -170,6 +179,7 @@ impl AppSettings {
         self.edge_column = self.edge_column.map(|c| c.clamp(1, 1000));
         // Up to what the editor can load.
         self.viewer_threshold_mb = self.viewer_threshold_mb.clamp(1, 1024);
+        self.terminal_scrollback = self.terminal_scrollback.min(100_000);
     }
 
     /// The editor font size after zooming.

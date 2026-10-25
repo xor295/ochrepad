@@ -32,6 +32,7 @@ mod replace_in_files;
 mod search;
 mod sessions;
 mod summary;
+mod terminals;
 mod tools;
 mod viewers;
 mod workspace;
@@ -93,6 +94,8 @@ pub enum Tab {
     Compare(CompareId),
     /// A file too large to edit, read-only (`crate::viewer`).
     Viewer(crate::viewer::ViewerId),
+    /// A shell (`crate::terminal`).
+    Terminal(crate::terminal::TerminalId),
 }
 
 const NEXT_DIFF: KeyboardShortcut = KeyboardShortcut::new(Modifiers::NONE, Key::F8);
@@ -127,6 +130,8 @@ enum TabCommand {
     File(edit_tools::TabFileCommand, ViewId),
     CloseViewer(crate::viewer::ViewerId),
     OpenAsEditable(crate::viewer::ViewerId),
+    CloseTerminal(crate::terminal::TerminalId),
+    NewTerminal,
     /// A preview or comparison closed by a middle click.
     CloseTab(Tab),
     /// A command from an editor's right-click menu.
@@ -140,6 +145,8 @@ pub struct OchrepadApp {
     pub compares: Compares,
     /// Files too large to edit, open read-only.
     pub viewers: crate::viewer::Viewers,
+    /// Terminal tabs.
+    pub terminals: crate::terminal::Terminals,
     /// The viewer whose Open as Editable question is showing.
     confirm_editable: Option<crate::viewer::ViewerId>,
     view_states: HashMap<ViewId, EditorViewState>,
@@ -245,6 +252,7 @@ impl OchrepadApp {
             previews: Previews::default(),
             compares: Compares::default(),
             viewers: Default::default(),
+            terminals: Default::default(),
             confirm_editable: None,
             view_states: HashMap::new(),
             untitled: HashMap::from([(buffer, "new 1".to_owned())]),
@@ -352,7 +360,7 @@ impl OchrepadApp {
             .iter_all_tabs()
             .filter_map(|(_, t)| match t {
                 Tab::Editor(v) => Some(*v),
-                Tab::Preview(_) | Tab::Compare(_) | Tab::Viewer(_) => None,
+                Tab::Preview(_) | Tab::Compare(_) | Tab::Viewer(_) | Tab::Terminal(_) => None,
             })
             .collect()
     }
@@ -766,7 +774,7 @@ impl OchrepadApp {
                 .find_active_focused()
                 .and_then(|(_, t)| match t {
                     Tab::Editor(v) => Some(*v),
-                    Tab::Preview(_) | Tab::Compare(_) | Tab::Viewer(_) => None,
+                    Tab::Preview(_) | Tab::Compare(_) | Tab::Viewer(_) | Tab::Terminal(_) => None,
                 })
                 .or_else(|| self.tabs().first().copied());
             if let Some(next) = next {
@@ -775,10 +783,17 @@ impl OchrepadApp {
         }
     }
 
+    /// The focused pane's tab when it is a viewer or a terminal, else the
+    /// active editor's.
+    fn current_tab(&self) -> Tab {
+        match focused_tab(&self.dock) {
+            Some(tab @ (Tab::Viewer(_) | Tab::Terminal(_))) => tab,
+            _ => Tab::Editor(self.active),
+        }
+    }
+
     fn cycle_tab(&mut self, forward: bool) {
-        let current = self
-            .focused_viewer()
-            .map_or(Tab::Editor(self.active), Tab::Viewer);
+        let current = self.current_tab();
         let Some(path) = self.dock.find_tab(&current) else {
             return;
         };
@@ -807,6 +822,7 @@ impl OchrepadApp {
         match tab {
             Tab::Editor(view) => self.activate(view),
             Tab::Viewer(id) => self.activate_viewer(id),
+            Tab::Terminal(id) => self.activate_terminal(id),
             Tab::Preview(_) | Tab::Compare(_) => {}
         }
     }
@@ -814,9 +830,7 @@ impl OchrepadApp {
     /// Moves the active tab one place along its tab bar (Notepad++'s Move
     /// Tab Forward and Backward); at either end it stays.
     pub fn move_tab(&mut self, forward: bool) {
-        let current = self
-            .focused_viewer()
-            .map_or(Tab::Editor(self.active), Tab::Viewer);
+        let current = self.current_tab();
         let Some(path) = self.dock.find_tab(&current) else {
             return;
         };
@@ -880,7 +894,12 @@ impl OchrepadApp {
         self.poll_exports(ui);
         self.watch_files(ui);
         self.drag_and_drop(ui);
-        self.shortcuts(ui);
+        // A terminal with the keyboard gets nearly every key.
+        if self.terminal_has_keyboard(ui) {
+            self.terminal_shortcuts(ui);
+        } else {
+            self.shortcuts(ui);
+        }
         if ui.input(|i| i.viewport().close_requested()) && !self.close_confirmed {
             ui.ctx().send_viewport_cmd(ViewportCommand::CancelClose);
             if !self.exiting {
@@ -918,7 +937,7 @@ impl OchrepadApp {
             let editor_focused = ui.memory(|m| {
                 m.has_focus(editor_id(self.active))
                     || viewer.is_some_and(|id| m.has_focus(crate::viewer::viewer_widget_id(id)))
-            });
+            }) || self.terminal_has_keyboard(ui);
             let mut requests = requests;
             if !editor_focused && ui.input(|i| i.key_pressed(Key::Escape)) {
                 requests.push(FindRequest::Close);
@@ -1037,6 +1056,8 @@ impl OchrepadApp {
                 log_rules: &self.log_rules,
                 tab_width: self.settings.tab_width,
                 viewers: &mut self.viewers,
+                terminals: &mut self.terminals,
+                terminal_font: self.settings.editor_font_size(),
                 fold_margin: self.settings.fold_margin,
                 word_wrap: self.settings.word_wrap,
                 document_map: self.settings.document_map,
@@ -1092,6 +1113,9 @@ impl OchrepadApp {
             self.active = *view;
             self.focus_request = Some(self.active);
         }
+        if let Some(id) = self.focused_terminal() {
+            self.terminals.last = Some(id);
+        }
         for cmd in commands {
             match cmd {
                 TabCommand::Close(v) => self.close_view(v),
@@ -1110,6 +1134,10 @@ impl OchrepadApp {
                 TabCommand::File(command, v) => self.tab_file_command(command, v),
                 TabCommand::CloseViewer(id) => self.close_viewer(id),
                 TabCommand::OpenAsEditable(id) => self.ask_open_as_editable(id),
+                TabCommand::CloseTerminal(id) => self.close_terminal(id),
+                TabCommand::NewTerminal => {
+                    self.new_terminal();
+                }
                 TabCommand::Menu(view, command) => {
                     self.activate(view);
                     match command {
@@ -1175,6 +1203,10 @@ impl OchrepadApp {
             && ui.memory(|m| m.focused().is_none());
         if idle && self.find.open {
             self.find.focus_field();
+        } else if idle && let Some(id) = self.focused_terminal() {
+            if let Some(t) = self.terminals.get_mut(id) {
+                t.view.request_focus();
+            }
         } else if idle {
             match self
                 .focused_viewer()
@@ -1189,7 +1221,12 @@ impl OchrepadApp {
             ui.ctx().send_viewport_cmd(ViewportCommand::Close);
         }
 
+        let terminal = self
+            .focused_terminal()
+            .and_then(|id| self.terminals.get(id))
+            .map(|t| t.tab_title());
         let title = match self.focused_viewer() {
+            _ if terminal.is_some() => format!("{} - ochrepad", terminal.unwrap_or_default()),
             Some(id) => format!("{} (read-only) - ochrepad", self.viewer_name(id)),
             None => format!(
                 "{}{} - ochrepad",
@@ -1276,6 +1313,13 @@ impl OchrepadApp {
         };
         if pressed(ui, &NEW) {
             self.new_file();
+        }
+        // Before Ctrl+`, which an extra Shift would match too.
+        if pressed(ui, &terminals::NEW_TERMINAL) {
+            self.new_terminal();
+        }
+        if pressed(ui, &terminals::TOGGLE_TERMINAL) {
+            self.toggle_terminal();
         }
         if pressed(ui, &OPEN) {
             self.open_dialog();
@@ -2230,9 +2274,7 @@ impl OchrepadApp {
         if !self.settings.show_document_list {
             return;
         }
-        let current = self
-            .focused_viewer()
-            .map_or(Tab::Editor(self.active), Tab::Viewer);
+        let current = self.current_tab();
         let (tabs, rows): (Vec<Tab>, Vec<Row>) = self
             .dock
             .iter_all_tabs()
@@ -2248,6 +2290,12 @@ impl OchrepadApp {
                     Tab::Viewer(id) => (
                         viewer_title(&self.viewers, id),
                         self.viewers.get(id).map(|v| v.file.path()),
+                    ),
+                    Tab::Terminal(id) => (
+                        self.terminals
+                            .get(id)
+                            .map_or_else(|| "Terminal".to_owned(), |t| t.tab_title()),
+                        None,
                     ),
                     Tab::Preview(_) | Tab::Compare(_) => return None,
                 };
@@ -2274,11 +2322,13 @@ impl OchrepadApp {
             Some(ListRequest::Activate(i)) => match tabs.get(i) {
                 Some(&Tab::Editor(view)) => self.activate(view),
                 Some(&Tab::Viewer(id)) => self.activate_viewer(id),
+                Some(&Tab::Terminal(id)) => self.activate_terminal(id),
                 _ => {}
             },
             Some(ListRequest::Close(i)) => match tabs.get(i) {
                 Some(&Tab::Editor(view)) => self.close_view(view),
                 Some(&Tab::Viewer(id)) => self.close_viewer(id),
+                Some(&Tab::Terminal(id)) => self.close_terminal(id),
                 _ => {}
             },
             Some(ListRequest::Hide) => self.settings.show_document_list = false,
@@ -2597,6 +2647,21 @@ impl OchrepadApp {
         if ui.button("Clone to Other View").clicked() {
             self.clone_to_other_view();
         }
+        ui.separator();
+        if ui
+            .add(Button::new("Terminal").shortcut_text("Ctrl+`"))
+            .on_hover_text("Shows the terminal, opening one below the editors if there is none")
+            .clicked()
+        {
+            self.toggle_terminal();
+        }
+        if ui
+            .add(Button::new("New Terminal").shortcut_text("Ctrl+Shift+`"))
+            .clicked()
+        {
+            self.new_terminal();
+        }
+        ui.separator();
         if self.focused_viewer().is_none()
             && ui
                 .button("Summary…")
@@ -2804,6 +2869,10 @@ impl OchrepadApp {
     }
 
     fn status_bar(&mut self, ui: &mut Ui) {
+        if let Some(id) = self.focused_terminal() {
+            self.terminal_status_bar(ui, id);
+            return;
+        }
         if let Some(id) = self.focused_viewer() {
             self.viewer_status_bar(ui, id);
             return;
@@ -2971,6 +3040,12 @@ impl OchrepadApp {
     }
 }
 
+/// The active tab of the focused pane.
+fn focused_tab(dock: &DockState<Tab>) -> Option<Tab> {
+    let leaf = dock.leaf(dock.focused_leaf()?).ok()?;
+    leaf.tabs.get(leaf.active.0).copied()
+}
+
 /// The top line (with the fraction scrolled past) of the editor a preview of
 /// `buffer` follows: `active` when it shows `buffer`, else its first view.
 fn preview_top_line(editor: &Editor, active: ViewId, buffer: BufferId) -> Option<f64> {
@@ -2994,6 +3069,9 @@ struct Tabs<'a> {
     log_rules: &'a crate::log_rules::LogRules,
     tab_width: usize,
     viewers: &'a mut crate::viewer::Viewers,
+    terminals: &'a mut crate::terminal::Terminals,
+    /// The editor's zoomed font size, which terminals share.
+    terminal_font: f32,
     fold_margin: bool,
     word_wrap: bool,
     document_map: bool,
@@ -3033,6 +3111,15 @@ impl Tabs<'_> {
                 }
                 return;
             }
+            Tab::Terminal(id) => {
+                if ui.button("New Terminal").clicked() {
+                    self.commands.push(TabCommand::NewTerminal);
+                }
+                if ui.button("Close").clicked() {
+                    self.commands.push(TabCommand::CloseTerminal(id));
+                }
+                return;
+            }
             Tab::Preview(_) | Tab::Compare(_) => {
                 if ui.button("Close").clicked() {
                     self.commands.push(TabCommand::CloseTab(tab));
@@ -3063,6 +3150,7 @@ impl TabViewer for Tabs<'_> {
             Tab::Preview(b) => Id::new(("ochrepad-preview-tab", b.0)),
             Tab::Compare(c) => Id::new(("ochrepad-compare-tab", c.0)),
             Tab::Viewer(v) => Id::new(("ochrepad-viewer-tab", v.0)),
+            Tab::Terminal(t) => Id::new(("ochrepad-terminal-tab", t.0)),
         }
     }
 
@@ -3086,6 +3174,13 @@ impl TabViewer for Tabs<'_> {
             }
             Tab::Viewer(id) => {
                 return viewer_title(self.viewers, *id).into();
+            }
+            Tab::Terminal(id) => {
+                return self
+                    .terminals
+                    .get(*id)
+                    .map_or_else(|| "Terminal".to_owned(), |t| t.tab_title())
+                    .into();
             }
         };
         editor_title(self.editor, self.untitled, view).into()
@@ -3142,6 +3237,28 @@ impl TabViewer for Tabs<'_> {
                         self.find_highlight,
                         rules,
                     );
+                }
+                return;
+            }
+            Tab::Terminal(id) => {
+                if let Some(t) = self.terminals.get_mut(id) {
+                    let label = format!("Terminal: {}", t.tab_title());
+                    let out = crate::terminal_view::terminal_ui(ui, t, self.terminal_font, &label);
+                    if !out.mouse_reporting {
+                        let mut chosen = None;
+                        out.response.context_menu(|ui| {
+                            chosen = crate::terminal_view::context_menu(ui, t);
+                        });
+                        match chosen {
+                            Some(crate::terminal_view::MenuCommand::NewTerminal) => {
+                                self.commands.push(TabCommand::NewTerminal);
+                            }
+                            Some(crate::terminal_view::MenuCommand::Close) => {
+                                self.commands.push(TabCommand::CloseTerminal(id));
+                            }
+                            None => {}
+                        }
+                    }
                 }
                 return;
             }
@@ -3232,6 +3349,7 @@ impl TabViewer for Tabs<'_> {
             self.commands.push(match *tab {
                 Tab::Editor(view) => TabCommand::Close(view),
                 Tab::Viewer(id) => TabCommand::CloseViewer(id),
+                Tab::Terminal(id) => TabCommand::CloseTerminal(id),
                 other => TabCommand::CloseTab(other),
             });
         }
@@ -3253,6 +3371,10 @@ impl TabViewer for Tabs<'_> {
             Tab::Preview(_) => OnCloseResponse::Close,
             Tab::Viewer(id) => {
                 self.commands.push(TabCommand::CloseViewer(*id));
+                OnCloseResponse::Ignore
+            }
+            Tab::Terminal(id) => {
+                self.commands.push(TabCommand::CloseTerminal(*id));
                 OnCloseResponse::Ignore
             }
             Tab::Compare(id) => {

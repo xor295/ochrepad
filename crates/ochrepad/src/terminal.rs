@@ -222,9 +222,9 @@ impl Terminal {
     pub fn tab_title(&self) -> String {
         let name = self
             .title
-            .clone()
+            .as_deref()
             .filter(|t| !t.trim().is_empty())
-            .unwrap_or_else(|| self.shell.name());
+            .map_or_else(|| self.shell.name(), short_title);
         if self.ended.is_some() {
             format!("{name} (ended)")
         } else {
@@ -376,6 +376,17 @@ impl Drop for Terminal {
     }
 }
 
+/// A program's title, with a path to an executable (what Windows shells
+/// set, `C:\WINDOWS\system32\cmd.exe`) cut to the program's name.
+fn short_title(title: &str) -> String {
+    let lower = title.to_ascii_lowercase();
+    if lower.ends_with(".exe") && title.contains(['\\', '/']) {
+        let file = title.rsplit(['\\', '/']).next().unwrap_or(title);
+        return file[..file.len() - 4].to_owned();
+    }
+    title.to_owned()
+}
+
 fn new_term(
     size: GridSize,
     scrollback: usize,
@@ -508,6 +519,22 @@ mod tests {
             !ShellCommand::new("  ", "").program.is_empty(),
             "the default"
         );
+    }
+
+    #[test]
+    fn titles_that_are_executables_are_shortened() {
+        assert_eq!(short_title(r"C:\WINDOWS\SYSTEM32\cmd.exe"), "cmd");
+        assert_eq!(
+            short_title(r"C:\Program Files\PowerShell\7\pwsh.EXE"),
+            "pwsh"
+        );
+        assert_eq!(short_title("✳ Claude Code"), "✳ Claude Code");
+        assert_eq!(short_title("vim notes.exe"), "vim notes.exe");
+        let mut t = Terminal::new(TerminalId(0), default_shell(), PathBuf::from("."), 100);
+        t.title = Some(r"C:\WINDOWS\SYSTEM32\cmd.exe".to_owned());
+        assert_eq!(t.tab_title(), "cmd");
+        t.ended = Some(Ended::Exited(Some(0)));
+        assert_eq!(t.tab_title(), "cmd (ended)");
     }
 
     #[test]

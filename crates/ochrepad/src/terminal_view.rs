@@ -299,6 +299,78 @@ pub fn terminal_ui(ui: &mut Ui, t: &mut Terminal, font_size: f32, label: &str) -
     }
 }
 
+/// What the terminal's right-click menu asks the app for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MenuCommand {
+    NewTerminal,
+    Close,
+}
+
+/// The right-click menu: Copy, Paste, Select All, Clear, then New Terminal
+/// and Close (left to the app).
+pub fn context_menu(ui: &mut Ui, t: &mut Terminal) -> Option<MenuCommand> {
+    let shared = t.term().clone();
+    let has_selection = shared
+        .lock()
+        .selection
+        .as_ref()
+        .is_some_and(|s| !s.is_empty());
+    let item = |ui: &mut Ui, label: &str, shortcut: &str, enabled: bool| {
+        ui.add_enabled(enabled, egui::Button::new(label).shortcut_text(shortcut))
+            .clicked()
+    };
+    if item(ui, "Copy", "Ctrl+Shift+C", has_selection) {
+        let mut term = shared.lock();
+        if let Some(text) = term.selection_to_string() {
+            ui.ctx().copy_text(text);
+        }
+        term.selection = None;
+    }
+    if item(ui, "Paste", "Ctrl+V", t.running()) {
+        // The clipboard comes back as a paste event, to the terminal (which
+        // gets the keyboard back when the menu closes).
+        ui.ctx()
+            .send_viewport_cmd(egui::ViewportCommand::RequestPaste);
+        t.view.request_focus();
+    }
+    if item(ui, "Select All", "", true) {
+        let mut term = shared.lock();
+        let mut all = Selection::new(
+            SelectionType::Lines,
+            Point::new(term.topmost_line(), Column(0)),
+            Side::Left,
+        );
+        all.update(
+            Point::new(term.bottommost_line(), term.last_column()),
+            Side::Right,
+        );
+        term.selection = Some(all);
+    }
+    if ui
+        .button("Clear")
+        .on_hover_text("Clears the scrollback; the program redraws what it shows")
+        .clicked()
+    {
+        let mut term = shared.lock();
+        term.grid_mut().clear_history();
+        term.selection = None;
+        drop(term);
+        // Ctrl+L: shells clear the screen and draw the prompt again.
+        if t.running() && !t.mode().contains(TermMode::ALT_SCREEN) {
+            t.write(vec![0x0c]);
+        }
+    }
+    ui.separator();
+    let mut chosen = None;
+    if ui.button("New Terminal").clicked() {
+        chosen = Some(MenuCommand::NewTerminal);
+    }
+    if ui.button("Close").clicked() {
+        chosen = Some(MenuCommand::Close);
+    }
+    chosen
+}
+
 /// Keys, text, the clipboard and the IME, while the terminal has the
 /// keyboard.
 fn keyboard(ui: &Ui, t: &mut Terminal, mode: TermMode) {
@@ -687,17 +759,10 @@ fn paint_grid(
     let mut lines: Vec<(Pos2, f32, Color32, bool)> = Vec::new();
     // The character under a block cursor, drawn again over it.
     let mut under_cursor: Option<(String, usize)> = None;
-    let mut bg_run: Option<(usize, usize, usize, Color32)> = None;
-    let flush_bg = |run: &mut Option<(usize, usize, usize, Color32)>| {
-        if let Some((row, from, to, color)) = run.take() {
-            let min = g.cell_pos(from, row);
-            painter.rect_filled(
-                Rect::from_min_size(min, Vec2::new((to - from) as f32 * g.cell_w, g.line_h)),
-                0.0,
-                color,
-            );
-        }
-    };
+    // Backgrounds as (row, from column, to column, colour), merged along
+    // rows; the selection as (row, column, width), drawn over them.
+    let mut fills: Vec<(usize, usize, usize, Color32)> = Vec::new();
+    let mut selected_cells: Vec<(usize, usize, usize)> = Vec::new();
     for cell in content.display_iter {
         let flags = cell.flags;
         if flags.intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER) {
@@ -734,24 +799,14 @@ fn paint_grid(
         let selected =
             selection.is_some_and(|s| s.contains_cell(&cell, cursor.point, cursor.shape));
 
-        // Backgrounds, merged along the row.
-        let fill = (bg != colors.bg).then_some(bg);
-        match (&mut bg_run, fill) {
-            (Some((r, _, to, c)), Some(f)) if *r == row && *to == col && *c == f => *to += width,
-            (_, fill) => {
-                flush_bg(&mut bg_run);
-                bg_run = fill.map(|f| (row, col, col + width, f));
+        if bg != colors.bg {
+            match fills.last_mut() {
+                Some((r, _, to, c)) if *r == row && *to == col && *c == bg => *to += width,
+                _ => fills.push((row, col, col + width, bg)),
             }
         }
         if selected {
-            painter.rect_filled(
-                Rect::from_min_size(
-                    g.cell_pos(col, row),
-                    Vec2::new(width as f32 * g.cell_w, g.line_h),
-                ),
-                0.0,
-                colors.selection,
-            );
+            selected_cells.push((row, col, width));
         }
 
         // Underlines and strikethrough.
@@ -815,7 +870,18 @@ fn paint_grid(
             singles.push((row, col, width, s, fg, italic));
         }
     }
-    flush_bg(&mut bg_run);
+    let span = |row: usize, col: usize, width: usize| {
+        Rect::from_min_size(
+            g.cell_pos(col, row),
+            Vec2::new(width as f32 * g.cell_w, g.line_h),
+        )
+    };
+    for (row, from, to, color) in fills {
+        painter.rect_filled(span(row, from, to - from), 0.0, color);
+    }
+    for (row, col, width) in selected_cells {
+        painter.rect_filled(span(row, col, width), 0.0, colors.selection);
+    }
 
     // Runs of printable ASCII sit on the grid by themselves (the font is
     // monospace); other characters are placed one per cell, clipped to it.
@@ -829,6 +895,13 @@ fn paint_grid(
             g.cell_pos(col, row),
             Vec2::new(width as f32 * g.cell_w, g.line_h),
         );
+        // Box drawing and block elements fill their cells as shapes.
+        let mut chars = s.chars();
+        if let (Some(c), None) = (chars.next(), chars.next())
+            && crate::terminal_glyphs::draw(painter, cell, c, color)
+        {
+            continue;
+        }
         let galley = layout(ui, s, font, color, italic);
         let x = cell.min.x + ((cell.width() - galley.size().x) / 2.0).max(0.0);
         painter

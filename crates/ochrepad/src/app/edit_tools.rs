@@ -13,7 +13,7 @@ use ochrepad_core::{
 use super::{OchrepadApp, Tab, TabCommand};
 
 const COLUMN_EDITOR: KeyboardShortcut = KeyboardShortcut::new(Modifiers::ALT, Key::C);
-const FULL_SCREEN: KeyboardShortcut = KeyboardShortcut::new(Modifiers::NONE, Key::F11);
+pub(super) const FULL_SCREEN: KeyboardShortcut = KeyboardShortcut::new(Modifiers::NONE, Key::F11);
 
 /// The Column Editor's fields, kept between uses as Notepad++ does.
 struct ColumnFields {
@@ -354,6 +354,7 @@ impl OchrepadApp {
                     match tab {
                         Tab::Editor(v) => self.close_queue.push_back(v),
                         Tab::Viewer(id) => self.close_viewer(id),
+                        Tab::Terminal(id) => self.close_terminal(id),
                         Tab::Preview(_) | Tab::Compare(_) => {}
                     }
                 }
@@ -564,7 +565,7 @@ impl OchrepadApp {
 }
 
 /// Asks the window to leave or enter full screen.
-fn toggle_full_screen(ui: &Ui) {
+pub(super) fn toggle_full_screen(ui: &Ui) {
     let full = ui.input(|i| i.viewport().fullscreen.unwrap_or(false));
     ui.ctx()
         .send_viewport_cmd(ViewportCommand::Fullscreen(!full));
