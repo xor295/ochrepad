@@ -8,7 +8,7 @@ adds features and a patch version fixes bugs).
 Each release's section becomes its GitHub release notes, so write it for
 people downloading the release.
 
-## [Unreleased]
+## [0.4.0] - 2026-10-25
 
 ### Added
 
