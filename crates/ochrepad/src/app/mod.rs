@@ -22,8 +22,10 @@ use crate::editor_view::{
 };
 mod about;
 mod autosave;
+mod code_actions;
 mod document;
 mod edit_tools;
+mod edits;
 mod external;
 mod file_extras;
 mod history_store;
@@ -106,6 +108,10 @@ const PREV_DIFF: KeyboardShortcut = KeyboardShortcut::new(Modifiers::SHIFT, Key:
 const GO_TO_LINE: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::G);
 const GO_TO_DEFINITION: KeyboardShortcut = KeyboardShortcut::new(Modifiers::NONE, Key::F12);
 const FIND_REFERENCES: KeyboardShortcut = KeyboardShortcut::new(Modifiers::SHIFT, Key::F12);
+const RENAME: KeyboardShortcut = KeyboardShortcut::new(Modifiers::SHIFT, Key::F6);
+const CODE_ACTIONS: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::Period);
+const FORMAT_DOCUMENT: KeyboardShortcut =
+    KeyboardShortcut::new(Modifiers::ALT.plus(Modifiers::SHIFT), Key::F);
 /// Ctrl+Shift+L is Notepad++'s Delete Line.
 const FILTER_LINES: KeyboardShortcut =
     KeyboardShortcut::new(Modifiers::ALT.plus(Modifiers::SHIFT), Key::L);
@@ -165,6 +171,12 @@ pub struct OchrepadApp {
     signature: crate::signature::SignatureHelp,
     /// Go to Definition's request in flight.
     definition: Option<navigate::Pending>,
+    /// Rename, while it asks and waits.
+    renaming: Option<edits::Rename>,
+    /// Format Document's request in flight.
+    formatting: Option<edits::Formatting>,
+    /// Code actions: asked for, shown, or running.
+    code_actions: Option<code_actions::CodeActions>,
     /// View > Problems.
     pub problems: crate::problems::ProblemsPanel,
     /// The viewer whose Open as Editable question is showing.
@@ -279,6 +291,9 @@ impl OchrepadApp {
             hover: Default::default(),
             signature: Default::default(),
             definition: None,
+            renaming: None,
+            formatting: None,
+            code_actions: None,
             problems: Default::default(),
             confirm_editable: None,
             view_states: HashMap::new(),
@@ -578,9 +593,14 @@ impl OchrepadApp {
 
     // --- Saving ------------------------------------------------------------------
 
-    /// Saves the active buffer, asking for a path if it has none.
+    /// Saves the active buffer, asking for a path if it has none (after
+    /// formatting it, with format on save).
     pub fn save(&mut self) -> bool {
-        self.save_buffer(self.buffer_id())
+        let buffer = self.buffer_id();
+        if self.format_then_save(buffer) {
+            return true;
+        }
+        self.save_buffer(buffer)
     }
 
     fn save_buffer(&mut self, buffer: BufferId) -> bool {
@@ -939,6 +959,8 @@ impl OchrepadApp {
         if self.terminal_has_keyboard(ui) {
             self.terminal_shortcuts(ui);
         } else {
+            // Its menu's keys come first.
+            self.code_actions_keys(ui);
             self.shortcuts(ui);
         }
         if ui.input(|i| i.viewport().close_requested()) && !self.close_confirmed {
@@ -1123,6 +1145,8 @@ impl OchrepadApp {
         }
         self.language_servers_tick(ui);
         self.definition_tick();
+        self.edits_tick();
+        self.code_actions_tick();
         if let Some((path, bytes)) = self.completion.take_cache_write() {
             let tag = self
                 .persist
@@ -1255,6 +1279,9 @@ impl OchrepadApp {
                         }
                         crate::editor_menu::MenuCommand::GoToDefinition => self.go_to_definition(),
                         crate::editor_menu::MenuCommand::FindReferences => self.find_references(),
+                        crate::editor_menu::MenuCommand::Rename => self.rename_symbol(),
+                        crate::editor_menu::MenuCommand::FormatDocument => self.format_document(),
+                        crate::editor_menu::MenuCommand::CodeActions => self.code_actions(),
                     }
                 }
                 TabCommand::CloseTab(tab) => {
@@ -1274,6 +1301,8 @@ impl OchrepadApp {
         self.replace_all_dialog(ui);
         self.new_entry_dialog(ui);
         self.go_to_line_dialog(ui);
+        self.rename_symbol_dialog(ui);
+        self.code_actions_menu(ui);
         self.open_as_editable_dialog(ui);
         self.hash_dialog(ui);
         self.summary_dialog(ui);
@@ -1437,6 +1466,15 @@ impl OchrepadApp {
         }
         if pressed(ui, &GO_TO_LINE) {
             self.go_to_line = Some(String::new());
+        }
+        if viewer.is_none() && pressed(ui, &RENAME) {
+            self.rename_symbol();
+        }
+        if viewer.is_none() && pressed(ui, &CODE_ACTIONS) {
+            self.code_actions();
+        }
+        if viewer.is_none() && pressed(ui, &FORMAT_DOCUMENT) {
+            self.format_document();
         }
         // Before F12, which an extra Shift would match too.
         if viewer.is_none() && pressed(ui, &FIND_REFERENCES) {
@@ -1897,6 +1935,15 @@ impl OchrepadApp {
                 }
             }
         });
+        if item(ui, "Rename…", "Shift+F6") {
+            self.rename_symbol();
+        }
+        if item(ui, "Format Document", "Alt+Shift+F") {
+            self.format_document();
+        }
+        if item(ui, "Code Actions…", "Ctrl+.") {
+            self.code_actions();
+        }
         ui.menu_button("Line Operations", |ui| self.line_operations_menu(ui));
         ui.menu_button("Blank Operations", |ui| self.blank_operations_menu(ui));
         ui.menu_button("Text Tools", |ui| self.text_tools_menu(ui));

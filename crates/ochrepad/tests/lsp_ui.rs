@@ -463,3 +463,219 @@ fn shift_f12_lists_the_references_in_search_results() {
     h.run();
     h.get_by_label_contains("references (fake-rust)");
 }
+
+/// The open document saved as `name`, and its text.
+fn doc_named(h: &Harness<'_, OchrepadApp>, name: &str) -> Option<(String, bool)> {
+    h.state()
+        .editor
+        .buffers()
+        .find(|b| b.meta.path.as_deref().is_some_and(|p| p.ends_with(name)))
+        .map(|b| (b.doc().to_string(), b.is_dirty()))
+}
+
+#[test]
+fn rename_changes_every_file_the_server_names_and_opens_the_others_unsaved() {
+    let server = FakeServer::new()
+        .capabilities(json!({
+            "textDocumentSync": { "openClose": true, "change": 2 },
+            "renameProvider": { "prepareProvider": true },
+        }))
+        .answer("textDocument/prepareRename", |_| {
+            json!({
+                "range": {"start": {"line": 0, "character": 3}, "end": {"line": 0, "character": 7}},
+                "placeholder": "main",
+            })
+        })
+        .answer("textDocument/rename", |p| {
+            let uri = p["textDocument"]["uri"].as_str().unwrap().to_owned();
+            let other = uri.replace("main.rs", "other.rs");
+            let name = p["newName"].clone();
+            json!({"documentChanges": [
+                {"textDocument": {"uri": uri, "version": null}, "edits": [
+                    {"range": {"start": {"line": 0, "character": 3}, "end": {"line": 0, "character": 7}}, "newText": name},
+                ]},
+                {"textDocument": {"uri": other, "version": null}, "edits": [
+                    {"range": {"start": {"line": 1, "character": 0}, "end": {"line": 1, "character": 4}}, "newText": name},
+                ]},
+            ]})
+        });
+    let (dir, mut h) = open_rust_file(&server);
+    std::fs::write(dir.path().join("other.rs"), "// other\nmain();\n").unwrap();
+    h.state_mut()
+        .settings
+        .lsp_trusted
+        .push(dir.path().to_path_buf());
+    wait(&mut h, "didOpen", |_| {
+        !server.params("textDocument/didOpen").is_empty()
+    });
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::G);
+    h.run();
+    h.event(Event::Text("1:4".into()));
+    h.key_press(egui::Key::Enter);
+    h.run();
+    h.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::F6);
+    wait(&mut h, "the rename dialog", |h| {
+        h.query_by_label("Rename main to:").is_some()
+    });
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    h.event(Event::Text("start".into()));
+    h.key_press(egui::Key::Enter);
+    wait(&mut h, "the renamed files", |h| {
+        doc_named(h, "other.rs").is_some()
+    });
+    h.run();
+    assert_eq!(
+        doc_named(&h, "main.rs"),
+        Some(("fn start() {}\n".to_owned(), true))
+    );
+    assert_eq!(
+        doc_named(&h, "other.rs"),
+        Some(("// other\nstart();\n".to_owned(), true)),
+        "opened, edited, not saved"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("other.rs")).unwrap(),
+        "// other\nmain();\n"
+    );
+    // The tab that was active stays so.
+    assert!(
+        h.state()
+            .buffer()
+            .meta
+            .path
+            .as_deref()
+            .is_some_and(|p| p.ends_with("main.rs"))
+    );
+}
+
+#[test]
+fn format_document_and_format_on_save() {
+    let server = FakeServer::new()
+        .capabilities(json!({
+            "textDocumentSync": { "openClose": true, "change": 2 },
+            "documentFormattingProvider": true,
+        }))
+        .answer("textDocument/formatting", |p| {
+            assert!(p["options"]["tabSize"].is_u64());
+            json!([{"range": {"start": {"line": 0, "character": 11}, "end": {"line": 0, "character": 11}}, "newText": "\n"}])
+        });
+    let (dir, mut h) = open_rust_file(&server);
+    h.state_mut()
+        .settings
+        .lsp_trusted
+        .push(dir.path().to_path_buf());
+    wait(&mut h, "didOpen", |_| {
+        !server.params("textDocument/didOpen").is_empty()
+    });
+    h.key_press_modifiers(egui::Modifiers::ALT | egui::Modifiers::SHIFT, egui::Key::F);
+    wait(&mut h, "the formatting", |h| text(h) == "fn main() {\n}\n");
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+    h.run();
+    assert_eq!(text(&h), "fn main() {}\n", "one undo step");
+
+    // Format on save: formatted, then saved.
+    h.state_mut().settings.format_on_save = true;
+    h.event(Event::Text("x".into()));
+    h.run();
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::S);
+    let file = dir.path().join("main.rs");
+    wait(&mut h, "the formatted file on disk", |_| {
+        std::fs::read_to_string(&file).is_ok_and(|t| t == "xfn main() \n{}\n")
+    });
+}
+
+#[test]
+fn code_actions_apply_edits_and_let_a_command_edit_only_while_it_runs() {
+    let edit_to = |uri: &Value, text: &str| {
+        json!({"changes": {uri.as_str().unwrap(): [
+            {"range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 0}}, "newText": text},
+        ]}})
+    };
+    let server = diagnostics_on_open()
+        .capabilities(json!({
+            "textDocumentSync": { "openClose": true, "change": 2 },
+            "codeActionProvider": { "resolveProvider": true },
+            "executeCommandProvider": { "commands": ["fake.edit"] },
+        }))
+        // Refused: no code action is running.
+        .request_after_start("workspace/applyEdit", json!({"edit": {"changes": {}}}))
+        .answer("textDocument/codeAction", move |p| {
+            let uri = &p["textDocument"]["uri"];
+            json!([
+                {"title": "Not here", "disabled": {"reason": "Select a block"}},
+                {"title": "Add a comment", "kind": "quickfix", "isPreferred": true,
+                 "edit": edit_to(uri, "// a\n")},
+                {"title": "Resolve me", "data": {"uri": uri}},
+                {"title": "Run a command", "command": "fake.edit", "arguments": [uri]},
+            ])
+        })
+        .answer("codeAction/resolve", move |p| {
+            let mut a = p.clone();
+            a["edit"] = edit_to(&p["data"]["uri"], "// b\n");
+            a
+        })
+        .request_on("workspace/executeCommand", move |p| {
+            vec![(
+                "workspace/applyEdit".into(),
+                json!({"edit": edit_to(&p["arguments"][0], "// c\n")}),
+            )]
+        })
+        .answer("workspace/executeCommand", |_| Value::Null);
+    let (dir, mut h) = open_rust_file(&server);
+    h.state_mut()
+        .settings
+        .lsp_trusted
+        .push(dir.path().to_path_buf());
+    wait(&mut h, "diagnostics", |h| {
+        !h.state()
+            .language_servers
+            .diagnostics_of(h.state().buffer_id())
+            .is_empty()
+    });
+    wait(&mut h, "the refused edit", |_| {
+        !server.responses().is_empty()
+    });
+    assert_eq!(server.responses()[0].as_ref().unwrap()["applied"], false);
+
+    // On the problem.
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::G);
+    h.run();
+    h.event(Event::Text("1:5".into()));
+    h.key_press(egui::Key::Enter);
+    h.run();
+    let actions = |h: &mut Harness<'_, OchrepadApp>| {
+        h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Period);
+        wait(h, "the menu", |h| {
+            h.query_by_label("Add a comment").is_some()
+        });
+    };
+    // The preferred one is selected.
+    actions(&mut h);
+    assert_eq!(
+        server.params("textDocument/codeAction")[0]["context"]["diagnostics"][0]["message"],
+        "this is wrong",
+        "the problem there, as the server sent it"
+    );
+    h.key_press(egui::Key::Enter);
+    h.run();
+    assert_eq!(text(&h), "// a\nfn main() {}\n");
+    // One that needs resolving.
+    actions(&mut h);
+    h.get_by_label("Resolve me").click();
+    wait(&mut h, "the resolved edit", |h| {
+        text(h).starts_with("// b\n")
+    });
+    // A disabled one says why.
+    actions(&mut h);
+    h.get_by_label("Not here").click();
+    h.run();
+    assert!(text(&h).starts_with("// b\n// a\n"), "{}", text(&h));
+    // A command, whose edit the server asks for while it runs.
+    actions(&mut h);
+    h.get_by_label("Run a command").click();
+    wait(&mut h, "the command's edit", |h| {
+        text(h).starts_with("// c\n")
+    });
+    let applied = server.responses();
+    assert_eq!(applied.last().unwrap().as_ref().unwrap()["applied"], true);
+}

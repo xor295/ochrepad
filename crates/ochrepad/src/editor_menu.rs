@@ -31,6 +31,12 @@ pub enum MenuCommand {
     GoToDefinition,
     /// Ask it where the name is used.
     FindReferences,
+    /// Rename the name everywhere.
+    Rename,
+    /// Format the document.
+    FormatDocument,
+    /// Show the server's code actions at the caret.
+    CodeActions,
 }
 
 /// The bytes of `text` around byte `at`, up to the characters `stop`
@@ -244,6 +250,15 @@ pub fn show(
         }
         if item(ui, true, "Find References", "Shift+F12") {
             command = Some(MenuCommand::FindReferences);
+        }
+        if item(ui, editable, "Rename…", "Shift+F6") {
+            command = Some(MenuCommand::Rename);
+        }
+        if item(ui, editable, "Format Document", "Alt+Shift+F") {
+            command = Some(MenuCommand::FormatDocument);
+        }
+        if item(ui, editable, "Code Actions…", "Ctrl+.") {
+            command = Some(MenuCommand::CodeActions);
         }
         ui.separator();
     }

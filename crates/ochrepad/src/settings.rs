@@ -123,6 +123,8 @@ pub struct AppSettings {
     pub completion_folder: bool,
     /// Language servers run for the open documents (in trusted folders).
     pub language_servers: bool,
+    /// Ctrl+S formats the document with its language server first.
+    pub format_on_save: bool,
     /// Folders where language servers may run.
     pub lsp_trusted: Vec<PathBuf>,
     /// Folders where they may not (asked once, answered no).
@@ -181,6 +183,7 @@ impl Default for AppSettings {
             completion_other_documents: true,
             completion_folder: true,
             language_servers: true,
+            format_on_save: false,
             lsp_trusted: Vec::new(),
             lsp_declined: Vec::new(),
             lsp_never: Vec::new(),

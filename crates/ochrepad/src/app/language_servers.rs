@@ -51,6 +51,23 @@ impl OchrepadApp {
                         self.open_file_at(&path, line.map(|l| (l as usize + 1, 1)));
                     }
                 }
+                Notice::ApplyEdit {
+                    server,
+                    id,
+                    edit,
+                    units,
+                } => {
+                    let result = self.apply_workspace_edit(&edit, units);
+                    if let Err(e) = &result {
+                        self.message = Some(format!("The code action was not applied:\n{e}"));
+                    }
+                    self.language_servers.answer_apply_edit(
+                        &server,
+                        id,
+                        result.is_ok(),
+                        result.as_ref().err().map(String::as_str),
+                    );
+                }
             }
         }
     }
@@ -125,6 +142,11 @@ impl OchrepadApp {
             .default_pos(ui.ctx().content_rect().center())
             .show(ui.ctx(), |ui| {
                 ui.checkbox(&mut self.settings.language_servers, "Use language servers");
+                ui.checkbox(&mut self.settings.format_on_save, "Format on save")
+                    .on_hover_text(
+                        "Ctrl+S formats the document with its language server first, \
+                         when one can",
+                    );
                 let ls = &self.language_servers;
                 ui.horizontal(|ui| {
                     if let Some(f) = &ls.lsp_file {

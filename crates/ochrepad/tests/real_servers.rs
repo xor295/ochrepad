@@ -85,7 +85,7 @@ fn rust_analyzer_diagnoses_completes_and_explains() {
     let file = root.join("src").join("main.rs");
     std::fs::write(
         &file,
-        "fn main() {\n    let items: Vec<i32> = Vec::new();\n    use nothing_here::Thing;\n}\n",
+        "fn main() {\n    let items: Vec<i32>   =   Vec::new();\n    use nothing_here::Thing;\n}\n",
     )
     .unwrap();
     let mut app = OchrepadApp::new();
@@ -108,6 +108,16 @@ fn rust_analyzer_diagnoses_completes_and_explains() {
             .diagnostics_of(h.state().buffer_id())
             .iter()
             .any(|d| d.message.contains("unresolved import"))
+    });
+
+    // Format Document (rustfmt, through the server).
+    h.key_press_modifiers(Modifiers::ALT | Modifiers::SHIFT, Key::F);
+    wait(&mut h, "the formatting", 30, |h| {
+        h.state()
+            .buffer()
+            .doc()
+            .to_string()
+            .contains("let items: Vec<i32> = Vec::new();")
     });
 
     // Members after `items.`, with documentation.
@@ -179,6 +189,29 @@ fn rust_analyzer_diagnoses_completes_and_explains() {
             .searches
             .front()
             .is_some_and(|s| s.done && s.matches == 2)
+    });
+
+    // Code actions on `items` (which ones depends on the server's version).
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Period);
+    wait(&mut h, "code actions", 30, |h| {
+        !h.state().code_action_titles().is_empty()
+    });
+    eprintln!("code actions: {:?}", h.state().code_action_titles());
+    h.key_press(Key::Escape);
+    h.run();
+    assert!(h.state().code_action_titles().is_empty());
+
+    // Rename `items` to `values`.
+    h.key_press_modifiers(Modifiers::SHIFT, Key::F6);
+    wait(&mut h, "the rename dialog", 30, |h| {
+        h.query_by_label("Rename items to:").is_some()
+    });
+    h.key_press_modifiers(Modifiers::COMMAND, Key::A);
+    h.event(Event::Text("values".into()));
+    h.key_press(Key::Enter);
+    wait(&mut h, "the rename", 30, |h| {
+        let text = h.state().buffer().doc().to_string();
+        text.contains("let values: Vec") && text.contains("values.push(")
     });
 
     // F12 on `Vec`: the standard library's source.

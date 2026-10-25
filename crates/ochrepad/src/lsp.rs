@@ -70,6 +70,8 @@ pub struct Diagnostic {
     /// In the open document, following edits until the server sends new
     /// ones.
     pub range: Option<Range<ByteOffset>>,
+    /// As the server sent it (code actions send it back).
+    pub raw: Value,
 }
 
 /// A file's diagnostics.
@@ -122,6 +124,14 @@ pub enum Notice {
     Note(String),
     /// A server asked to show a document (a local file).
     Show { path: PathBuf, line: Option<u32> },
+    /// A server asked to apply an edit while the user's code action runs;
+    /// answer with [`LanguageServers::answer_apply_edit`].
+    ApplyEdit {
+        server: (String, PathBuf),
+        id: ochrepad_lsp::message::Id,
+        edit: Value,
+        units: ColumnUnits,
+    },
 }
 
 type SetupKey = (String, PathBuf);
@@ -155,6 +165,9 @@ pub struct LanguageServers {
     test_servers: HashMap<String, (ServerConfig, Launch)>,
     /// Documents larger than this are not given to servers.
     pub max_bytes: usize,
+    /// The session whose `workspace/applyEdit` is applied (while a code
+    /// action's command runs); every other one is refused.
+    apply_edit_for: Option<(String, PathBuf)>,
 }
 
 impl LanguageServers {
@@ -539,13 +552,23 @@ impl LanguageServers {
                     notices.push(Notice::Show { path, line });
                 }
             }
-            Event::ApplyEdit { id, .. } => {
-                // Only during the user's own rename or code action (L3).
-                s.client.answer_apply_edit(
-                    id,
-                    false,
-                    Some("ochrepad applies edits only for its own renames and code actions"),
-                );
+            Event::ApplyEdit { id, edit } => {
+                // Only while the user's code action runs.
+                let key = (s.name.clone(), s.root.clone());
+                if self.apply_edit_for.as_ref() == Some(&key) {
+                    notices.push(Notice::ApplyEdit {
+                        server: key,
+                        id,
+                        edit,
+                        units: s.client.units,
+                    });
+                } else {
+                    s.client.answer_apply_edit(
+                        id,
+                        false,
+                        Some("ochrepad applies edits only for the user's own code actions"),
+                    );
+                }
             }
             Event::Progress { token, text } => match text {
                 Some(t) => {
@@ -642,6 +665,50 @@ impl LanguageServers {
         range: &Value,
     ) -> Option<Range<ByteOffset>> {
         self.session_of(buffer)?.client.range(doc, range)
+    }
+
+    /// Lets the server of `buffer` apply edits (`workspace/applyEdit`)
+    /// while a code action's command runs, or stops letting it.
+    pub fn allow_apply_edit(&mut self, buffer: BufferId, allow: bool) {
+        self.apply_edit_for = allow
+            .then(|| {
+                self.session_of(buffer)
+                    .map(|s| (s.name.clone(), s.root.clone()))
+            })
+            .flatten();
+    }
+
+    /// Answers a server's `workspace/applyEdit`.
+    pub fn answer_apply_edit(
+        &mut self,
+        server: &(String, PathBuf),
+        id: ochrepad_lsp::message::Id,
+        applied: bool,
+        reason: Option<&str>,
+    ) {
+        if let Some(s) = self
+            .sessions
+            .iter_mut()
+            .find(|s| s.name == server.0 && s.root == server.1)
+        {
+            s.client.answer_apply_edit(id, applied, reason);
+        }
+    }
+
+    /// Whether the server's copy of `buffer`'s document is `doc` (what it
+    /// answered about is what the document is now).
+    pub fn in_sync(&self, buffer: BufferId, doc: &Document) -> bool {
+        self.docs.get(&buffer).is_some_and(|d| {
+            self.session_of(buffer)
+                .and_then(|s| s.client.text(&d.uri))
+                .is_some_and(|t| t.changed_range(doc).is_none())
+        })
+    }
+
+    /// The version of `buffer`'s document the server was last sent.
+    pub fn version_of(&self, buffer: BufferId) -> Option<i64> {
+        let d = self.docs.get(&buffer)?;
+        self.session_of(buffer)?.client.version(&d.uri)
     }
 
     /// The diagnostics of `buffer`'s document.
@@ -819,6 +886,7 @@ fn diagnostic(v: &Value, text: Option<&Document>, units: ColumnUnits) -> Option<
         code,
         lsp_range,
         range: text.map(|t| offsets(t, lsp_range, units)),
+        raw: v.clone(),
     })
 }
 

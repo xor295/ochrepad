@@ -24,6 +24,8 @@ pub struct FakeServer {
     reactions: HashMap<String, Reaction>,
     /// Requests made of the client once it says `initialized`.
     requests: Vec<(String, Value)>,
+    /// Requests made of the client before a request is answered.
+    requests_on: HashMap<String, Reaction>,
 }
 
 impl Default for FakeServer {
@@ -46,6 +48,7 @@ impl FakeServer {
             answers: HashMap::new(),
             reactions: HashMap::new(),
             requests: Vec::new(),
+            requests_on: HashMap::new(),
         }
     }
 
@@ -72,6 +75,18 @@ impl FakeServer {
         f: impl Fn(&Value) -> Vec<(String, Value)> + Send + Sync + 'static,
     ) -> Self {
         self.reactions.insert(method.into(), Arc::new(f));
+        self
+    }
+
+    /// Before answering a request for `method`, makes the requests of the
+    /// client `f(params)` gives, as a server asks the client to apply an
+    /// edit while it runs a command.
+    pub fn request_on(
+        mut self,
+        method: &str,
+        f: impl Fn(&Value) -> Vec<(String, Value)> + Send + Sync + 'static,
+    ) -> Self {
+        self.requests_on.insert(method.into(), Arc::new(f));
         self
     }
 
@@ -160,6 +175,19 @@ impl FakeServer {
                 Message::Response { .. } => continue,
             };
             if let Message::Request { id, .. } = &m {
+                if let Some(f) = self.requests_on.get(&method) {
+                    for (method, params) in f(&params) {
+                        next_id += 1;
+                        send(
+                            &mut output,
+                            Message::Request {
+                                id: Id::Number(next_id),
+                                method,
+                                params,
+                            },
+                        );
+                    }
+                }
                 let result = match method.as_str() {
                     "initialize" => Ok(json!({ "capabilities": self.capabilities })),
                     "shutdown" => Ok(Value::Null),
