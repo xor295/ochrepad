@@ -114,6 +114,8 @@ fn a_server_runs_only_after_the_folder_is_trusted_and_follows_the_document() {
         d.range,
         Some(ochrepad_core::ByteOffset(3)..ochrepad_core::ByteOffset(7))
     );
+    // The status bar is drawn before the frame takes in diagnostics.
+    h.run();
     h.get_by_label_contains("fake-rust · 1 error, 0 warnings");
     // Typing is sent as a change, and the diagnostic moves with the text.
     h.event(Event::Text("// ".into()));

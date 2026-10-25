@@ -47,7 +47,12 @@ fn a_shell_runs_a_command_and_exits() {
     assert!(t.running());
     t.write(b"echo hello-from-ochrepad\r".to_vec());
     let shown = wait(&ctx, &mut t, |t| {
-        t.screen_text().iter().any(|l| l == "hello-from-ochrepad")
+        // Typed before the first prompt, the output can share the
+        // prompt's line (`$ hello-from-ochrepad`).
+        t.screen_text().iter().any(|l| {
+            l == "hello-from-ochrepad"
+                || (l.ends_with(" hello-from-ochrepad") && !l.contains("echo"))
+        })
     });
     assert!(shown, "screen:\n{}", t.screen_text().join("\n"));
 
