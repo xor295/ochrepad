@@ -217,7 +217,27 @@ it changes a rule in `CLAUDE.md`, the step that makes the change updates it.
 - No `window/showMessageRequest` button runs anything; they are shown as
   notes.
 
-## 6. The local model: a gate (step X, maybe never)
+## 6. The local model: a gate (step X, dropped)
+
+**Decision (2026-10-25): dropped.** The review failed the gate on its
+first point, and the user decided against it. With candle 0.11.0 (the one
+practical pure-Rust inference stack) and tokenizers 0.22.2:
+
+- candle-core depends on tokenizers with the `onig` feature on every
+  non-wasm target, unconditionally, so `onig_sys` always compiles the
+  Oniguruma C library; that library's repository has been archived
+  (unmaintained) since April 2025.
+- `cargo deny check advisories` failed: three open advisories in `zip`
+  8.6.0, which candle-core pulls in (RUSTSEC-2026-0367, -0368, -0369), and
+  `paste` unmaintained (RUSTSEC-2024-0436, through gemm).
+- 141 crates, 63 of them new to ochrepad, several with heavy `unsafe`
+  (pulp, candle-core, gemm-common).
+- Downloading a model from the app would add an HTTP client, and with it
+  rustls's ring or aws-lc, also C and assembly.
+
+The rest of the section is kept as the gate's terms, should a pure-Rust
+stack that passes them appear.
+
 
 The aim would be JetBrains' kind of full-line completion: grey text after
 the caret, Tab to take it. It is not started until everything else in this
@@ -265,7 +285,7 @@ user.
 | L1 | `ochrepad-lsp`: framing, processes, requests, document sync, lifecycle, trust question, server table, `lsp.json`, View > Language Servers. | A fake server (a test binary speaking scripted JSON-RPC) drives tests on both platforms: start, sync (contents match after random edits), crash and restart, malformed messages, trust. |
 | L2 | Completion from servers, diagnostics (underlines, gutter, Problems panel), hover, go to definition, signature help. | Fake-server tests for each; an ignored test against a real rust-analyzer when installed; screenshots reviewed. |
 | L3 | References, rename, formatting, code actions, document symbols, folder symbols, `docs/language-servers.md`. | Fake-server tests; a rename across two files leaves the other one open and unsaved. |
-| X | The local-model gate (section 6). | The review, then (only if accepted) the spike's numbers; the user decides. |
+| X | The local-model gate (section 6). | Dropped after the review (section 6). |
 
 ## 8. Risks
 
