@@ -2642,31 +2642,57 @@ fn paint(
         painter.rect_filled(h_thumb.shrink(2.0), 3.0, thumb_color);
     }
     let caret_offset = rows.offset_of(rows.row_of(v.selections.primary().head), 0.0);
+    // Errors and warnings, by line.
+    let mut problems: [Vec<usize>; 2] = [Vec::new(), Vec::new()];
+    for u in underlines.iter().filter(|u| u.rank <= 1) {
+        problems[u.rank as usize].push(rows.doc().line_of(u.range.start));
+    }
+    for p in &mut problems {
+        p.sort_unstable();
+        p.dedup();
+    }
     paint_overview(
         &painter,
         f,
         &rows,
-        editor.buffer(buffer).map(|b| b.bookmarks()),
-        changes,
-        caret_offset,
+        Overview {
+            bookmarks: editor.buffer(buffer).map(|b| b.bookmarks()),
+            changes,
+            problems: &problems,
+            caret_offset,
+        },
         &visuals,
     );
     state.cache.retain_near(first, last.max(first + 1));
 }
 
-/// The overview on the vertical scrollbar: the bookmarks (right) and the
-/// changed lines (left) at their places in the document, and the caret's
-/// line across it. Worked out per pixel row, so a document with a million
-/// bookmarks costs no more than one with ten.
+/// What the scrollbar's overview shows.
+struct Overview<'a> {
+    bookmarks: Option<&'a ochrepad_core::Bookmarks>,
+    changes: Option<&'a crate::change_history::LineMarks>,
+    /// The lines with an error, and those with a warning, sorted.
+    problems: &'a [Vec<usize>; 2],
+    caret_offset: f64,
+}
+
+/// The overview on the vertical scrollbar: the changed lines (left), the
+/// bookmarks (middle) and the language server's errors and warnings
+/// (right) at their places in the document, and the caret's line across
+/// it. Worked out per pixel row, so a document with a million bookmarks
+/// costs no more than one with ten.
 fn paint_overview(
     painter: &egui::Painter,
     f: &Frame,
     rows: &DisplayMap,
-    bookmarks: Option<&ochrepad_core::Bookmarks>,
-    changes: Option<&crate::change_history::LineMarks>,
-    caret_offset: f64,
+    o: Overview<'_>,
     visuals: &egui::Visuals,
 ) {
+    let Overview {
+        bookmarks,
+        changes,
+        problems,
+        caret_offset,
+    } = o;
     let bar = f.vbar;
     let visible = rows.visible_line_count();
     // A short document maps to the part of the bar its lines fill.
@@ -2685,7 +2711,8 @@ fn paint_overview(
 
     let marks = bookmarks.filter(|b| !b.is_empty());
     let changed = changes.filter(|c| !c.is_empty());
-    if marks.is_none() && changed.is_none() {
+    let any_problems = problems.iter().any(|p| !p.is_empty());
+    if marks.is_none() && changed.is_none() && !any_problems {
         return;
     }
     let doc_lines = rows.doc().line_count();
@@ -2709,11 +2736,15 @@ fn paint_overview(
         sorted.get(i).is_some_and(|&l| l < r.end)
     };
     let accent = crate::theme::bookmark_bg(visuals);
-    let lane = |y: f32, left: bool| {
-        let (x0, x1) = if left {
-            (bar.min.x + 1.0, bar.min.x + 4.0)
-        } else {
-            (bar.min.x + 6.0, bar.max.x - 1.0)
+    // Changes, bookmarks, problems.
+    let mid = ((bar.min.x + 6.0 + bar.max.x - 1.0) / 2.0).round();
+    let lane = |y: f32, which: u8| {
+        let (x0, x1) = match which {
+            0 => (bar.min.x + 1.0, bar.min.x + 4.0),
+            // The whole lane while there are no problems to show.
+            1 if !any_problems => (bar.min.x + 6.0, bar.max.x - 1.0),
+            1 => (bar.min.x + 6.0, mid - 1.0),
+            _ => (mid, bar.max.x - 1.0),
         };
         Rect::from_min_max(Pos2::new(x0, y), Pos2::new(x1, y + 2.0))
     };
@@ -2723,7 +2754,15 @@ fn paint_overview(
         };
         let top = bar.min.y + y as f32;
         if marks.is_some_and(|m| any_in(m.lines(), &r)) {
-            painter.rect_filled(lane(top, false), 0.0, accent);
+            painter.rect_filled(lane(top, 1), 0.0, accent);
+        }
+        // An error shows over a warning.
+        if let Some(rank) = (0..2).find(|&i| any_in(&problems[i], &r)) {
+            painter.rect_filled(
+                lane(top, 2),
+                0.0,
+                crate::theme::diagnostic_color(visuals, rank as u8),
+            );
         }
         if let Some(c) = changed {
             let i = c.lines.partition_point(|m| m.0 < r.start);
@@ -2746,11 +2785,7 @@ fn paint_overview(
             }
             if let Some(kind) = kind {
                 let (red, green, blue) = crate::theme::diff_rgb(kind);
-                painter.rect_filled(
-                    lane(top, true),
-                    0.0,
-                    egui::Color32::from_rgb(red, green, blue),
-                );
+                painter.rect_filled(lane(top, 0), 0.0, egui::Color32::from_rgb(red, green, blue));
             }
         }
     }

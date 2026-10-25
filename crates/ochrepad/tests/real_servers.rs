@@ -120,6 +120,26 @@ fn rust_analyzer_diagnoses_completes_and_explains() {
             .contains("let items: Vec<i32> = Vec::new();")
     });
 
+    // The Function List from the server's symbols.
+    h.state_mut().settings.show_function_list = true;
+    wait(&mut h, "the function list", 30, |h| {
+        h.state()
+            .function_list
+            .entries(h.state().buffer_id())
+            .is_some_and(|e| e.iter().any(|e| e.symbol.name == "main"))
+    });
+    h.state_mut().settings.show_function_list = false;
+
+    // Go to Symbol in Folder.
+    h.key_press_modifiers(Modifiers::COMMAND | Modifiers::ALT, Key::T);
+    h.run();
+    h.event(Event::Text("main".into()));
+    wait(&mut h, "main in the folder", 30, |h| {
+        h.query_by_label_contains("ƒ  main").is_some()
+    });
+    h.key_press(Key::Escape);
+    h.run();
+
     // Members after `items.`, with documentation.
     h.key_press_modifiers(Modifiers::COMMAND, Key::G);
     h.run();

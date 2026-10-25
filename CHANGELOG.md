@@ -36,6 +36,8 @@ people downloading the release.
     listed in View > Problems (Alt+F8 goes to the next one);
   - resting the pointer on a name shows what the server knows about it,
     and typing a call's arguments shows its signature;
+  - Ctrl+Alt+T searches the project's symbols, and the Function List
+    shows the server's;
   - F12 goes to a name's definition, Shift+F12 lists its uses, Shift+F6
     renames it everywhere, Ctrl+. offers the server's fixes and
     refactorings, and Alt+Shift+F formats the document (also on save, if

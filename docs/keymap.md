@@ -55,7 +55,8 @@ For example `Ctrl+Shift+Up`, `alt+f5`, `Ctrl+OpenBracket`.
   Shift+F8, Ctrl+plus, Ctrl+=, Ctrl+minus, Ctrl+0, Ctrl+Shift+8,
   Alt+Shift+L, Alt+C (Column Editor), F11 (Full Screen), F12 (Go to
   Definition), Shift+F12 (Find References), Shift+F6 (Rename), Alt+Shift+F
-  (Format Document), Ctrl+. (Code Actions), Ctrl+\` (Terminal)
+  (Format Document), Ctrl+. (Code Actions), Ctrl+Alt+T (Go to Symbol in
+  Folder), Ctrl+\` (Terminal)
   and Ctrl+Shift+\` (New Terminal).
 - **Copy, cut and paste** (Ctrl+C, Ctrl+X, Ctrl+V) come from the system
   clipboard, not from key bindings.

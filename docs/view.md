@@ -126,7 +126,9 @@ and how wide it is; **×** closes it.
 current document defines, in order: functions and methods (ƒ), types such
 as structs, classes, enums, traits and Rust's `impl` blocks (T), modules
 (M), and the headings of a Markdown file (#). Entries are indented as
-their lines are, so methods sit under their class.
+their lines are, so methods sit under their class. When a
+[language server](language-servers.md) works on the document, the list
+comes from it instead, nested as the server nests it.
 
 - **Click** an entry to go to its line.
 - The **Filter** field keeps the entries whose name contains what you type.

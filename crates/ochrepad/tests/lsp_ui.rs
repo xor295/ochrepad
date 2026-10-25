@@ -679,3 +679,93 @@ fn code_actions_apply_edits_and_let_a_command_edit_only_while_it_runs() {
     let applied = server.responses();
     assert_eq!(applied.last().unwrap().as_ref().unwrap()["applied"], true);
 }
+
+#[test]
+fn the_function_list_uses_the_servers_symbols() {
+    let server = FakeServer::new()
+        .capabilities(json!({
+            "textDocumentSync": { "openClose": true, "change": 2 },
+            "documentSymbolProvider": true,
+        }))
+        .answer("textDocument/documentSymbol", |_| {
+            let at =
+                json!({"start": {"line": 0, "character": 3}, "end": {"line": 0, "character": 7}});
+            json!([{"name": "from_server", "kind": 12, "range": at, "selectionRange": at}])
+        });
+    let (dir, mut h) = open_rust_file(&server);
+    h.state_mut()
+        .settings
+        .lsp_trusted
+        .push(dir.path().to_path_buf());
+    wait(&mut h, "didOpen", |_| {
+        !server.params("textDocument/didOpen").is_empty()
+    });
+    // An edit, so the list is read again now that the server runs.
+    h.event(Event::Text(" ".into()));
+    h.state_mut().settings.show_function_list = true;
+    wait(&mut h, "the server's symbols", |h| {
+        h.state()
+            .function_list
+            .entries(h.state().buffer_id())
+            .is_some_and(|e| e.iter().any(|e| e.symbol.name == "from_server"))
+    });
+}
+
+#[test]
+fn go_to_symbol_searches_the_server_and_opens_the_one_chosen() {
+    let server = FakeServer::new().capabilities(json!({
+        "textDocumentSync": { "openClose": true, "change": 2 },
+        "workspaceSymbolProvider": true,
+    }));
+    // The answer names other.rs beside the file the server was given.
+    let received = server.received.clone();
+    let server = server.answer("workspace/symbol", move |p| {
+        assert_eq!(p["query"], "Thi");
+        let opened = received
+            .lock()
+            .unwrap()
+            .iter()
+            .find_map(|m| match m {
+                ochrepad_lsp::message::Message::Notification { method, params }
+                    if method == "textDocument/didOpen" =>
+                {
+                    params["textDocument"]["uri"].as_str().map(str::to_owned)
+                }
+                _ => None,
+            })
+            .unwrap();
+        json!([{"name": "Thing", "kind": 23, "containerName": "other", "location": {
+            "uri": opened.replace("main.rs", "other.rs"),
+            "range": {"start": {"line": 1, "character": 3}, "end": {"line": 1, "character": 8}},
+        }}])
+    });
+    let (dir, mut h) = open_rust_file(&server);
+    std::fs::write(dir.path().join("other.rs"), "// other\nfn Thing() {}\n").unwrap();
+    h.state_mut()
+        .settings
+        .lsp_trusted
+        .push(dir.path().to_path_buf());
+    wait(&mut h, "didOpen", |_| {
+        !server.params("textDocument/didOpen").is_empty()
+    });
+    h.key_press_modifiers(
+        egui::Modifiers::COMMAND | egui::Modifiers::ALT,
+        egui::Key::T,
+    );
+    h.run();
+    h.event(Event::Text("Thi".into()));
+    wait(&mut h, "the symbol", |h| {
+        h.query_by_label_contains("Thing  (other)").is_some()
+    });
+    h.key_press(egui::Key::Enter);
+    wait(&mut h, "other.rs", |h| {
+        h.state()
+            .buffer()
+            .meta
+            .path
+            .as_deref()
+            .is_some_and(|p| p.ends_with("other.rs"))
+    });
+    h.run();
+    h.get_by_label("Ln 2, Col 4");
+}

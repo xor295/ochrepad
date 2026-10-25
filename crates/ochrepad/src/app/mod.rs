@@ -36,6 +36,7 @@ mod replace_in_files;
 mod search;
 mod sessions;
 mod summary;
+mod symbols;
 mod terminals;
 mod tools;
 mod viewers;
@@ -110,6 +111,8 @@ const GO_TO_DEFINITION: KeyboardShortcut = KeyboardShortcut::new(Modifiers::NONE
 const FIND_REFERENCES: KeyboardShortcut = KeyboardShortcut::new(Modifiers::SHIFT, Key::F12);
 const RENAME: KeyboardShortcut = KeyboardShortcut::new(Modifiers::SHIFT, Key::F6);
 const CODE_ACTIONS: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::Period);
+const GO_TO_SYMBOL: KeyboardShortcut =
+    KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::ALT), Key::T);
 const FORMAT_DOCUMENT: KeyboardShortcut =
     KeyboardShortcut::new(Modifiers::ALT.plus(Modifiers::SHIFT), Key::F);
 /// Ctrl+Shift+L is Notepad++'s Delete Line.
@@ -177,6 +180,8 @@ pub struct OchrepadApp {
     formatting: Option<edits::Formatting>,
     /// Code actions: asked for, shown, or running.
     code_actions: Option<code_actions::CodeActions>,
+    /// Search > Go to Symbol in Folder, while it is open.
+    symbol_search: Option<symbols::SymbolSearch>,
     /// View > Problems.
     pub problems: crate::problems::ProblemsPanel,
     /// The viewer whose Open as Editable question is showing.
@@ -294,6 +299,7 @@ impl OchrepadApp {
             renaming: None,
             formatting: None,
             code_actions: None,
+            symbol_search: None,
             problems: Default::default(),
             confirm_editable: None,
             view_states: HashMap::new(),
@@ -1303,6 +1309,7 @@ impl OchrepadApp {
         self.go_to_line_dialog(ui);
         self.rename_symbol_dialog(ui);
         self.code_actions_menu(ui);
+        self.symbol_search_dialog(ui);
         self.open_as_editable_dialog(ui);
         self.hash_dialog(ui);
         self.summary_dialog(ui);
@@ -1472,6 +1479,9 @@ impl OchrepadApp {
         }
         if viewer.is_none() && pressed(ui, &CODE_ACTIONS) {
             self.code_actions();
+        }
+        if pressed(ui, &GO_TO_SYMBOL) {
+            self.go_to_symbol();
         }
         if viewer.is_none() && pressed(ui, &FORMAT_DOCUMENT) {
             self.format_document();
@@ -2161,6 +2171,9 @@ impl OchrepadApp {
         if viewer.is_none() && item(ui, "Find References", "Shift+F12") {
             self.find_references();
         }
+        if item(ui, "Go to Symbol in Folder…", "Ctrl+Alt+T") {
+            self.go_to_symbol();
+        }
         if item(ui, "Filter Lines…", "Alt+Shift+L") {
             self.open_filter();
         }
@@ -2391,9 +2404,12 @@ impl OchrepadApp {
                 caret_line,
             });
         if let Some(t) = &target
-            && self
-                .function_list
-                .tick(t, self.highlighting.registry(), self.now)
+            && self.function_list.tick(
+                t,
+                self.highlighting.registry(),
+                self.now,
+                &mut self.language_servers,
+            )
         {
             ui.ctx()
                 .request_repaint_after(std::time::Duration::from_millis(100));

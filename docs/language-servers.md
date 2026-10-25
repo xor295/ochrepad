@@ -49,8 +49,8 @@ project, so a program planted in a repository is never run.
   step for both). Placeholders in a server's templates are inserted as
   plain text.
 - **Problems** are underlined: errors red, warnings yellow, information
-  blue, hints dotted. A dot in the gutter marks a line with an error or
-  warning, and the status bar counts them. Resting the pointer on one shows
+  blue, hints dotted. A dot in the gutter and a mark on the scrollbar show
+  where errors and warnings are, and the status bar counts them. Resting the pointer on one shows
   its message. **Alt+F8** and **Alt+Shift+F8** move to the next and
   previous problem. **View > Problems** lists every file's problems; a click
   opens the file there.
@@ -63,6 +63,11 @@ project, so a program planted in a repository is never run.
 - **Find References** (**Shift+F12**, **Search > Find References**, or the
   right-click menu): lists everywhere the name at the caret is used, in the
   Search Results panel, like Find in Files. A click goes there.
+- **Go to Symbol in Folder** (**Ctrl+Alt+T**, **Search > Go to Symbol in
+  Folder…**): type part of a name to search the whole project's functions,
+  types and constants; Up, Down and Enter (or a click) open one.
+- The **Function List** (View > Function List) lists what the server
+  finds in the document.
 
 ## Changing code
 
