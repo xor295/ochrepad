@@ -36,7 +36,7 @@ pub const MAX_FILES: usize = 20_000;
 pub const RESCAN_SECS: u64 = 30;
 /// A cache larger than this is not written.
 const MAX_CACHE: usize = 64 << 20;
-const CACHE_VERSION: u32 = 1;
+const CACHE_VERSION: u32 = 2;
 /// Words shorter than this are not kept.
 const MIN_WORD: usize = 3;
 
@@ -54,6 +54,9 @@ pub struct Definition {
 #[derive(Debug, Default)]
 pub struct Snapshot {
     pub words: WordIndex,
+    /// The words seen right after a member separator (`.`, `::`, `->`),
+    /// with how often.
+    pub members: WordIndex,
     /// The defined names (with how many definitions each has).
     pub names: WordIndex,
     /// The first definition of each name.
@@ -95,6 +98,8 @@ pub struct FolderMatches {
     pub snapshot: Arc<Snapshot>,
     /// Words, with how often each occurs.
     pub words: Vec<(String, u32)>,
+    /// Words seen after a member separator, with how often.
+    pub members: Vec<(String, u32)>,
     /// Defined names, with their first definition.
     pub names: Vec<(String, Definition)>,
 }
@@ -278,6 +283,12 @@ fn answer(snapshot: Arc<Snapshot>, pattern: String) -> FolderMatches {
         .into_iter()
         .map(|(w, c)| (w.to_owned(), c))
         .collect();
+    let members = snapshot
+        .members
+        .best(&prepared, QUERY_LIMIT)
+        .into_iter()
+        .map(|(w, c)| (w.to_owned(), c))
+        .collect();
     let names = snapshot
         .names
         .best(&prepared, QUERY_LIMIT)
@@ -288,6 +299,7 @@ fn answer(snapshot: Arc<Snapshot>, pattern: String) -> FolderMatches {
         pattern,
         snapshot,
         words,
+        members,
         names,
     }
 }
@@ -317,6 +329,8 @@ struct FileEntry {
     modified: (u64, u32),
     /// (word id, count).
     words: Vec<(u32, u32)>,
+    /// (word id, count) of the words after a member separator.
+    members: Vec<(u32, u32)>,
     /// `None` until looked for.
     definitions: Option<Vec<(String, SymbolKind, usize)>>,
 }
@@ -410,6 +424,8 @@ struct CachedFile {
     nanos: u32,
     /// Word ids and counts, alternating.
     words: Vec<u32>,
+    /// The same, for the words after a member separator.
+    members: Vec<u32>,
     /// (name, kind, line); absent when not looked for yet.
     definitions: Option<Vec<(String, u8, usize)>>,
 }
@@ -465,17 +481,19 @@ impl Indexer {
         }
         let ids: Vec<u32> = cache.words.iter().map(|w| self.interner.id(w)).collect();
         let mut out = HashMap::new();
+        // Word ids and counts, alternating; `None` if damaged.
+        let pairs = |flat: &[u32]| -> Option<Vec<(u32, u32)>> {
+            if !flat.len().is_multiple_of(2) {
+                return None;
+            }
+            flat.chunks(2)
+                .map(|pair| Some((*ids.get(pair[0] as usize)?, pair[1])))
+                .collect()
+        };
         for f in cache.files {
-            if f.words.len() % 2 != 0 {
+            let (Some(words), Some(members)) = (pairs(&f.words), pairs(&f.members)) else {
                 return HashMap::new();
-            }
-            let mut words = Vec::with_capacity(f.words.len() / 2);
-            for pair in f.words.chunks(2) {
-                let Some(&id) = ids.get(pair[0] as usize) else {
-                    return HashMap::new();
-                };
-                words.push((id, pair[1]));
-            }
+            };
             let definitions = f.definitions.map(|d| {
                 d.into_iter()
                     .filter_map(|(name, k, line)| Some((name, kind_of(k)?, line)))
@@ -487,6 +505,7 @@ impl Indexer {
                     size: f.size,
                     modified: (f.secs, f.nanos),
                     words,
+                    members,
                     definitions,
                 },
             );
@@ -615,9 +634,13 @@ impl Indexer {
             return;
         }
         let mut counts: HashMap<u32, u32> = HashMap::new();
+        let mut members: HashMap<u32, u32> = HashMap::new();
         if let Ok(decoded) = ochrepad_fileio::load(path) {
             for w in complete::words(&decoded.text, &[], MIN_WORD) {
                 *counts.entry(self.interner.id(w)).or_default() += 1;
+            }
+            for w in complete::member_words(&decoded.text, &[], MIN_WORD) {
+                *members.entry(self.interner.id(w)).or_default() += 1;
             }
         }
         self.files.insert(
@@ -626,6 +649,7 @@ impl Indexer {
                 size: meta.len(),
                 modified: stamp(&meta),
                 words: counts.into_iter().collect(),
+                members: members.into_iter().collect(),
                 definitions: None,
             },
         );
@@ -679,6 +703,7 @@ impl Indexer {
     /// Sends a snapshot of everything indexed.
     fn publish(&self) {
         let mut totals: HashMap<u32, u32> = HashMap::new();
+        let mut member_totals: HashMap<u32, u32> = HashMap::new();
         let mut names: HashMap<String, u32> = HashMap::new();
         let mut definitions: HashMap<String, Definition> = HashMap::new();
         let mut rels: Vec<&String> = self.files.keys().collect();
@@ -687,6 +712,9 @@ impl Indexer {
             let e = &self.files[rel];
             for &(id, count) in &e.words {
                 *totals.entry(id).or_default() += count;
+            }
+            for &(id, count) in &e.members {
+                *member_totals.entry(id).or_default() += count;
             }
             for (name, kind, line) in e.definitions.iter().flatten() {
                 *names.entry(name.clone()).or_default() += 1;
@@ -699,13 +727,16 @@ impl Indexer {
                     });
             }
         }
-        let words = WordIndex::new(
-            totals
-                .into_iter()
-                .filter_map(|(id, c)| Some((self.interner.words.get(id as usize)?.clone(), c))),
-        );
+        let index = |totals: HashMap<u32, u32>| {
+            WordIndex::new(
+                totals
+                    .into_iter()
+                    .filter_map(|(id, c)| Some((self.interner.words.get(id as usize)?.clone(), c))),
+            )
+        };
         self.send(Update::Snapshot(Arc::new(Snapshot {
-            words,
+            words: index(totals),
+            members: index(member_totals),
             names: WordIndex::new(names),
             definitions,
             files: self.files.len(),
@@ -719,9 +750,9 @@ impl Indexer {
         let mut used: HashMap<u32, u32> = HashMap::new();
         let mut words = Vec::new();
         let mut files = Vec::with_capacity(self.files.len());
-        for (rel, e) in &self.files {
-            let mut flat = Vec::with_capacity(e.words.len() * 2);
-            for &(id, count) in &e.words {
+        let mut flatten = |list: &[(u32, u32)]| {
+            let mut flat = Vec::with_capacity(list.len() * 2);
+            for &(id, count) in list {
                 let new = *used.entry(id).or_insert_with(|| {
                     words.push(self.interner.words[id as usize].clone());
                     (words.len() - 1) as u32
@@ -729,12 +760,17 @@ impl Indexer {
                 flat.push(new);
                 flat.push(count);
             }
+            flat
+        };
+        for (rel, e) in &self.files {
+            let (flat, members) = (flatten(&e.words), flatten(&e.members));
             files.push(CachedFile {
                 path: rel.clone(),
                 size: e.size,
                 secs: e.modified.0,
                 nanos: e.modified.1,
                 words: flat,
+                members,
                 definitions: e.definitions.as_ref().map(|d| {
                     d.iter()
                         .map(|(n, k, l)| (n.clone(), kind_code(*k), *l))

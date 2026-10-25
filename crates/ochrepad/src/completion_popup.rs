@@ -25,6 +25,9 @@ pub struct CompletionRequest<'a> {
     pub prefix: &'a str,
     /// Asked for with Ctrl+Space rather than by typing.
     pub invoked: bool,
+    /// The word comes right after a member separator (`items.`, `std::`,
+    /// `node->`), in a language that has them.
+    pub member: bool,
 }
 
 /// Where candidates come from (the app's documents, keywords, folder index,
@@ -36,6 +39,11 @@ pub trait CompletionSource {
     /// buffer's language (`-` in CSS).
     fn word_chars(&self, _buffer: BufferId) -> &[char] {
         &[]
+    }
+    /// Whether this buffer's language has member separators (`.` in prose
+    /// ends a sentence).
+    fn members(&self, _buffer: BufferId) -> bool {
+        false
     }
     /// Changes when the same request would now give other candidates (a
     /// server answered); the popup asks again.
@@ -264,6 +272,20 @@ impl CompletionState {
         };
         let start = complete::word_start(doc, caret, source.word_chars(buffer));
         let prefix = doc.slice(start..caret);
+        // (Only looked at when the popup has something to do: this runs
+        // every frame.)
+        let busy = invoke || typed || self.popup.is_some() || waiting.is_some();
+        let member = busy && source.members(buffer) && {
+            // A short look back is enough.
+            let line_start = doc.line_start(doc.line_of(start));
+            let mut from = ByteOffset(start.0.saturating_sub(64).max(line_start.0));
+            while !doc.is_char_boundary(from) {
+                from.0 += 1;
+            }
+            complete::ends_with_member_separator(&doc.slice(from..start))
+        };
+        // After a separator one character is enough to open by itself.
+        let min_chars = if member { 1 } else { self.settings.min_chars };
         let open = self.popup.is_some();
         // The caret left the word the popup was for.
         if self.popup.as_ref().is_some_and(|p| p.start != start) {
@@ -281,8 +303,8 @@ impl CompletionState {
         let wanted = invoke
             || (open && self.popup.is_some())
             || waiting.is_some()
-            || (typed && self.settings.auto && prefix.chars().count() >= self.settings.min_chars);
-        if !wanted || (!invoked && prefix.chars().count() < self.settings.min_chars) {
+            || (typed && self.settings.auto && prefix.chars().count() >= min_chars);
+        if !wanted || (!invoked && prefix.chars().count() < min_chars) {
             self.popup = None;
             return;
         }
@@ -310,6 +332,7 @@ impl CompletionState {
             start,
             prefix: &prefix,
             invoked,
+            member,
         };
         let candidates = source.candidates(&req);
         let items = if prefix.is_empty() {
@@ -322,8 +345,10 @@ impl CompletionState {
                 })
                 .collect();
             all.sort_by(|a, b| {
-                b.score
-                    .cmp(&a.score)
+                b.candidate
+                    .tier
+                    .cmp(&a.candidate.tier)
+                    .then_with(|| b.score.cmp(&a.score))
                     .then_with(|| a.candidate.source.cmp(&b.candidate.source))
                     .then_with(|| a.candidate.label.cmp(&b.candidate.label))
             });

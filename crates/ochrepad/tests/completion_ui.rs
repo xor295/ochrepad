@@ -307,3 +307,29 @@ fn words_and_definitions_from_the_open_folder() {
     key(&mut h, Modifiers::NONE, Key::Enter);
     assert_eq!(text(&h), "zebrafinch");
 }
+
+#[test]
+fn after_a_member_separator_names_seen_there_come_first() {
+    let mut h = harness("let n = items.iter().count();\nlet identity = 1;\n");
+    rust(&mut h);
+    typ(&mut h, "items.");
+    assert!(labels(&h).is_empty());
+    typ(&mut h, "i");
+    let shown = labels(&h);
+    assert_eq!(shown.first().map(String::as_str), Some("iter"), "{shown:?}");
+    assert!(shown.contains(&"identity".to_owned()), "then the rest");
+    // Not a keyword after a separator.
+    key(&mut h, Modifiers::NONE, Key::Escape);
+    key(&mut h, Modifiers::NONE, Key::Enter);
+    typ(&mut h, "std::im");
+    assert!(!labels(&h).contains(&"impl".to_owned()));
+}
+
+#[test]
+fn in_prose_a_period_ends_a_sentence() {
+    let mut h = harness("The items were iterated.\n");
+    typ(&mut h, "Done.i");
+    assert!(labels(&h).is_empty(), "one character is not enough");
+    typ(&mut h, "t");
+    assert!(labels(&h).contains(&"items".to_owned()));
+}

@@ -13,7 +13,7 @@ mod markup;
 mod symbols;
 
 pub use comments::comment_syntax;
-pub use keywords::keywords;
+pub use keywords::{is_prose, keywords};
 pub use markup::{Markup, markup};
 pub use symbols::{Symbol, SymbolKind};
 

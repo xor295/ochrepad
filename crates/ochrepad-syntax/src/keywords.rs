@@ -668,9 +668,36 @@ pub fn keywords(language: &str) -> impl Iterator<Item = &'static str> {
         .filter(|w| w.chars().count() > 2)
 }
 
+/// Languages of prose rather than code, where `.` ends a sentence.
+const PROSE: &[&str] = &[
+    crate::PLAIN_TEXT,
+    "Markdown",
+    "MultiMarkdown",
+    "reStructuredText",
+    "Textile",
+    "LaTeX",
+    "TeX",
+    "Git Commit",
+];
+
+/// Whether `language` is prose (completion does not treat `.` there as a
+/// member separator).
+pub fn is_prose(language: &str) -> bool {
+    PROSE.contains(&language)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn prose_languages_are_known() {
+        let names = crate::Registry::load().language_names();
+        for name in PROSE {
+            assert!(names.iter().any(|n| n == name), "unknown language {name}");
+        }
+        assert!(is_prose("Markdown") && !is_prose("Rust"));
+    }
 
     #[test]
     fn every_entry_names_a_known_language() {

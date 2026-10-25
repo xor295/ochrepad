@@ -40,6 +40,16 @@ You do not have to type the start of a name:
 The matched letters are drawn in the accent colour. Matching ignores case;
 the same case ranks a little higher.
 
+## After `.`, `::` and `->`
+
+Right after a member separator (`items.`, `std::`, `node->`, `call()?.`),
+one typed character is enough for the list to open, and the names your
+documents and the folder have after a separator come first: after `items.`,
+`iter` and `len` rank above `identity`. Keywords are left out there. This is
+a guess from the text, not an understanding of types (a language server
+would know which members `items` has). In plain text and Markdown a period
+ends a sentence, so none of this applies.
+
 ## Where suggestions come from
 
 | Marker | Source |

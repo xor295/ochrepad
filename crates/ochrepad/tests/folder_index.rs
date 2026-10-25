@@ -74,6 +74,8 @@ fn words_and_definitions_of_the_folder() {
         "ignored by .gitignore"
     );
     assert_eq!(s.words.count("hugeword"), 0, "over the size limit");
+    assert!(s.members.count("iter") > 0, "after a member separator");
+    assert_eq!(s.members.count("compute_total"), 0);
     let d = &s.definitions["compute_total"];
     assert_eq!(d.kind, SymbolKind::Function);
     assert_eq!(d.file, "src/lib.rs");
@@ -137,8 +139,9 @@ fn a_damaged_cache_is_ignored() {
     let data = tempfile::tempdir().unwrap();
     for junk in [
         "not json",
-        r#"{"version":1,"words":["a"],"files":[{"path":"notes.txt","size":1,"secs":0,"nanos":0,"words":[99,1],"definitions":null}]}"#,
-        r#"{"version":1,"words":[],"files":[{"path":"../../outside","size":1,"secs":0,"nanos":0,"words":[0],"definitions":null}]}"#,
+        r#"{"version":2,"words":["a"],"files":[{"path":"notes.txt","size":1,"secs":0,"nanos":0,"words":[99,1],"members":[],"definitions":null}]}"#,
+        r#"{"version":2,"words":["a"],"files":[{"path":"notes.txt","size":1,"secs":0,"nanos":0,"words":[0,1],"members":[0],"definitions":null}]}"#,
+        r#"{"version":2,"words":[],"files":[{"path":"../../outside","size":1,"secs":0,"nanos":0,"words":[0],"members":[],"definitions":null}]}"#,
     ] {
         let cache = data.path().join("index.json");
         std::fs::write(&cache, junk).unwrap();

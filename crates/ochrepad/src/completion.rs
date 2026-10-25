@@ -37,6 +37,8 @@ const MAX_SYMBOL_BYTES: usize = 2 << 20;
 #[derive(Default)]
 struct Found {
     words: complete::WordIndex,
+    /// The words seen right after a member separator.
+    members: complete::WordIndex,
     definitions: Vec<Symbol>,
 }
 
@@ -87,6 +89,12 @@ pub struct Completion {
 
 /// How long the folder index works before the status bar says so.
 const STATUS_DELAY_SECS: f64 = 1.0;
+
+/// Whether `language` has member separators (`items.len`, `std::mem`):
+/// not prose, where `.` ends a sentence.
+pub fn has_members(language: Option<&str>) -> bool {
+    !ochrepad_syntax::is_prose(language.unwrap_or(ochrepad_syntax::PLAIN_TEXT))
+}
 
 /// Characters besides letters, digits and `_` that words have in
 /// `language`.
@@ -294,6 +302,12 @@ fn find(registry: &Registry, job: &Job) -> Found {
     for w in complete::words(&text, &job.word_chars, MIN_WORD) {
         *counts.entry(w.to_owned()).or_default() += 1;
     }
+    let mut members: HashMap<String, u32> = HashMap::new();
+    if has_members(job.language.as_deref()) {
+        for w in complete::member_words(&text, &job.word_chars, MIN_WORD) {
+            *members.entry(w.to_owned()).or_default() += 1;
+        }
+    }
     let definitions = match &job.language {
         Some(language) if text.len() <= MAX_SYMBOL_BYTES => registry
             .symbols(language, &job.doc, &|| false)
@@ -302,6 +316,7 @@ fn find(registry: &Registry, job: &Job) -> Found {
     };
     Found {
         words: complete::WordIndex::new(counts),
+        members: complete::WordIndex::new(members),
         definitions,
     }
 }
@@ -330,6 +345,14 @@ impl CompletionSource for Sources<'_> {
         for l in first..=last {
             let text = req.doc.line_text(l);
             let distance = l.abs_diff(line) as f32 / NEARBY_LINES as f32;
+            if req.member {
+                for w in complete::member_words(&text, &chars, MIN_WORD) {
+                    if (l == line && w == req.prefix) || !matches(w) {
+                        continue;
+                    }
+                    offer_member(&mut out, w, 0.6 * (1.0 - distance));
+                }
+            }
             for w in complete::words(&text, &chars, MIN_WORD) {
                 // The word being typed is not a suggestion for itself.
                 if (l == line && w == req.prefix) || !matches(w) {
@@ -353,6 +376,14 @@ impl CompletionSource for Sources<'_> {
                 let frequent = (count as f32).ln_1p() / most.ln_1p();
                 let boost = if is_own { 0.25 } else { 0.1 } + 0.15 * frequent;
                 offer(&mut out, w, Kind::Word, Source::Word, boost);
+            }
+            if req.member {
+                let most = d.found.members.most().max(1) as f32;
+                for (w, count) in d.found.members.best(&pattern, PER_SOURCE) {
+                    let frequent = (count as f32).ln_1p() / most.ln_1p();
+                    let boost = if is_own { 0.25 } else { 0.1 } + 0.15 * frequent;
+                    offer_member(&mut out, w, boost);
+                }
             }
             for s in &d.found.definitions {
                 let kind = match s.kind {
@@ -394,6 +425,16 @@ impl CompletionSource for Sources<'_> {
                 let frequent = (*count as f32).ln_1p() / most.ln_1p();
                 offer(&mut out, w, Kind::Word, Source::Word, 0.05 + 0.1 * frequent);
             }
+            if req.member {
+                let most = m.snapshot.members.most().max(1) as f32;
+                for (w, count) in &m.members {
+                    if w == req.prefix || !matches(w) {
+                        continue;
+                    }
+                    let frequent = (*count as f32).ln_1p() / most.ln_1p();
+                    offer_member(&mut out, w, 0.05 + 0.1 * frequent);
+                }
+            }
             for (name, d) in &m.names {
                 if name == req.prefix || !matches(name) || !complete::is_identifier(name, &chars) {
                     continue;
@@ -410,8 +451,12 @@ impl CompletionSource for Sources<'_> {
                 }
             }
         }
-        // The language's keywords.
-        if let Some(language) = own.and_then(|d| d.language.as_deref()) {
+        // The language's keywords (not after a separator: those used there,
+        // `.await`, are member words).
+        if let Some(language) = own
+            .and_then(|d| d.language.as_deref())
+            .filter(|_| !req.member)
+        {
             for k in ochrepad_syntax::keywords(language) {
                 if matches(k) && k != req.prefix {
                     offer(&mut out, k, Kind::Keyword, Source::Keyword, 0.2);
@@ -435,6 +480,13 @@ impl CompletionSource for Sources<'_> {
         self.completion.folder.as_ref().is_some_and(|f| f.waiting())
     }
 
+    fn members(&self, buffer: BufferId) -> bool {
+        self.completion
+            .docs
+            .get(&buffer)
+            .is_some_and(|d| has_members(d.language.as_deref()))
+    }
+
     fn word_chars(&self, buffer: BufferId) -> &[char] {
         self.completion
             .docs
@@ -450,6 +502,13 @@ impl CompletionSource for Sources<'_> {
             a.remove(0);
         }
     }
+}
+
+/// Offers `label` as a name seen after a member separator: before every
+/// other candidate (a definition of the same name keeps its kind).
+fn offer_member(out: &mut HashMap<String, Candidate>, label: &str, boost: f32) {
+    let e = offer(out, label, Kind::Word, Source::Word, boost);
+    e.tier = 1;
 }
 
 /// Adds `label` to `out`, or makes the one there more likely; a name's best

@@ -66,6 +66,9 @@ pub struct Candidate {
     /// How likely the source thinks it is, 0.0 to 1.0 (a word seen near the
     /// caret, used often, or accepted recently).
     pub boost: f32,
+    /// Higher tiers come before lower ones whatever the match (names seen
+    /// after a member separator, when one was typed).
+    pub tier: u8,
 }
 
 impl Candidate {
@@ -77,6 +80,7 @@ impl Candidate {
             detail: None,
             insert: None,
             boost: 0.0,
+            tier: 0,
         }
     }
 
@@ -485,8 +489,10 @@ pub fn rank(
         })
         .collect();
     let order = |a: &Ranked, b: &Ranked| {
-        b.score
-            .cmp(&a.score)
+        b.candidate
+            .tier
+            .cmp(&a.candidate.tier)
+            .then_with(|| b.score.cmp(&a.score))
             .then_with(|| a.candidate.source.cmp(&b.candidate.source))
             .then_with(|| a.candidate.label.len().cmp(&b.candidate.label.len()))
             .then_with(|| a.candidate.label.cmp(&b.candidate.label))
@@ -575,6 +581,8 @@ pub fn words<'a>(
 /// What separates a member from what it belongs to: `.`, `::`, `->` and
 /// `?.`.
 const MEMBER_SEPARATORS: [&str; 3] = ["::", "->", "."];
+/// Bytes before a word looked at for a separator.
+const MEMBER_LOOKBACK: usize = 64;
 
 /// Whether `before` (a line's text up to a word) ends with a member
 /// separator after a name, a closing bracket or a quote (`items.`,
@@ -610,9 +618,15 @@ pub fn member_words<'a>(
 ) -> impl Iterator<Item = &'a str> + 'a {
     words(text, extra, min_len).filter(move |w| {
         // `w` is a slice of `text`: its offset is the pointers' distance.
+        // A short look back is enough (and keeps a one-line file linear).
         let at = w.as_ptr() as usize - text.as_ptr() as usize;
-        let line_start = text[..at].rfind('\n').map_or(0, |i| i + 1);
-        ends_with_member_separator(&text[line_start..at])
+        let mut from = at.saturating_sub(MEMBER_LOOKBACK);
+        while !text.is_char_boundary(from) {
+            from += 1;
+        }
+        let before = &text[from..at];
+        let before = before.rsplit('\n').next().unwrap_or(before);
+        ends_with_member_separator(before)
     })
 }
 
@@ -637,6 +651,27 @@ mod tests {
         )
         .collect();
         assert_eq!(w, ["iter", "map", "len", "mem", "take"]);
+        // One long line (a minified file) is read in one pass.
+        let long = "a.bcd ".repeat(200_000);
+        let start = std::time::Instant::now();
+        assert_eq!(member_words(&long, &[], 3).count(), 200_000);
+        assert!(cfg!(debug_assertions) || start.elapsed().as_millis() < 500);
+    }
+
+    #[test]
+    fn higher_tiers_come_first() {
+        let mut member = Candidate::new("lens", Kind::Word, Source::Word);
+        member.tier = 1;
+        let ranked = rank(
+            "le",
+            [
+                Candidate::new("le_exact_prefix", Kind::Keyword, Source::Keyword),
+                member,
+            ],
+            10,
+        );
+        let labels: Vec<&str> = ranked.iter().map(|r| r.candidate.label.as_str()).collect();
+        assert_eq!(labels, ["lens", "le_exact_prefix"]);
     }
 
     fn best(pattern: &str, labels: &[&str]) -> Vec<String> {
