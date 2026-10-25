@@ -30,6 +30,7 @@ pub mod settings;
 pub mod terminal;
 pub mod terminal_glyphs;
 pub mod terminal_keys;
+pub mod terminal_links;
 pub mod terminal_view;
 pub mod theme;
 pub mod token_styles;

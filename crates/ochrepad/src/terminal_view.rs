@@ -16,6 +16,7 @@ use egui::{
 
 use crate::terminal::{Ended, GridSize, Terminal, TerminalId};
 use crate::terminal_keys::{self, MouseAction, MouseButton};
+use crate::terminal_links::{Link, LinkTarget, link_at};
 
 const SCROLLBAR_W: f32 = 12.0;
 /// Space around the grid.
@@ -43,6 +44,17 @@ pub struct TerminalViewState {
     /// Dragging the scrollbar's thumb: where it was grabbed.
     bar_drag: Option<f32>,
     preedit: Option<String>,
+    /// The link under the pointer while Ctrl is held.
+    link: Option<HoverLink>,
+}
+
+/// What was looked for under the pointer, and the link found.
+struct HoverLink {
+    row: usize,
+    /// The row's characters, with the column each starts at.
+    cells: Vec<(usize, char)>,
+    col: usize,
+    link: Option<Link>,
 }
 
 impl TerminalViewState {
@@ -194,11 +206,19 @@ pub struct TerminalOutput {
     pub response: Response,
     /// The program takes the mouse (a right click goes to it, not to a menu).
     pub mouse_reporting: bool,
+    /// A file Ctrl+click opened (web links the widget opens itself).
+    pub open: Option<(std::path::PathBuf, Option<(usize, usize)>)>,
 }
 
 /// Shows `t` filling the available space. `label` names it for
-/// accessibility.
-pub fn terminal_ui(ui: &mut Ui, t: &mut Terminal, font_size: f32, label: &str) -> TerminalOutput {
+/// accessibility; relative paths in its output are looked for in `dirs`.
+pub fn terminal_ui(
+    ui: &mut Ui,
+    t: &mut Terminal,
+    font_size: f32,
+    label: &str,
+    dirs: &[&std::path::Path],
+) -> TerminalOutput {
     let rect = ui.available_rect_before_wrap();
     ui.advance_cursor_after_rect(rect);
     let widget = terminal_widget_id(t.id);
@@ -271,13 +291,34 @@ pub fn terminal_ui(ui: &mut Ui, t: &mut Terminal, font_size: f32, label: &str) -
     // --- Mouse -------------------------------------------------------------------------
     let modifiers = ui.input(|i| i.modifiers);
     let reporting = mode.intersects(TermMode::MOUSE_MODE) && !modifiers.shift;
-    mouse(ui, t, &g, &response, bar, mode, reporting);
+    hover_link(ui, t, &g, &response, dirs);
+    let mut open = None;
+    if let Some(target) = mouse(ui, t, &g, &response, bar, mode, reporting) {
+        match target {
+            LinkTarget::Url(url) => ui.ctx().open_url(egui::OpenUrl::new_tab(url)),
+            LinkTarget::File(path, place) => open = Some((path, place)),
+        }
+    }
 
     // --- Painting ----------------------------------------------------------------------
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 0.0, colors.bg);
     paint_grid(ui, &painter, t, &g, &font, &colors, focused);
     paint_scrollbar(ui, &painter, t, bar, g.rows);
+    if let Some(HoverLink {
+        row,
+        link: Some(link),
+        ..
+    }) = &t.view.link
+    {
+        let y = g.cell_pos(0, *row).y + g.line_h - 1.0;
+        let x0 = g.cell_pos(link.cols.start, *row).x;
+        let x1 = g.cell_pos(link.cols.end, *row).x;
+        painter.line_segment(
+            [Pos2::new(x0, y), Pos2::new(x1, y)],
+            Stroke::new(1.0, colors.cursor),
+        );
+    }
     if focused {
         let cursor = t.term().lock().grid().cursor.point;
         let pos = g.cell_pos(
@@ -296,6 +337,7 @@ pub fn terminal_ui(ui: &mut Ui, t: &mut Terminal, font_size: f32, label: &str) -
     TerminalOutput {
         response,
         mouse_reporting: reporting,
+        open,
     }
 }
 
@@ -465,8 +507,55 @@ fn keyboard(ui: &Ui, t: &mut Terminal, mode: TermMode) {
     }
 }
 
+/// While Ctrl is held over the grid: the link under the pointer, looked
+/// for again only when the pointer's cell or that row's text changes.
+fn hover_link(ui: &Ui, t: &mut Terminal, g: &Grid, response: &Response, dirs: &[&std::path::Path]) {
+    let pointer = response
+        .hover_pos()
+        .filter(|p| g.rect().contains(*p) && ui.input(|i| i.modifiers.command));
+    let Some(p) = pointer else {
+        t.view.link = None;
+        return;
+    };
+    let (col, row, _) = g.cell_at(p);
+    let cells = row_cells(t, row);
+    let same = matches!(&t.view.link, Some(h) if h.row == row && h.cells == cells && h.col == col);
+    if !same {
+        let link = link_at(&cells, col, dirs);
+        t.view.link = Some(HoverLink {
+            row,
+            cells,
+            col,
+            link,
+        });
+    }
+    if t.view.link.as_ref().is_some_and(|h| h.link.is_some()) {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+}
+
+/// The characters on screen row `row`, with the column each starts at.
+fn row_cells(t: &Terminal, row: usize) -> Vec<(usize, char)> {
+    let term = t.term().lock();
+    let grid = term.grid();
+    let line = viewport_to_point(grid.display_offset(), Point::new(row, Column(0))).line;
+    if line < grid.topmost_line() || line > grid.bottommost_line() {
+        return Vec::new();
+    }
+    let cells = &grid[line];
+    (0..grid.columns())
+        .filter(|&c| {
+            !cells[Column(c)]
+                .flags
+                .intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER)
+        })
+        .map(|c| (c, cells[Column(c)].c))
+        .collect()
+}
+
 /// Clicks, drags and the wheel: selecting and scrolling, or reports to the
-/// program when it asks for the mouse.
+/// program when it asks for the mouse. Returns the link a Ctrl+click
+/// opens.
 fn mouse(
     ui: &Ui,
     t: &mut Terminal,
@@ -475,9 +564,10 @@ fn mouse(
     bar: Rect,
     mode: TermMode,
     reporting: bool,
-) {
+) -> Option<LinkTarget> {
+    let mut open = None;
     let now = ui.input(|i| i.time);
-    let grid_rect = g.rect().expand2(Vec2::new(0.0, 0.0));
+    let grid_rect = g.rect();
     let in_grid = |p: Pos2| grid_rect.contains(p) || response.rect.contains(p) && !bar.contains(p);
     for event in ui.input(|i| i.events.clone()) {
         match event {
@@ -494,6 +584,17 @@ fn mouse(
                     _ => continue,
                 };
                 let (col, row, side) = g.cell_at(pos);
+                // Ctrl+click on a link opens it, even in a program that
+                // takes the mouse.
+                if button == MouseButton::Left
+                    && pressed
+                    && modifiers.command
+                    && response.contains_pointer()
+                    && let Some(link) = t.view.link.as_ref().and_then(|h| h.link.as_ref())
+                {
+                    open = Some(link.target.clone());
+                    continue;
+                }
                 if reporting {
                     if pressed && in_grid(pos) && response.contains_pointer() {
                         t.view.reporting = Some(button);
@@ -630,7 +731,7 @@ fn mouse(
     };
     if history == 0 {
         t.view.bar_drag = None;
-        return;
+        return open;
     }
     let (thumb, track) = thumb_rect(bar, history, offset, g.rows);
     if pressed
@@ -655,6 +756,7 @@ fn mouse(
             .lock()
             .scroll_display(Scroll::Delta(wanted - offset as i32));
     }
+    open
 }
 
 /// Scrolls `lines` (up when positive).

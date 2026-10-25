@@ -126,6 +126,59 @@ fn a_second_terminal_joins_the_first_and_closing_ends_them() {
 }
 
 #[test]
+fn ctrl_click_on_a_compiler_location_opens_the_file_there() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("src")).unwrap();
+    std::fs::write(
+        dir.path().join("src").join("lib.rs"),
+        "one\ntwo\nthree x\nfour\n",
+    )
+    .unwrap();
+    let mut h = harness();
+    let id = h.state_mut().new_terminal_in(dir.path().to_path_buf());
+    h.run();
+    // After the shell's first output, the location on the top row.
+    assert!(wait_for(&mut h, |a| screen(a, id)
+        .iter()
+        .any(|l| !l.is_empty())));
+    std::thread::sleep(Duration::from_millis(300));
+    h.state_mut()
+        .terminals
+        .get_mut(id)
+        .unwrap()
+        .feed(b"\x1b[2J\x1b[H  --> src/lib.rs:3:5\r\n");
+    h.run();
+
+    let rect = h.get_by_label_contains("Terminal: ").rect();
+    let font = egui::FontId::monospace(14.0);
+    let (cell_w, line_h) = h
+        .ctx
+        .fonts_mut(|f| (f.glyph_width(&font, 'M'), f.row_height(&font)));
+    // 4 px of padding, then column 10 of row 0.
+    let pos = egui::pos2(
+        rect.min.x + 4.0 + 10.5 * cell_w,
+        rect.min.y + 4.0 + 0.5 * line_h,
+    );
+    let ctrl = Modifiers::COMMAND;
+    h.event(Event::ModifiersChanged(ctrl));
+    h.event(Event::PointerMoved(pos));
+    h.step();
+    for pressed in [true, false] {
+        h.event(Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: ctrl,
+        });
+        h.step();
+    }
+    h.event(Event::ModifiersChanged(Modifiers::NONE));
+    h.run();
+    assert_eq!(h.state().file_name(), "lib.rs");
+    h.get_by_label("Ln 3, Col 5");
+}
+
+#[test]
 fn ctrl_c_copies_a_selection_or_interrupts() {
     let mut h = harness();
     key(&mut h, Modifiers::COMMAND, Key::Backtick);

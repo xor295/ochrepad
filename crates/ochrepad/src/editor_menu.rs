@@ -46,12 +46,6 @@ fn run_around(text: &str, at: usize, stop: impl Fn(char) -> bool) -> (usize, usi
 /// is in. Other kinds of link (`file:`, `javascript:` and the like) are
 /// not offered.
 pub fn url_at(doc: &Document, sels: &SelectionSet) -> Option<String> {
-    const SCHEMES: [&str; 2] = ["https://", "http://"];
-    let starts_link = |s: &str| {
-        SCHEMES.iter().any(|p| {
-            s.len() > p.len() && s.get(..p.len()).is_some_and(|h| h.eq_ignore_ascii_case(p))
-        })
-    };
     let sel = sels.primary();
     if !sel.is_empty() {
         let text = doc.slice(sel.range());
@@ -62,8 +56,22 @@ pub fn url_at(doc: &Document, sels: &SelectionSet) -> Option<String> {
     let line = doc.line_of(sel.head);
     let text = doc.line_text(line);
     let at = sel.head.0 - doc.line_start(line).0;
+    url_in(&text, at).map(|(_, link)| link)
+}
+
+/// Whether `s` starts with `http://` or `https://` and something after it.
+fn starts_link(s: &str) -> bool {
+    const SCHEMES: [&str; 2] = ["https://", "http://"];
+    SCHEMES
+        .iter()
+        .any(|p| s.len() > p.len() && s.get(..p.len()).is_some_and(|h| h.eq_ignore_ascii_case(p)))
+}
+
+/// The web link around byte `at` of one line of `text`: its bytes, and
+/// the link.
+pub fn url_in(text: &str, at: usize) -> Option<(std::ops::Range<usize>, String)> {
     // A link runs between blanks and quotes; brackets can be part of it.
-    let (from, to) = run_around(&text, at, |c| c.is_whitespace() || "\"'<>`".contains(c));
+    let (from, to) = run_around(text, at, |c| c.is_whitespace() || "\"'<>`".contains(c));
     let run = &text[from..to];
     // The last link start at or before the caret ("url=https://...").
     let caret = at - from;
@@ -102,7 +110,8 @@ pub fn url_at(doc: &Document, sels: &SelectionSet) -> Option<String> {
         }
         link = &link[..link.len() - last.len_utf8()];
     }
-    (starts_link(link) && caret <= begin + link.len()).then(|| link.to_owned())
+    (starts_link(link) && caret <= begin + link.len())
+        .then(|| (from + begin..from + begin + link.len(), link.to_owned()))
 }
 
 /// A file named in the text, and the line and column it gave.
@@ -120,12 +129,23 @@ pub fn file_at(doc: &Document, sels: &SelectionSet, dirs: &[&Path]) -> Option<Fi
         let start = doc.line_start(line);
         let text = doc.line_text(line);
         let at = sel.head.0 - start.0;
-        let stop = |c: char| c.is_whitespace() || "\"'<>()[]{},;|`".contains(c);
-        let (from, to) = run_around(&text, at, stop);
-        text[from..to].to_owned()
+        text[path_run(&text, at)].to_owned()
     } else {
         doc.slice(sel.range())
     };
+    file_named(&text, dirs)
+}
+
+/// The bytes of one line of `text` around byte `at` that a path can be
+/// made of.
+pub fn path_run(text: &str, at: usize) -> std::ops::Range<usize> {
+    let stop = |c: char| c.is_whitespace() || "\"'<>()[]{},;|`".contains(c);
+    let (from, to) = run_around(text, at, stop);
+    from..to
+}
+
+/// The file `text` names, if it is there: see [`file_at`].
+pub fn file_named(text: &str, dirs: &[&Path]) -> Option<FileAt> {
     let text = text.trim().trim_end_matches(['.', ',', ':']);
     if text.is_empty() || text.contains('\n') || text.len() > 1000 {
         return None;

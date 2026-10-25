@@ -132,6 +132,8 @@ enum TabCommand {
     OpenAsEditable(crate::viewer::ViewerId),
     CloseTerminal(crate::terminal::TerminalId),
     NewTerminal,
+    /// A file Ctrl+clicked in a terminal, at a line and column if given.
+    OpenFileAt(PathBuf, Option<(usize, usize)>),
     /// A preview or comparison closed by a middle click.
     CloseTab(Tab),
     /// A command from an editor's right-click menu.
@@ -396,6 +398,20 @@ impl OchrepadApp {
         let id = self.buffer_id();
         if let Some(b) = self.editor.buffer_mut(id) {
             self.highlighting.set_language(b, language, dark);
+        }
+    }
+
+    /// Opens `path` and goes to `place` (line, column) in it.
+    fn open_file_at(&mut self, path: &Path, place: Option<(usize, usize)>) {
+        self.open_path(path);
+        // Only in the file itself: a large one opens in the viewer, and one
+        // that can't be read leaves the document that was active.
+        let wanted = Some(canonical(path));
+        let opened = self.buffer().meta.path.as_deref().map(canonical);
+        if let Some((line, column)) = place
+            && opened == wanted
+        {
+            self.apply(Action::GoToLine { line, column });
         }
     }
 
@@ -1138,6 +1154,7 @@ impl OchrepadApp {
                 TabCommand::NewTerminal => {
                     self.new_terminal();
                 }
+                TabCommand::OpenFileAt(path, place) => self.open_file_at(&path, place),
                 TabCommand::Menu(view, command) => {
                     self.activate(view);
                     match command {
@@ -1149,17 +1166,7 @@ impl OchrepadApp {
                             self.token_styles.clear(buffer, style);
                         }
                         crate::editor_menu::MenuCommand::OpenFile(path, place) => {
-                            self.open_path(&path);
-                            // Only in the file itself: a large one opens in
-                            // the viewer, and one that can't be read leaves
-                            // the document clicked in active.
-                            let wanted = Some(canonical(&path));
-                            let opened = self.buffer().meta.path.as_deref().map(canonical);
-                            if let Some((line, column)) = place
-                                && opened == wanted
-                            {
-                                self.apply(Action::GoToLine { line, column });
-                            }
+                            self.open_file_at(&path, place);
                         }
                     }
                 }
@@ -3243,7 +3250,17 @@ impl TabViewer for Tabs<'_> {
             Tab::Terminal(id) => {
                 if let Some(t) = self.terminals.get_mut(id) {
                     let label = format!("Terminal: {}", t.tab_title());
-                    let out = crate::terminal_view::terminal_ui(ui, t, self.terminal_font, &label);
+                    // Relative paths in the output: from where the shell
+                    // started, else the open folder.
+                    let cwd = t.cwd.clone();
+                    let dirs: Vec<&Path> = std::iter::once(cwd.as_path())
+                        .chain(self.workspace_root)
+                        .collect();
+                    let out =
+                        crate::terminal_view::terminal_ui(ui, t, self.terminal_font, &label, &dirs);
+                    if let Some((path, place)) = out.open {
+                        self.commands.push(TabCommand::OpenFileAt(path, place));
+                    }
                     if !out.mouse_reporting {
                         let mut chosen = None;
                         out.response.context_menu(|ui| {
