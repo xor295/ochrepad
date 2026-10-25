@@ -190,6 +190,36 @@ fn split_layouts_are_restored() {
 }
 
 #[test]
+fn terminal_tabs_come_back_in_their_folders() {
+    let d = dirs();
+    let a = d.files.join("a.txt");
+    write(&a, "text\n");
+    {
+        let mut h = app(&d);
+        // A fixed shell (saved with the settings, so the next launch uses
+        // it too).
+        let s = &mut h.state_mut().settings;
+        if cfg!(windows) {
+            s.terminal_shell = "cmd.exe".to_owned();
+        } else {
+            s.terminal_shell = "/bin/sh".to_owned();
+        }
+        h.state_mut().open_path(&a);
+        h.state_mut().new_terminal_in(d.files.clone());
+        h.run();
+        h.state_mut().request_exit();
+        h.run();
+    }
+    let h = app(&d);
+    let app = h.state();
+    let terminals: Vec<_> = app.terminals.iter().collect();
+    assert_eq!(terminals.len(), 1);
+    assert_eq!(terminals[0].cwd, d.files);
+    assert!(app.terminal_is_below_editors(terminals[0].id));
+    assert_eq!(names(&h), vec!["a.txt"]);
+}
+
+#[test]
 fn saving_or_closing_removes_the_backup() {
     let d = dirs();
     let mut h = app(&d);

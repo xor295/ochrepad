@@ -360,6 +360,31 @@ impl AppSettings {
                     }
                 });
                 ui.end_row();
+
+                ui.label("Terminal shell");
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.terminal_shell)
+                        .hint_text(crate::terminal::default_shell().program)
+                        .desired_width(220.0),
+                )
+                .on_hover_text("The program new terminals run; empty for the default");
+                ui.end_row();
+
+                ui.label("Its arguments");
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.terminal_args)
+                        .hint_text("none")
+                        .desired_width(220.0),
+                )
+                .on_hover_text("Separated by spaces, e.g. -NoLogo");
+                ui.end_row();
+
+                ui.label("Terminal scrollback");
+                ui.horizontal(|ui| {
+                    ui.add(egui::DragValue::new(&mut self.terminal_scrollback).range(0..=100_000));
+                    ui.label("lines");
+                });
+                ui.end_row();
             });
         ui.add_space(8.0);
         egui::CollapsingHeader::new("Log highlighting")

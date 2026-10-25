@@ -48,10 +48,22 @@ impl OchrepadApp {
 
     /// Opens a new terminal that starts in `cwd`.
     pub fn new_terminal_in(&mut self, cwd: PathBuf) -> TerminalId {
+        let id = self.add_terminal(cwd);
+        self.place_terminal(id);
+        self.activate_terminal(id);
+        id
+    }
+
+    /// A terminal with the shell from the settings, not yet in the dock.
+    pub(super) fn add_terminal(&mut self, cwd: PathBuf) -> TerminalId {
         let shell = ShellCommand::new(&self.settings.terminal_shell, &self.settings.terminal_args);
-        let id = self
-            .terminals
-            .add(shell, cwd, self.settings.terminal_scrollback);
+        self.terminals
+            .add(shell, cwd, self.settings.terminal_scrollback)
+    }
+
+    /// Puts terminal `id` in the dock: beside the terminal used last, or,
+    /// for the first one, in a new pane below the editors.
+    pub(super) fn place_terminal(&mut self, id: TerminalId) {
         let beside = self
             .terminals
             .last
@@ -80,8 +92,7 @@ impl OchrepadApp {
                 );
             }
         }
-        self.activate_terminal(id);
-        id
+        self.terminals.last = Some(id);
     }
 
     /// Makes terminal `id` the focused tab and gives it the keyboard.
