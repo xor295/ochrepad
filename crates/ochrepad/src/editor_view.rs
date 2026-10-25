@@ -143,6 +143,11 @@ pub struct EditorViewState {
     paste_to_bookmarks: Option<f64>,
     /// The completion popup.
     pub completion: crate::completion_popup::CompletionState,
+    /// The primary caret's cell on screen, when it was drawn last frame
+    /// (for what shows beside it, such as signature help).
+    pub caret_rect: Option<Rect>,
+    /// Ctrl+Shift+Space was pressed: the app shows the call's signature.
+    pub signature_asked: bool,
 }
 
 impl Default for EditorViewState {
@@ -160,6 +165,8 @@ impl Default for EditorViewState {
             text_cols: 80,
             paste_to_bookmarks: None,
             completion: Default::default(),
+            caret_rect: None,
+            signature_asked: false,
             cache: LayoutCache::default(),
             font_size: 14.0,
             symbols: Symbols::default(),
@@ -567,6 +574,7 @@ pub fn editor_view(
                         width: state.split_width(),
                     })),
                     Some(EditorCommand::ShowCompletions) => ops.push(Op::ShowCompletions),
+                    Some(EditorCommand::ShowSignature) => state.signature_asked = true,
                     Some(EditorCommand::NextProblem) => ops.push(Op::GoToProblem { back: false }),
                     Some(EditorCommand::PreviousProblem) => {
                         ops.push(Op::GoToProblem { back: true })
@@ -2558,11 +2566,12 @@ fn paint(
         });
     }
     // The completion popup (also while a click on it has the keyboard).
-    let caret_shown = state.completion.is_open().then(|| {
+    let caret_shown = {
         let (p, on_screen) = caret_pos(v.selections.primary().head, &mut state.cache);
         on_screen.then(|| Rect::from_min_size(p, Vec2::new(f.cell_w, f.line_h)))
-    });
-    match caret_shown.flatten() {
+    };
+    state.caret_rect = caret_shown;
+    match caret_shown.filter(|_| state.completion.is_open()) {
         Some(caret) => {
             state
                 .completion

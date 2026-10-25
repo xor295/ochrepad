@@ -35,6 +35,7 @@ pub mod safe_images;
 pub mod search_results;
 pub mod server_completion;
 pub mod settings;
+pub mod signature;
 pub mod terminal;
 pub mod terminal_glyphs;
 pub mod terminal_keys;

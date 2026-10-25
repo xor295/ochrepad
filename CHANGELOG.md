@@ -32,8 +32,9 @@ people downloading the release.
   added in `lsp.json`), the server's suggestions lead the completion list
   (with their documentation, and the import a name needs), problems are
   underlined as you type, counted in the status bar and listed in View >
-  Problems (Alt+F8 goes to the next one), and resting the pointer on a name
-  shows what the server knows about it.
+  Problems (Alt+F8 goes to the next one), resting the pointer on a name
+  shows what the server knows about it, F12 goes to a name's definition, Shift+F12 lists its uses,
+  and typing a call's arguments shows its signature.
   ochrepad asks before a server first runs in a folder, since servers run
   project code. View > Language Servers shows each server's state and log.
   See `docs/language-servers.md`.

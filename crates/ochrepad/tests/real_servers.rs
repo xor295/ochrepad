@@ -152,5 +152,50 @@ fn rust_analyzer_diagnoses_completes_and_explains() {
         h.query_by_label_contains("contiguous growable array")
             .is_some()
     });
+    h.event(Event::PointerGone);
+
+    // The signature after `push(`.
+    h.event(Event::Text("(".into()));
+    h.run();
+    wait(&mut h, "push's signature", 30, |h| {
+        h.query_by_label_contains("fn push(").is_some()
+    });
+    if let Ok(shot) = std::env::var("SHOT") {
+        h.render().unwrap().save(shot).unwrap();
+    }
+    h.key_press(Key::Escape);
+    h.run();
+
+    // Shift+F12 on `items`: where it is declared and used.
+    h.key_press_modifiers(Modifiers::COMMAND, Key::G);
+    h.run();
+    h.event(Event::Text("2:9".into()));
+    h.key_press(Key::Enter);
+    h.run();
+    h.key_press_modifiers(Modifiers::SHIFT, Key::F12);
+    wait(&mut h, "items' references", 30, |h| {
+        h.state()
+            .results
+            .searches
+            .front()
+            .is_some_and(|s| s.done && s.matches == 2)
+    });
+
+    // F12 on `Vec`: the standard library's source.
+    h.key_press_modifiers(Modifiers::COMMAND, Key::G);
+    h.run();
+    h.event(Event::Text("2:17".into()));
+    h.key_press(Key::Enter);
+    h.run();
+    h.key_press(Key::F12);
+    wait(&mut h, "Vec's definition", 30, |h| {
+        h.state()
+            .buffer()
+            .meta
+            .path
+            .as_deref()
+            .is_some_and(|p| p.ends_with("mod.rs"))
+    });
+    eprintln!("opened {:?}", h.state().buffer().meta.path);
     h.state_mut().language_servers.stop_all();
 }

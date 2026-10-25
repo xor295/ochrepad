@@ -32,6 +32,9 @@ pub enum EditorCommand {
     NextProblem,
     /// Moves to the previous one (Alt+Shift+F8).
     PreviousProblem,
+    /// Shows the signature of the call the caret is in, from a language
+    /// server (Ctrl+Shift+Space).
+    ShowSignature,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -166,6 +169,10 @@ impl Default for Keymap {
             (Chord::new(Escape), act(Action::CollapseSelections)),
             (Chord::new(Insert), EditorCommand::ToggleOvertype),
             (Chord::new(Space).cmd(), EditorCommand::ShowCompletions),
+            (
+                Chord::new(Space).cmd().shift(),
+                EditorCommand::ShowSignature,
+            ),
             (Chord::new(F8).alt(), EditorCommand::NextProblem),
             (Chord::new(F8).alt().shift(), EditorCommand::PreviousProblem),
             (Chord::new(A).cmd(), act(Action::SelectAll)),

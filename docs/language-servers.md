@@ -56,6 +56,18 @@ project, so a program planted in a repository is never run.
   opens the file there.
 - **Hover**: resting the pointer on a name shows what the server knows
   about it (its type, its documentation).
+- **Go to Definition** (**F12**, **Search > Go to Definition**, or the
+  right-click menu): opens the file where the name at the caret is defined,
+  at the definition, even in a library's source. Only files on this
+  computer open.
+- **Find References** (**Shift+F12**, **Search > Find References**, or the
+  right-click menu): lists everywhere the name at the caret is used, in the
+  Search Results panel, like Find in Files. A click goes there.
+- **Signature help**: typing `(` or `,` in a call shows the function's
+  signature above the caret (below it when there is no room), with the
+  argument you are typing picked out and its documentation. It follows the
+  caret while you stay in the call; **Esc** closes it and
+  **Ctrl+Shift+Space** shows it again.
 
 ## View > Language Servers
 

@@ -331,3 +331,135 @@ fn the_servers_completions_come_first_with_their_documentation_and_imports() {
     h.run();
     assert_eq!(text(&h), "fn main() {}\npush_item\nHa");
 }
+
+#[test]
+fn f12_opens_the_definition_the_server_names() {
+    let server = FakeServer::new()
+        .capabilities(json!({
+            "textDocumentSync": { "openClose": true, "change": 2 },
+            "definitionProvider": true,
+        }))
+        .answer("textDocument/definition", |p| {
+            let uri = p["textDocument"]["uri"]
+                .as_str()
+                .unwrap()
+                .replace("main.rs", "other.rs");
+            json!([{
+                "uri": uri,
+                "range": {"start": {"line": 1, "character": 3}, "end": {"line": 1, "character": 8}},
+            }])
+        });
+    let (dir, mut h) = open_rust_file(&server);
+    std::fs::write(dir.path().join("other.rs"), "// other\nfn thing() {}\n").unwrap();
+    h.state_mut()
+        .settings
+        .lsp_trusted
+        .push(dir.path().to_path_buf());
+    wait(&mut h, "didOpen", |_| {
+        !server.params("textDocument/didOpen").is_empty()
+    });
+    h.key_press(egui::Key::F12);
+    wait(&mut h, "the other file", |h| {
+        h.state()
+            .buffer()
+            .meta
+            .path
+            .as_deref()
+            .is_some_and(|p| p.ends_with("other.rs"))
+    });
+    h.run();
+    h.get_by_label("Ln 2, Col 4");
+}
+
+#[test]
+fn typing_an_opening_bracket_shows_the_signature_until_escape() {
+    let server = FakeServer::new()
+        .capabilities(json!({
+            "textDocumentSync": { "openClose": true, "change": 2 },
+            "signatureHelpProvider": { "triggerCharacters": ["(", ","] },
+        }))
+        .answer("textDocument/signatureHelp", |p| {
+            let active = if p["context"]["triggerCharacter"] == "," {
+                1
+            } else {
+                0
+            };
+            json!({
+                "signatures": [{
+                    "label": "fn add(left: i32, right: i32) -> i32",
+                    "parameters": [{"label": [7, 16]}, {"label": "right: i32"}],
+                    "documentation": "Adds them.",
+                }],
+                "activeParameter": active,
+            })
+        });
+    let (dir, mut h) = open_rust_file(&server);
+    h.state_mut()
+        .settings
+        .lsp_trusted
+        .push(dir.path().to_path_buf());
+    wait(&mut h, "didOpen", |_| {
+        !server.params("textDocument/didOpen").is_empty()
+    });
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::End);
+    h.run();
+    typ(&mut h, "add(");
+    wait(&mut h, "the signature", |h| {
+        h.query_by_label_contains("fn add(left").is_some()
+    });
+    let asked = server.params("textDocument/signatureHelp");
+    assert_eq!(asked[0]["context"]["triggerCharacter"], "(");
+    h.get_by_label_contains("Adds them.");
+    h.key_press(egui::Key::Escape);
+    h.run();
+    assert!(h.query_by_label_contains("fn add(left").is_none());
+}
+
+#[test]
+fn shift_f12_lists_the_references_in_search_results() {
+    let server = FakeServer::new()
+        .capabilities(json!({
+            "textDocumentSync": { "openClose": true, "change": 2 },
+            "referencesProvider": true,
+            "definitionProvider": true,
+        }))
+        .answer("textDocument/references", |p| {
+            assert_eq!(p["context"]["includeDeclaration"], true);
+            let uri = p["textDocument"]["uri"].as_str().unwrap().to_owned();
+            let other = uri.replace("main.rs", "other.rs");
+            json!([
+                {"uri": uri, "range": {"start": {"line": 0, "character": 3}, "end": {"line": 0, "character": 7}}},
+                {"uri": other, "range": {"start": {"line": 1, "character": 4}, "end": {"line": 1, "character": 8}}},
+            ])
+        });
+    let (dir, mut h) = open_rust_file(&server);
+    std::fs::write(dir.path().join("other.rs"), "// other\nfn x(main: u8) {}\n").unwrap();
+    h.state_mut()
+        .settings
+        .lsp_trusted
+        .push(dir.path().to_path_buf());
+    wait(&mut h, "didOpen", |_| {
+        !server.params("textDocument/didOpen").is_empty()
+    });
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::G);
+    h.run();
+    h.event(Event::Text("1:4".into()));
+    h.key_press(egui::Key::Enter);
+    h.run();
+    h.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::F12);
+    wait(&mut h, "the references", |h| {
+        h.state()
+            .results
+            .searches
+            .front()
+            .is_some_and(|s| s.done && s.files.len() == 2)
+    });
+    let s = h.state().results.searches.front().unwrap();
+    assert_eq!(s.query.pattern, "main");
+    assert_eq!(s.matches, 2);
+    assert_eq!(s.files[1].hits[0].text, "fn x(main: u8) {}");
+    // Shift+F12 is not also F12.
+    assert!(server.params("textDocument/definition").is_empty());
+    h.run();
+    h.get_by_label_contains("references (fake-rust)");
+}

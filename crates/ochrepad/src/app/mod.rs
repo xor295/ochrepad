@@ -28,6 +28,7 @@ mod external;
 mod file_extras;
 mod history_store;
 mod language_servers;
+mod navigate;
 mod prefs;
 mod replace_in_files;
 mod search;
@@ -103,6 +104,8 @@ const NEXT_DIFF: KeyboardShortcut = KeyboardShortcut::new(Modifiers::NONE, Key::
 const PREV_DIFF: KeyboardShortcut = KeyboardShortcut::new(Modifiers::SHIFT, Key::F8);
 
 const GO_TO_LINE: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::G);
+const GO_TO_DEFINITION: KeyboardShortcut = KeyboardShortcut::new(Modifiers::NONE, Key::F12);
+const FIND_REFERENCES: KeyboardShortcut = KeyboardShortcut::new(Modifiers::SHIFT, Key::F12);
 /// Ctrl+Shift+L is Notepad++'s Delete Line.
 const FILTER_LINES: KeyboardShortcut =
     KeyboardShortcut::new(Modifiers::ALT.plus(Modifiers::SHIFT), Key::L);
@@ -158,6 +161,10 @@ pub struct OchrepadApp {
     pub show_language_servers: bool,
     /// The tooltip for what the pointer rests on (diagnostics, hover).
     hover: crate::hover::Hover,
+    /// The call's signature above the caret.
+    signature: crate::signature::SignatureHelp,
+    /// Go to Definition's request in flight.
+    definition: Option<navigate::Pending>,
     /// View > Problems.
     pub problems: crate::problems::ProblemsPanel,
     /// The viewer whose Open as Editable question is showing.
@@ -270,6 +277,8 @@ impl OchrepadApp {
             language_servers: Default::default(),
             show_language_servers: false,
             hover: Default::default(),
+            signature: Default::default(),
+            definition: None,
             problems: Default::default(),
             confirm_editable: None,
             view_states: HashMap::new(),
@@ -1113,6 +1122,7 @@ impl OchrepadApp {
                 .request_repaint_after(std::time::Duration::from_millis(100));
         }
         self.language_servers_tick(ui);
+        self.definition_tick();
         if let Some((path, bytes)) = self.completion.take_cache_write() {
             let tag = self
                 .persist
@@ -1140,6 +1150,7 @@ impl OchrepadApp {
             let mut tabs = Tabs {
                 language_servers: &mut self.language_servers,
                 hover: &mut self.hover,
+                signature: &mut self.signature,
                 look: self.settings.look(),
                 log_rules: &self.log_rules,
                 tab_width: self.settings.tab_width,
@@ -1242,6 +1253,8 @@ impl OchrepadApp {
                         crate::editor_menu::MenuCommand::OpenFile(path, place) => {
                             self.open_file_at(&path, place);
                         }
+                        crate::editor_menu::MenuCommand::GoToDefinition => self.go_to_definition(),
+                        crate::editor_menu::MenuCommand::FindReferences => self.find_references(),
                     }
                 }
                 TabCommand::CloseTab(tab) => {
@@ -1424,6 +1437,13 @@ impl OchrepadApp {
         }
         if pressed(ui, &GO_TO_LINE) {
             self.go_to_line = Some(String::new());
+        }
+        // Before F12, which an extra Shift would match too.
+        if viewer.is_none() && pressed(ui, &FIND_REFERENCES) {
+            self.find_references();
+        }
+        if viewer.is_none() && pressed(ui, &GO_TO_DEFINITION) {
+            self.go_to_definition();
         }
         if pressed(ui, &FILTER_LINES) {
             self.open_filter();
@@ -2087,6 +2107,12 @@ impl OchrepadApp {
         ui.separator();
         if item(ui, "Go to Line…", "Ctrl+G") {
             self.go_to_line = Some(String::new());
+        }
+        if viewer.is_none() && item(ui, "Go to Definition", "F12") {
+            self.go_to_definition();
+        }
+        if viewer.is_none() && item(ui, "Find References", "Shift+F12") {
+            self.find_references();
         }
         if item(ui, "Filter Lines…", "Alt+Shift+L") {
             self.open_filter();
@@ -3172,6 +3198,7 @@ struct Tabs<'a> {
     /// Language servers (diagnostics, and completions from them).
     language_servers: &'a mut crate::lsp::LanguageServers,
     hover: &'a mut crate::hover::Hover,
+    signature: &'a mut crate::signature::SignatureHelp,
     completion_settings: crate::completion_popup::CompletionSettings,
     fold_margin: bool,
     word_wrap: bool,
@@ -3456,6 +3483,26 @@ impl TabViewer for Tabs<'_> {
             ),
             None => response,
         };
+        if let Some(b) = self.editor.buffer(buffer) {
+            let v = self.editor.view(view);
+            let caret = v
+                .map(|v| v.selections.clone())
+                .filter(|s| s.rect().is_none() && s.primary().is_empty())
+                .map(|s| s.primary().head);
+            let frame = crate::signature::Frame {
+                view,
+                buffer,
+                doc: &b.doc().clone(),
+                revision: b.revision(),
+                caret,
+                caret_rect: state.caret_rect,
+                invoked: std::mem::take(&mut state.signature_asked),
+                focused: response.has_focus(),
+            };
+            self.signature
+                .show(&response, &frame, self.language_servers);
+        }
+        let served = self.language_servers.session_of(buffer).is_some();
         let mut command = None;
         let doc_dir = self
             .editor
@@ -3469,7 +3516,7 @@ impl TabViewer for Tabs<'_> {
             .chain(self.workspace_root)
             .collect();
         response.context_menu(|ui| {
-            command = crate::editor_menu::show(ui, self.editor, view, state, &dirs);
+            command = crate::editor_menu::show(ui, self.editor, view, state, &dirs, served);
         });
         if let Some(command) = command {
             self.commands.push(TabCommand::Menu(view, command));

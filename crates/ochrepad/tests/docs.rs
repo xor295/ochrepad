@@ -61,6 +61,7 @@ fn table_commands(md: &str) -> Vec<String> {
                     "\"ShowCompletions\"",
                     "\"NextProblem\"",
                     "\"PreviousProblem\"",
+                    "\"ShowSignature\"",
                 ]
                 .contains(&s.as_str())
         })

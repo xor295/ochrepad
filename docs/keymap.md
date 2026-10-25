@@ -53,7 +53,8 @@ For example `Ctrl+Shift+Up`, `alt+f5`, `Ctrl+OpenBracket`.
   Ctrl+PageDown, Ctrl+Shift+PageUp, Ctrl+Shift+PageDown, Ctrl+Shift+R,
   Ctrl+Shift+P, Ctrl+Shift+M, Ctrl+Shift+E, F8,
   Shift+F8, Ctrl+plus, Ctrl+=, Ctrl+minus, Ctrl+0, Ctrl+Shift+8,
-  Alt+Shift+L, Alt+C (Column Editor), F11 (Full Screen), Ctrl+\` (Terminal)
+  Alt+Shift+L, Alt+C (Column Editor), F11 (Full Screen), F12 (Go to
+  Definition), Shift+F12 (Find References), Ctrl+\` (Terminal)
   and Ctrl+Shift+\` (New Terminal).
 - **Copy, cut and paste** (Ctrl+C, Ctrl+X, Ctrl+V) come from the system
   clipboard, not from key bindings.
@@ -119,6 +120,7 @@ Motions for `MoveCursor`:
 | `"NextProblem"` | Moves the caret to the next error, warning or note a language server reported, round the end of the document (Alt+F8). |
 | `"PreviousProblem"` | The same, backwards (Alt+Shift+F8). |
 | `"ShowCompletions"` | Shows the completion popup for the word at the caret, or every suggestion when there is no word yet (Ctrl+Space). |
+| `"ShowSignature"` | Shows the signature of the call the caret is in, from a language server, with the argument being typed picked out (Ctrl+Shift+Space). Typing `(` or `,` in a call shows it too. |
 | `"ToggleOvertype"` | Switches between inserting and typing over the text (Insert), as the status bar's **OVR** shows. |
 
 ### Lines and case
