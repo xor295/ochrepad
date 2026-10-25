@@ -20,6 +20,7 @@ use egui_dock::tab_viewer::OnCloseResponse;
 use crate::editor_view::{
     Decorations, EditorViewState, LineStyler, copy_selection, editor_id, editor_view,
 };
+mod about;
 mod autosave;
 mod document;
 mod edit_tools;
@@ -178,6 +179,8 @@ pub struct OchrepadApp {
     pub token_styles: crate::token_styles::TokenStyles,
     /// The View > Summary dialog, while it is open.
     summary: Option<summary::SummaryDialog>,
+    /// The ? > About dialog, while it is open.
+    about: Option<about::AboutDialog>,
     /// The File > Rename… prompt, while it is open.
     rename: Option<file_extras::RenameDialog>,
     /// Pages File > Export > HTML… is still making.
@@ -266,6 +269,7 @@ impl OchrepadApp {
             document_list: Default::default(),
             token_styles: Default::default(),
             summary: None,
+            about: None,
             rename: None,
             exports: Vec::new(),
             replace_in_files: Default::default(),
@@ -1151,6 +1155,7 @@ impl OchrepadApp {
         self.open_as_editable_dialog(ui);
         self.hash_dialog(ui);
         self.summary_dialog(ui);
+        self.about_dialog(ui);
         self.rename_dialog(ui);
         self.replace_in_files_frame(ui);
         self.edit_tools_frame(ui);
@@ -1413,9 +1418,17 @@ impl OchrepadApp {
                 bar_menu(ui, "Compare", |ui| self.compare_menu(ui)),
                 bar_menu(ui, "View", |ui| self.view_menu(ui)),
                 bar_menu(ui, "Settings", |ui| self.settings_menu(ui)),
+                bar_menu(ui, "?", |ui| self.help_menu(ui)),
             ];
             switch_menu_on_hover(ui, &titles);
         });
+    }
+
+    fn help_menu(&mut self, ui: &mut Ui) {
+        if ui.button("About").clicked() {
+            self.about = Some(about::AboutDialog::default());
+            ui.close();
+        }
     }
 
     fn settings_menu(&mut self, ui: &mut Ui) {

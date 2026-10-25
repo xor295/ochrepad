@@ -10,6 +10,11 @@ people downloading the release.
 
 ## [Unreleased]
 
+### Added
+
+- A **?** menu with **About**, which shows the version, links to the
+  GitHub repository and crates.io, and the license.
+
 ## [0.3.1] - 2026-10-22
 
 ### Changed
