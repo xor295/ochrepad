@@ -123,6 +123,11 @@ impl CompletionState {
         self.drawn = None;
     }
 
+    /// Whether the popup is open or about to open (typed, Ctrl+Space).
+    pub fn active(&self) -> bool {
+        self.popup.is_some() || self.typed || self.invoke
+    }
+
     /// Whether `p` is on the popup (as drawn last frame).
     pub fn covers(&self, p: Pos2) -> bool {
         self.popup.is_some() && self.drawn.is_some_and(|r| r.contains(p))
@@ -143,6 +148,13 @@ impl CompletionState {
         {
             self.typed = true;
         }
+    }
+
+    /// The candidates shown, best first.
+    pub fn shown(&self) -> Vec<&Candidate> {
+        self.popup
+            .as_ref()
+            .map_or_else(Vec::new, |p| p.items.iter().map(|r| &r.candidate).collect())
     }
 
     /// The labels shown, best first (tests and accessibility).
@@ -217,6 +229,7 @@ impl CompletionState {
         doc: &Document,
         buffer: BufferId,
         caret: Option<ByteOffset>,
+        context: ochrepad_syntax::TextContext,
         source: Option<&mut (dyn CompletionSource + '_)>,
     ) {
         let (invoke, typed) = (
@@ -239,6 +252,11 @@ impl CompletionState {
             self.popup = None;
         }
         let invoked = invoke || self.popup.as_ref().is_some_and(|p| p.invoked);
+        // Not by itself in comments and strings (Ctrl+Space still works).
+        if !invoked && context != ochrepad_syntax::TextContext::Code {
+            self.popup = None;
+            return;
+        }
         let wanted = invoke
             || (open && self.popup.is_some())
             || (typed && self.settings.auto && prefix.chars().count() >= self.settings.min_chars);

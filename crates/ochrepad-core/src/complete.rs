@@ -489,6 +489,14 @@ pub fn is_word_char(c: char, extra: &[char]) -> bool {
     c.is_alphanumeric() || c == '_' || extra.contains(&c)
 }
 
+/// Whether `name` is one word (what completion inserts): word chars only,
+/// not starting with a digit.
+pub fn is_identifier(name: &str, extra: &[char]) -> bool {
+    !name.is_empty()
+        && !name.starts_with(|c: char| c.is_numeric())
+        && name.chars().all(|c| is_word_char(c, extra))
+}
+
 /// The start of the word fragment that ends at `caret`, on the caret's
 /// line: the text between it and the caret is what was typed so far.
 pub fn word_start(doc: &Document, caret: ByteOffset, extra: &[char]) -> ByteOffset {

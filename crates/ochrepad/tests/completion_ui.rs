@@ -189,3 +189,70 @@ fn words_from_other_open_documents_are_offered() {
     typ(&mut h, "else");
     assert_eq!(labels(&h), ["elsewhere_defined"]);
 }
+
+fn rust(h: &mut Harness<'_, OchrepadApp>) {
+    h.state_mut().set_language("Rust");
+    h.run();
+}
+
+#[test]
+fn keywords_of_the_language_are_offered() {
+    let mut h = harness("");
+    rust(&mut h);
+    typ(&mut h, "mat");
+    let shown = labels(&h);
+    assert!(shown.contains(&"match".to_owned()), "{shown:?}");
+    let kind = h
+        .state()
+        .view_state()
+        .unwrap()
+        .completion
+        .shown()
+        .iter()
+        .find(|c| c.label == "match")
+        .map(|c| c.kind);
+    assert_eq!(kind, Some(ochrepad_core::complete::Kind::Keyword));
+}
+
+#[test]
+fn not_by_itself_in_comments_and_strings() {
+    let mut h = harness("print_all println\n// ");
+    rust(&mut h);
+    typ(&mut h, "pri");
+    assert!(labels(&h).is_empty(), "in a comment");
+    key(&mut h, Modifiers::COMMAND, Key::Space);
+    assert!(!labels(&h).is_empty(), "Ctrl+Space still works");
+    key(&mut h, Modifiers::NONE, Key::Escape);
+    key(&mut h, Modifiers::NONE, Key::Enter);
+    typ(&mut h, "let s = \"pri");
+    assert!(labels(&h).is_empty(), "in a string");
+    typ(&mut h, "\";");
+    key(&mut h, Modifiers::NONE, Key::Enter);
+    typ(&mut h, "pri");
+    assert!(!labels(&h).is_empty(), "in code again");
+}
+
+#[test]
+fn definitions_from_open_documents_are_offered_as_such() {
+    let mut h = harness("fn compute_total(x: u32) -> u32 { x }\n");
+    rust(&mut h);
+    h.state_mut().new_file();
+    rust(&mut h);
+    // Definitions are found on a thread.
+    for _ in 0..300 {
+        h.step();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    h.run();
+    typ(&mut h, "comp");
+    let state = h.state().view_state().unwrap();
+    let found = state
+        .completion
+        .shown()
+        .into_iter()
+        .find(|c| c.label == "compute_total")
+        .cloned();
+    let c = found.expect("offered");
+    assert_eq!(c.kind, ochrepad_core::complete::Kind::Function);
+    assert_eq!(c.source, ochrepad_core::complete::Source::Definition);
+}

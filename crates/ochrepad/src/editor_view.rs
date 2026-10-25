@@ -23,6 +23,11 @@ pub trait LineStyler {
         doc: &Document,
         lines: std::ops::Range<usize>,
     ) -> Vec<Option<ochrepad_syntax::LineSpans>>;
+
+    /// Whether `offset` is in code, a comment or a string.
+    fn context_at(&mut self, _doc: &Document, _offset: ByteOffset) -> ochrepad_syntax::TextContext {
+        ochrepad_syntax::TextContext::Code
+    }
 }
 
 const BLINK_HALF_PERIOD: f64 = 0.53;
@@ -459,6 +464,7 @@ pub fn editor_view(
             .max(1)
     };
     let mut source = decorations.completion;
+    let mut styler = decorations.styler;
     let read_only = editor.buffer(buffer_id).is_some_and(|b| b.read_only);
     let word_chars: Vec<char> = source
         .as_deref()
@@ -628,7 +634,15 @@ pub fn editor_view(
         let caret = (primary.is_empty() && v.selections.rect().is_none()).then_some(primary.head);
         let doc = editor.buffer(buffer_id).expect("buffer exists").doc();
         let source = if read_only { None } else { source };
-        state.completion.update(doc, buffer_id, caret, source);
+        // Comments and strings, from the syntax (only looked at while the
+        // popup has something to do).
+        let context = match (caret, styler.as_deref_mut()) {
+            (Some(at), Some(s)) if state.completion.active() => s.context_at(doc, at),
+            _ => ochrepad_syntax::TextContext::Code,
+        };
+        state
+            .completion
+            .update(doc, buffer_id, caret, context, source);
     }
 
     // From here on the document only changes through mouse selection, which
@@ -1105,7 +1119,7 @@ pub fn editor_view(
         focused,
         now,
         show_chevrons,
-        decorations.styler,
+        styler,
         decorations.find_highlight,
         decorations.row_style,
         decorations.changes,

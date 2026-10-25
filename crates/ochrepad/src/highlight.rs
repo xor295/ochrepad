@@ -203,4 +203,12 @@ impl LineStyler for Styler<'_> {
     fn line_spans(&mut self, doc: &Document, lines: Range<usize>) -> Vec<Option<LineSpans>> {
         self.hl.line_spans(self.registry, doc, lines)
     }
+
+    fn context_at(
+        &mut self,
+        doc: &Document,
+        offset: ochrepad_core::ByteOffset,
+    ) -> ochrepad_syntax::TextContext {
+        self.hl.context_at(self.registry, doc, offset)
+    }
 }

@@ -1060,7 +1060,14 @@ impl OchrepadApp {
             ui.ctx().request_repaint();
         }
         self.visible.clear();
-        if self.settings.completion && self.completion.tick(&self.editor, self.now, ui.ctx()) {
+        if self.settings.completion
+            && self.completion.tick(
+                &self.editor,
+                self.highlighting.registry(),
+                self.now,
+                ui.ctx(),
+            )
+        {
             ui.ctx()
                 .request_repaint_after(std::time::Duration::from_millis(100));
         }

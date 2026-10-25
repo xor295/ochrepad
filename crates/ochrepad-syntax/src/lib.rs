@@ -8,10 +8,12 @@
 //! old one past every edit. The caller runs that pass in small time slices.
 
 pub mod comments;
+mod keywords;
 mod markup;
 mod symbols;
 
 pub use comments::comment_syntax;
+pub use keywords::keywords;
 pub use markup::{Markup, markup};
 pub use symbols::{Symbol, SymbolKind};
 
@@ -21,9 +23,9 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use ochrepad_core::{Document, LineEdit};
+use ochrepad_core::{ByteOffset, Document, LineEdit};
 use syntect::highlighting::{FontStyle, HighlightIterator, HighlightState, Highlighter, Theme};
-use syntect::parsing::{ParseState, ScopeStack, SyntaxReference, SyntaxSet};
+use syntect::parsing::{ParseState, Scope, ScopeStack, SyntaxReference, SyntaxSet};
 use two_face::theme::{EmbeddedLazyThemeSet, EmbeddedThemeName};
 
 /// Lines between checkpoints.
@@ -178,6 +180,15 @@ struct State {
     line: usize,
     parse: ParseState,
     highlight: HighlightState,
+}
+
+/// What kind of text a place is in, from the syntax's scopes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TextContext {
+    #[default]
+    Code,
+    Comment,
+    String,
 }
 
 /// Incremental highlighter for one buffer.
@@ -479,6 +490,52 @@ impl BufferHighlighter {
         self.tentative.clear();
     }
 
+    /// Whether `offset` is in code, a comment or a string: the caret's line
+    /// is parsed again from the nearest checkpoint (at most
+    /// [`CHECKPOINT_INTERVAL`] lines back, or a fresh state further from
+    /// the verified part). Code when unsure.
+    pub fn context_at(&self, reg: &Registry, doc: &Document, offset: ByteOffset) -> TextContext {
+        if self.error.is_some() || offset > doc.len() {
+            return TextContext::Code;
+        }
+        let line = doc.line_of(offset);
+        let cp = self.checkpoint_before(line);
+        let (mut parse, mut stack, from) = if line - cp.line > self.max_catch_up {
+            (
+                ParseState::new(reg.syntax(&self.syntax)),
+                ScopeStack::new(),
+                line,
+            )
+        } else {
+            (cp.parse.clone(), cp.highlight.path.clone(), cp.line)
+        };
+        let col = offset.0 - doc.line_start(line).0;
+        for l in from..=line {
+            let len = doc.line_end(l).0 - doc.line_start(l).0;
+            if len > MAX_HIGHLIGHT_LINE {
+                if l == line {
+                    return TextContext::Code;
+                }
+                continue;
+            }
+            let mut text = doc.line_text(l);
+            text.push('\n');
+            let Ok(ops) = parse.parse_line(&text, &reg.syntaxes) else {
+                return TextContext::Code;
+            };
+            for (at, op) in &ops {
+                // At the caret's line, only what opens or closes before it.
+                if l == line && *at >= col {
+                    break;
+                }
+                if stack.apply(op).is_err() {
+                    return TextContext::Code;
+                }
+            }
+        }
+        context_of(&stack)
+    }
+
     /// Spans for each line in `range` (clamped to the document). Lines the
     /// pass has not verified yet are highlighted tentatively from the nearest
     /// checkpoint, or from a fresh state if that is more than
@@ -649,4 +706,23 @@ fn highlight_line(
         }
     }
     Ok(spans.into())
+}
+
+/// The innermost comment or string scope on `stack`, if any.
+fn context_of(stack: &ScopeStack) -> TextContext {
+    static PREFIXES: std::sync::OnceLock<Option<(Scope, Scope)>> = std::sync::OnceLock::new();
+    let Some((comment, string)) =
+        PREFIXES.get_or_init(|| Some((Scope::new("comment").ok()?, Scope::new("string").ok()?)))
+    else {
+        return TextContext::Code;
+    };
+    for scope in stack.as_slice().iter().rev() {
+        if comment.is_prefix_of(*scope) {
+            return TextContext::Comment;
+        }
+        if string.is_prefix_of(*scope) {
+            return TextContext::String;
+        }
+    }
+    TextContext::Code
 }
