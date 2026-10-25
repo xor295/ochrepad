@@ -3418,7 +3418,10 @@ impl TabViewer for Tabs<'_> {
         let underlines =
             crate::lsp::underlines(self.language_servers.diagnostics_of(buffer), ui.visuals());
         state.completion.settings = self.completion_settings;
-        let mut sources = self.completion.as_deref_mut().map(|c| c.source());
+        let mut sources = self
+            .completion
+            .as_deref_mut()
+            .map(|c| c.source(Some(&mut *self.language_servers)));
         let response = editor_view(
             ui,
             self.editor,

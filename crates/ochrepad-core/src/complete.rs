@@ -69,6 +69,11 @@ pub struct Candidate {
     /// Higher tiers come before lower ones whatever the match (names seen
     /// after a member separator, when one was typed).
     pub tier: u8,
+    /// Matched instead of the label, when different (a language server's
+    /// `filterText`).
+    pub filter: Option<String>,
+    /// The source's own number for it (a server item's index).
+    pub key: Option<u32>,
 }
 
 impl Candidate {
@@ -81,7 +86,14 @@ impl Candidate {
             insert: None,
             boost: 0.0,
             tier: 0,
+            filter: None,
+            key: None,
         }
+    }
+
+    /// What the typed pattern is matched against.
+    pub fn filter_text(&self) -> &str {
+        self.filter.as_deref().unwrap_or(&self.label)
     }
 
     /// The text accepting it inserts.
@@ -477,9 +489,9 @@ pub fn rank(
     let prepared = Pattern::new(pattern);
     let mut ranked: Vec<Ranked> = candidates
         .into_iter()
-        .filter(|c| c.label != pattern)
+        .filter(|c| c.filter_text() != pattern)
         .filter_map(|c| {
-            let quality = prepared.score(&c.label)?;
+            let quality = prepared.score(c.filter_text())?;
             let score =
                 quality * 100 + c.source.weight() * 10 + (c.boost.clamp(0.0, 1.0) * 100.0) as i64;
             Some(Ranked {

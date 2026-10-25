@@ -113,6 +113,8 @@ pub struct Client {
     docs: HashMap<String, OpenDoc>,
     settings: Value,
     events: Vec<Event>,
+    /// `$/progress` titles by token, from each `begin`.
+    progress_titles: HashMap<String, String>,
 }
 
 impl Client {
@@ -145,6 +147,7 @@ impl Client {
             docs: HashMap::new(),
             settings: config.settings.clone(),
             events: Vec::new(),
+            progress_titles: HashMap::new(),
         };
         crate::transport::log(
             &c.log,
@@ -351,7 +354,7 @@ impl Client {
                     _ => Vec::new(),
                 };
                 self.events.push(Event::Diagnostics {
-                    uri: uri.to_owned(),
+                    uri: uri::normalize(uri),
                     version: params.get("version").and_then(Value::as_i64),
                     diagnostics,
                 });
@@ -372,10 +375,21 @@ impl Client {
                 };
                 let v = params.get("value").cloned().unwrap_or(Value::Null);
                 let text = match v.get("kind").and_then(Value::as_str) {
-                    Some("end") => None,
+                    Some("end") => {
+                        self.progress_titles.remove(&token);
+                        None
+                    }
                     _ => {
                         let part = |k: &str| v.get(k).and_then(Value::as_str).map(str::to_owned);
-                        let mut t = [part("title"), part("message")]
+                        // Reports leave out the title `begin` gave.
+                        let title = match part("title") {
+                            Some(t) => {
+                                self.progress_titles.insert(token.clone(), t.clone());
+                                Some(t)
+                            }
+                            None => self.progress_titles.get(&token).cloned(),
+                        };
+                        let mut t = [title, part("message")]
                             .into_iter()
                             .flatten()
                             .collect::<Vec<_>>()
@@ -447,7 +461,7 @@ impl Client {
                 let local = uri::file_path(uri).is_some();
                 if local {
                     self.events.push(Event::ShowDocument {
-                        uri: uri.to_owned(),
+                        uri: uri::normalize(uri),
                         selection: params.get("selection").cloned(),
                     });
                 }

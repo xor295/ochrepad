@@ -100,6 +100,23 @@ pub fn file_path(uri: &str) -> Option<PathBuf> {
     }
 }
 
+/// A server's URI spelled as ours are (`file:///c%3A/x` and `file:///c:/x`
+/// as `file:///C:/x`), so it finds the document it names; anything else
+/// unchanged.
+pub fn normalize(uri: &str) -> String {
+    file_path(uri)
+        .and_then(|p| file_uri(&p))
+        .unwrap_or_else(|| uri.to_owned())
+}
+
+/// A local path spelled one way: Windows' verbatim form (`\\?\c:\x`, which
+/// `canonicalize` gives) as `C:\x`; anything else unchanged.
+pub fn plain_path(path: &Path) -> PathBuf {
+    file_uri(path)
+        .and_then(|u| file_path(&u))
+        .unwrap_or_else(|| path.to_path_buf())
+}
+
 /// Windows: a path on a drive (not UNC, a device or a verbatim path).
 fn local_drive_path(path: &Path) -> bool {
     matches!(
@@ -145,7 +162,22 @@ mod tests {
                 Path::new(r"c:\dir\a.rs")
             );
             assert_eq!(file_path("file:///dir/a.rs"), None, "no drive");
+            assert_eq!(
+                plain_path(Path::new(r"\\?\c:\a b\x.rs")),
+                Path::new(r"C:\a b\x.rs")
+            );
+            assert_eq!(
+                plain_path(Path::new(r"\\server\s\x")),
+                Path::new(r"\\server\s\x")
+            );
+            // rust-analyzer writes the drive in lower case.
+            assert_eq!(
+                normalize("file:///c:/dir/a%20b.rs"),
+                "file:///C:/dir/a%20b.rs"
+            );
+            assert_eq!(normalize("file:///c%3A/dir/a.rs"), "file:///C:/dir/a.rs");
         } else {
+            assert_eq!(normalize("file:///home/%61.rs"), "file:///home/a.rs");
             let p = Path::new("/home/me/my project/ä#1.rs");
             let uri = file_uri(p).unwrap();
             assert_eq!(uri, "file:///home/me/my%20project/%C3%A4%231.rs");
@@ -161,6 +193,7 @@ mod tests {
             "file:relative",
         ] {
             assert_eq!(file_path(refused), None, "{refused}");
+            assert_eq!(normalize(refused), refused, "left alone");
         }
         assert!(
             file_path(if cfg!(windows) {

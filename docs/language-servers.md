@@ -42,6 +42,12 @@ project, so a program planted in a repository is never run.
 
 ## What it shows
 
+- **Completion**: the server's suggestions come first in the
+  [completion](completion.md) list, above ochrepad's own, with the selected
+  one's documentation beside the list. Some insert more than the name: a
+  suggestion for a name not imported yet also adds the import (one undo
+  step for both). Placeholders in a server's templates are inserted as
+  plain text.
 - **Problems** are underlined: errors red, warnings yellow, information
   blue, hints dotted. A dot in the gutter marks a line with an error or
   warning, and the status bar counts them. Resting the pointer on one shows

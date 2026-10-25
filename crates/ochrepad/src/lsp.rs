@@ -16,6 +16,7 @@ use ochrepad_core::{BufferId, ByteOffset, Document, Editor};
 use ochrepad_lsp::config::{self, LspFile, ServerConfig};
 use ochrepad_lsp::message::ResponseError;
 use ochrepad_lsp::transport::{Launch, Notify, SharedLog};
+use ochrepad_lsp::uri::plain_path;
 use ochrepad_lsp::{Client, Event, State, Tag};
 use serde_json::Value;
 
@@ -205,6 +206,10 @@ impl LanguageServers {
             .clone();
         let mut notices = Vec::new();
         self.take_setup_answers();
+        // One spelling of each path (not Windows' verbatim one), for the
+        // trust lists and the servers.
+        let open_folder = open_folder.map(plain_path);
+        let open_folder = open_folder.as_deref();
         // A question answered elsewhere (the settings) is not asked.
         if self.question.as_ref().is_some_and(|q| {
             !trust.enabled
@@ -217,7 +222,7 @@ impl LanguageServers {
         let mut wanted: HashSet<BufferId> = HashSet::new();
         if trust.enabled {
             for b in editor.buffers() {
-                if let Some(path) = b.meta.path.clone()
+                if let Some(path) = b.meta.path.as_deref().map(plain_path)
                     && let Some(language) = b.language.clone()
                     && b.doc().len().0 <= self.max_bytes.max(1)
                     && self.serve(

@@ -670,11 +670,20 @@ pub fn editor_view(
                             .take_while(|&c| completion.in_word(c, &word_chars))
                             .count()
                     });
-                if let Some(action) =
-                    state
-                        .completion
-                        .accept(replace, after, source.as_deref_mut(), buffer_id)
-                    && let Err(e) = editor.apply(view, action)
+                let (doc, sels) = editor
+                    .buffer(buffer_id)
+                    .zip(editor.view(view))
+                    .map(|(b, v)| (b.doc().clone(), v.selections.clone()))
+                    .expect("view exists");
+                if let Some(action) = state.completion.accept(
+                    replace,
+                    after,
+                    source.as_deref_mut(),
+                    buffer_id,
+                    &doc,
+                    sels.primary().head,
+                    sels.len(),
+                ) && let Err(e) = editor.apply(view, action)
                 {
                     state.last_error = Some(e);
                 }

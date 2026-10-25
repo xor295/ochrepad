@@ -92,6 +92,32 @@ pub trait CompletionSource {
     }
     /// The user accepted `text` for `prefix` (ranking learns from it).
     fn accepted(&mut self, _buffer: BufferId, _text: &str) {}
+    /// Markdown about `candidate` (a server item's documentation), shown
+    /// beside the list while it is selected.
+    fn documentation(
+        &mut self,
+        _buffer: BufferId,
+        _doc: &Document,
+        _candidate: &Candidate,
+    ) -> Option<String> {
+        None
+    }
+    /// The action that accepts `a.candidate`; `complete` is the popup's
+    /// own (a server's item may replace more of the line, or add an
+    /// import).
+    fn accept_action(&mut self, _a: &Accepting<'_>, complete: Action) -> Action {
+        complete
+    }
+}
+
+/// What accepting knows: the document as it is, its primary caret and how
+/// many carets there are.
+pub struct Accepting<'a> {
+    pub buffer: BufferId,
+    pub doc: &'a Document,
+    pub caret: ByteOffset,
+    pub carets: usize,
+    pub candidate: &'a Candidate,
 }
 
 /// How completion behaves (the preferences).
@@ -130,6 +156,8 @@ pub struct Popup {
     /// Completing a file name in a path (whose characters differ from a
     /// word's).
     path: bool,
+    /// The selected item's documentation (its index, Markdown).
+    documentation: Option<(usize, String)>,
 }
 
 /// What a key did to the popup.
@@ -160,6 +188,9 @@ pub struct CompletionState {
     drawn: Option<Rect>,
     /// Nothing to show yet, but the source is still looking.
     waiting: Option<Waiting>,
+    /// Where the documentation beside the list was drawn last frame.
+    drawn_documentation: Option<Rect>,
+    markdown: egui_commonmark::CommonMarkCache,
 }
 
 /// A popup that had nothing to show while its source was still looking.
@@ -183,6 +214,7 @@ impl CompletionState {
     /// The popup was not drawn this frame (its caret is off screen).
     pub fn paint_nothing(&mut self) {
         self.drawn = None;
+        self.drawn_documentation = None;
     }
 
     /// Whether the popup is open or about to open (typed, Ctrl+Space).
@@ -192,7 +224,9 @@ impl CompletionState {
 
     /// Whether `p` is on the popup (as drawn last frame).
     pub fn covers(&self, p: Pos2) -> bool {
-        self.popup.is_some() && self.drawn.is_some_and(|r| r.contains(p))
+        self.popup.is_some()
+            && (self.drawn.is_some_and(|r| r.contains(p))
+                || self.drawn_documentation.is_some_and(|r| r.contains(p)))
     }
 
     /// Ctrl+Space.
@@ -267,13 +301,18 @@ impl CompletionState {
 
     /// The action that accepts the selected item (or row `clicked`), and
     /// closes the popup. `after` is how many word characters follow the
-    /// caret (replaced when `replace`).
+    /// caret (replaced when `replace`); `caret` is the primary caret, of
+    /// `carets`.
+    #[allow(clippy::too_many_arguments)]
     pub fn accept(
         &mut self,
         replace: bool,
         after: usize,
         source: Option<&mut (dyn CompletionSource + '_)>,
         buffer: BufferId,
+        doc: &Document,
+        caret: ByteOffset,
+        carets: usize,
     ) -> Option<Action> {
         let p = self.popup.take()?;
         let index = self.clicked.take().unwrap_or(p.selected);
@@ -283,14 +322,25 @@ impl CompletionState {
         if p.path && text.ends_with('/') {
             self.typed = true;
         }
-        if let Some(s) = source {
-            s.accepted(buffer, &text);
-        }
-        Some(Action::Complete {
+        let complete = Action::Complete {
             before: p.prefix.chars().count(),
             after: if replace { after } else { 0 },
-            text,
-        })
+            text: text.clone(),
+        };
+        let Some(s) = source else {
+            return Some(complete);
+        };
+        s.accepted(buffer, &text);
+        Some(s.accept_action(
+            &Accepting {
+                buffer,
+                doc,
+                caret,
+                carets,
+                candidate: &item.candidate,
+            },
+            complete,
+        ))
     }
 
     /// A row clicked last frame, to accept now.
@@ -299,8 +349,27 @@ impl CompletionState {
     }
 
     /// After the frame's edits: opens, follows or closes the popup for the
-    /// word at the primary caret. `caret` is `None` with a selection.
+    /// word at the primary caret, and asks for the selected item's
+    /// documentation. `caret` is `None` with a selection.
     pub fn update(
+        &mut self,
+        doc: &Document,
+        buffer: BufferId,
+        caret: Option<ByteOffset>,
+        context: ochrepad_syntax::TextContext,
+        mut source: Option<&mut (dyn CompletionSource + '_)>,
+    ) {
+        self.update_list(doc, buffer, caret, context, source.as_deref_mut());
+        if let (Some(p), Some(source)) = (&mut self.popup, source)
+            && let Some(item) = p.items.get(p.selected)
+        {
+            p.documentation = source
+                .documentation(buffer, doc, &item.candidate)
+                .map(|d| (p.selected, d));
+        }
+    }
+
+    fn update_list(
         &mut self,
         doc: &Document,
         buffer: BufferId,
@@ -458,6 +527,7 @@ impl CompletionState {
             invoked,
             generation,
             path: path.is_some(),
+            documentation: None,
         };
         p.reveal();
         self.popup = Some(p);
@@ -630,6 +700,36 @@ impl CompletionState {
                     painter.rect_filled(bar, 1.5, visuals.widgets.hovered.bg_fill);
                 }
             });
+        // The selected item's documentation, beside the list (or under it
+        // when there is no room).
+        self.drawn_documentation = None;
+        if let Some((_, text)) = p.documentation.as_ref().filter(|(i, _)| *i == p.selected) {
+            let doc_w = 420.0f32.min(screen.width() - 16.0);
+            let list = Rect::from_min_size(pos, Vec2::new(width, height));
+            let at = if list.max.x + 4.0 + doc_w <= screen.max.x {
+                Pos2::new(list.max.x + 4.0, list.min.y)
+            } else if list.min.x - 4.0 - doc_w >= screen.min.x {
+                Pos2::new(list.min.x - 4.0 - doc_w, list.min.y)
+            } else {
+                Pos2::new(list.min.x, list.max.y + 4.0)
+            };
+            let markdown = &mut self.markdown;
+            let shown = egui::Area::new(id.with("documentation"))
+                .order(egui::Order::Foreground)
+                .fixed_pos(at)
+                .show(ui.ctx(), |ui| {
+                    egui::Frame::popup(ui.style()).show(ui, |ui| {
+                        ui.set_width(doc_w - 16.0);
+                        egui::ScrollArea::vertical()
+                            .max_height(height.max(160.0))
+                            .show(ui, |ui| {
+                                crate::safe_images::install(ui);
+                                egui_commonmark::CommonMarkViewer::new().show(ui, markdown, text);
+                            });
+                    });
+                });
+            self.drawn_documentation = Some(shown.response.rect);
+        }
         if scroll_by != 0 {
             let max = p.items.len().saturating_sub(ROWS) as i64;
             p.scroll = (p.scroll as i64 + scroll_by).clamp(0, max) as usize;

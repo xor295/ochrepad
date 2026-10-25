@@ -240,3 +240,94 @@ fn resting_on_a_name_shows_its_problems_and_the_servers_hover() {
     h.run();
     assert!(h.query_by_label_contains("entry point").is_none());
 }
+
+fn typ(h: &mut Harness<'_, OchrepadApp>, s: &str) {
+    for c in s.chars() {
+        h.event(Event::Text(c.to_string()));
+        h.run();
+    }
+}
+
+fn labels(h: &Harness<'_, OchrepadApp>) -> Vec<String> {
+    h.state()
+        .view_state()
+        .map(|s| s.completion.labels())
+        .unwrap_or_default()
+}
+
+fn text(h: &Harness<'_, OchrepadApp>) -> String {
+    h.state().buffer().doc().to_string()
+}
+
+#[test]
+fn the_servers_completions_come_first_with_their_documentation_and_imports() {
+    let server = FakeServer::new()
+        .capabilities(json!({
+            "textDocumentSync": { "openClose": true, "change": 2 },
+            "completionProvider": { "triggerCharacters": ["."], "resolveProvider": true },
+        }))
+        .answer("textDocument/completion", |p| {
+            let pos = p["position"].clone();
+            let line = pos["line"].clone();
+            json!({
+                "isIncomplete": false,
+                "items": [
+                    {"label": "push_item(…)", "filterText": "push_item", "insertText": "push_item",
+                     "kind": 3, "sortText": "1", "labelDetails": {"description": "fn(&mut self)"}},
+                    {"label": "HashMap", "kind": 22, "sortText": "2",
+                     "textEdit": {"range": {"start": {"line": line, "character": 0}, "end": pos},
+                                  "newText": "HashMap"},
+                     "additionalTextEdits": [{
+                         "range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 0}},
+                         "newText": "use std::collections::HashMap;\n"}]},
+                ],
+            })
+        })
+        .answer("completionItem/resolve", |p| {
+            let mut item = p.clone();
+            item["documentation"] = json!({"kind": "markdown", "value": "Pushes **one** item."});
+            item
+        });
+    let (dir, mut h) = open_rust_file(&server);
+    h.state_mut()
+        .settings
+        .lsp_trusted
+        .push(dir.path().to_path_buf());
+    wait(&mut h, "didOpen", |_| {
+        !server.params("textDocument/didOpen").is_empty()
+    });
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::End);
+    h.run();
+    typ(&mut h, "pu");
+    wait(&mut h, "the server's items", |h| {
+        labels(h).first().map(String::as_str) == Some("push_item(…)")
+    });
+    // The selected item's documentation, asked for when it is selected.
+    wait(&mut h, "the documentation", |h| {
+        h.query_by_label_contains("Pushes").is_some()
+    });
+    h.key_press(egui::Key::Tab);
+    h.run();
+    assert_eq!(text(&h), "fn main() {}\npush_item");
+
+    // An item with an import: one undo step for both.
+    h.key_press(egui::Key::Enter);
+    typ(&mut h, "Ha");
+    wait(&mut h, "HashMap", |h| {
+        labels(h).contains(&"HashMap".to_owned())
+    });
+    let i = labels(&h).iter().position(|l| l == "HashMap").unwrap();
+    for _ in 0..i {
+        h.key_press(egui::Key::ArrowDown);
+        h.run();
+    }
+    h.key_press(egui::Key::Enter);
+    h.run();
+    assert_eq!(
+        text(&h),
+        "use std::collections::HashMap;\nfn main() {}\npush_item\nHashMap"
+    );
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+    h.run();
+    assert_eq!(text(&h), "fn main() {}\npush_item\nHa");
+}

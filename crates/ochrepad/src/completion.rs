@@ -2,7 +2,8 @@
 //! definitions (what the Function List shows) of the open documents, found
 //! on a thread once typing pauses; the words near the caret, read fresh for
 //! each request so a word typed a moment ago is offered at once; and the
-//! language's keywords. `Completion::source` lends them to the editor
+//! language's keywords; and a language server's items
+//! (`server_completion.rs`). `Completion::source` lends them to the editor
 //! widget as a `CompletionSource`.
 
 use std::collections::HashMap;
@@ -11,10 +12,12 @@ use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
 
 use ochrepad_core::complete::{self, Candidate, Kind, Source};
-use ochrepad_core::{BufferId, Document, Editor};
+use ochrepad_core::{Action, BufferId, Document, Editor};
 use ochrepad_syntax::{Registry, Symbol, SymbolKind};
 
-use crate::completion_popup::{CompletionRequest, CompletionSource};
+use crate::completion_popup::{Accepting, CompletionRequest, CompletionSource};
+use crate::lsp::LanguageServers;
+use crate::server_completion::ServerCompletion;
 
 /// Quiet time after an edit before a document's words are counted again.
 const PAUSE_SECS: f64 = 0.4;
@@ -93,6 +96,8 @@ pub struct Completion {
     /// preference).
     pub only_own_document: bool,
     ctx: Option<egui::Context>,
+    /// The language servers' items.
+    server: ServerCompletion,
 }
 
 /// How long the folder index works before the status bar says so.
@@ -301,9 +306,16 @@ impl Completion {
         self.docs.get(&buffer).map(|d| &d.found.words)
     }
 
-    /// The source an editor asks.
-    pub fn source(&mut self) -> Sources<'_> {
-        Sources { completion: self }
+    /// The source an editor asks, with the language servers when they
+    /// are used.
+    pub fn source<'a>(&'a mut self, mut servers: Option<&'a mut LanguageServers>) -> Sources<'a> {
+        if let Some(s) = servers.as_deref_mut() {
+            self.server.poll(s);
+        }
+        Sources {
+            completion: self,
+            servers,
+        }
     }
 }
 
@@ -336,6 +348,7 @@ fn find(registry: &Registry, job: &Job) -> Found {
 /// The app's completion sources, lent to one editor for a frame.
 pub struct Sources<'a> {
     completion: &'a mut Completion,
+    servers: Option<&'a mut LanguageServers>,
 }
 
 impl Sources<'_> {
@@ -388,6 +401,10 @@ impl CompletionSource for Sources<'_> {
         if let Some(folder) = self.completion.folder.as_mut() {
             folder.ask(req.prefix);
         }
+        let served = match self.servers.as_deref_mut() {
+            Some(s) => self.completion.server.candidates(req, s),
+            None => Vec::new(),
+        };
         let c = &*self.completion;
         let own = c.docs.get(&req.buffer);
         let chars = own.map(|d| d.word_chars.clone()).unwrap_or_default();
@@ -523,23 +540,48 @@ impl CompletionSource for Sources<'_> {
                 }
             }
         }
+        // The server's items replace the same words found here.
+        for c in &served {
+            out.remove(c.text());
+            out.remove(c.filter_text());
+        }
         // Accepted lately: a little more likely.
+        let mut out: Vec<Candidate> = out.into_values().chain(served).collect();
         for (i, a) in c.accepted.iter().rev().enumerate().take(50) {
-            if let Some(e) = out.get_mut(a) {
+            for e in out.iter_mut().filter(|e| e.text() == a) {
                 e.boost = (e.boost + 0.3 * (1.0 - i as f32 / 50.0)).min(1.0);
             }
         }
-        out.into_values().collect()
+        out
     }
 
     fn generation(&self) -> u64 {
         let c = &self.completion;
-        c.folder.as_ref().map_or(0, |f| f.answered) + c.paths.answered
+        c.folder.as_ref().map_or(0, |f| f.answered) + c.paths.answered + c.server.answered
     }
 
     fn waiting(&self) -> bool {
         let c = &self.completion;
-        c.folder.as_ref().is_some_and(|f| f.waiting()) || c.paths.waiting()
+        c.folder.as_ref().is_some_and(|f| f.waiting()) || c.paths.waiting() || c.server.waiting()
+    }
+
+    fn documentation(
+        &mut self,
+        buffer: BufferId,
+        doc: &Document,
+        candidate: &Candidate,
+    ) -> Option<String> {
+        let servers = self.servers.as_deref_mut()?;
+        self.completion
+            .server
+            .documentation(buffer, doc, candidate, servers)
+    }
+
+    fn accept_action(&mut self, a: &Accepting<'_>, complete: Action) -> Action {
+        match self.servers.as_deref() {
+            Some(s) => self.completion.server.accept_action(a, s, complete),
+            None => complete,
+        }
     }
 
     fn members(&self, buffer: BufferId) -> bool {
