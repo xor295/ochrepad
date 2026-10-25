@@ -433,6 +433,7 @@ impl Compare {
                         row_style: Some(&style),
                         changes: None,
                         token_styles: &[],
+                        completion: None,
                     },
                 );
             });

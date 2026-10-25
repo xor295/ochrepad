@@ -130,6 +130,8 @@ pub struct EditorViewState {
     /// Paste to (Replace) Bookmarked Lines asked for the clipboard at this
     /// time: the paste that answers goes to the bookmarked lines.
     paste_to_bookmarks: Option<f64>,
+    /// The completion popup.
+    pub completion: crate::completion_popup::CompletionState,
 }
 
 impl Default for EditorViewState {
@@ -146,6 +148,7 @@ impl Default for EditorViewState {
             context_url: None,
             text_cols: 80,
             paste_to_bookmarks: None,
+            completion: Default::default(),
             cache: LayoutCache::default(),
             font_size: 14.0,
             symbols: Symbols::default(),
@@ -294,7 +297,15 @@ enum Op {
     Copy,
     Cut,
     ToggleOvertype,
-    BeginEndSelect { column: bool },
+    BeginEndSelect {
+        column: bool,
+    },
+    /// Accept the completion popup's item (and replace the rest of the
+    /// word after the caret).
+    AcceptCompletion {
+        replace: bool,
+    },
+    ShowCompletions,
 }
 
 /// Per-row colours from outside the editor: a compare view's diff, or a
@@ -324,6 +335,8 @@ pub struct Decorations<'a> {
     /// Search > Style All Occurrences of Token: what to highlight, in which
     /// colour.
     pub token_styles: &'a [(&'a Searcher, egui::Color32)],
+    /// Where completions come from; `None` turns completion off.
+    pub completion: Option<&'a mut dyn crate::completion_popup::CompletionSource>,
 }
 
 /// Shows the editor for `view` filling the available space. `label` names the
@@ -395,8 +408,12 @@ pub fn editor_view(
     };
 
     // --- Focus ---------------------------------------------------------------
+    // Presses on the completion popup are the popup's.
+    let on_popup = ui
+        .input(|i| i.pointer.interact_pos())
+        .is_some_and(|p| state.completion.covers(p));
     let pointer_pressed_here =
-        ui.input(|i| i.pointer.primary_pressed()) && response.contains_pointer();
+        ui.input(|i| i.pointer.primary_pressed()) && response.contains_pointer() && !on_popup;
     if state.request_focus || pointer_pressed_here {
         response.request_focus();
         state.request_focus = false;
@@ -441,9 +458,43 @@ pub fn editor_view(
             .saturating_sub(1)
             .max(1)
     };
+    let mut source = decorations.completion;
+    let read_only = editor.buffer(buffer_id).is_some_and(|b| b.read_only);
+    let word_chars: Vec<char> = source
+        .as_deref()
+        .map(|s| s.word_chars(buffer_id).to_vec())
+        .unwrap_or_default();
     let mut ops = Vec::new();
+    // A row of the popup clicked last frame (the click took the keyboard;
+    // it comes back).
+    let clicked = state.completion.take_click();
+    if clicked {
+        ops.push(Op::AcceptCompletion { replace: false });
+        state.request_focus = true;
+    } else if !focused && !on_popup {
+        // A click on the popup takes the keyboard for a moment; anything
+        // else that does closes it.
+        state.completion.close();
+    }
     if focused {
         for event in ui.input(|i| i.events.clone()) {
+            // The completion popup's keys come before the keymap's.
+            if let Event::Key {
+                key,
+                pressed: true,
+                modifiers,
+                ..
+            } = &event
+            {
+                match state.completion.key(*key, *modifiers) {
+                    crate::completion_popup::KeyResult::Pass => {}
+                    crate::completion_popup::KeyResult::Taken => continue,
+                    crate::completion_popup::KeyResult::Accept { replace } => {
+                        ops.push(Op::AcceptCompletion { replace });
+                        continue;
+                    }
+                }
+            }
             match event {
                 Event::Key {
                     key,
@@ -479,6 +530,7 @@ pub fn editor_view(
                     Some(EditorCommand::SplitLines) => ops.push(Op::Apply(Action::SplitLines {
                         width: state.split_width(),
                     })),
+                    Some(EditorCommand::ShowCompletions) => ops.push(Op::ShowCompletions),
                     None => {}
                 },
                 Event::Text(t)
@@ -486,6 +538,7 @@ pub fn editor_view(
                         && !t.is_empty()
                         && !t.chars().any(char::is_control) =>
                 {
+                    state.completion.typed(&t, &word_chars);
                     ops.push(Op::Apply(Action::InsertText(t)));
                 }
                 Event::Paste(t) => {
@@ -517,6 +570,7 @@ pub fn editor_view(
                 Event::Ime(ImeEvent::Commit(t)) => {
                     state.preedit = None;
                     if !t.is_empty() {
+                        state.completion.typed(&t, &word_chars);
                         ops.push(Op::Apply(Action::InsertText(t)));
                     }
                 }
@@ -538,9 +592,43 @@ pub fn editor_view(
             }
             Op::ToggleOvertype => editor.settings.overtype = !editor.settings.overtype,
             Op::BeginEndSelect { column } => begin_end_select(editor, view, state, column),
+            Op::ShowCompletions => state.completion.invoke(),
+            Op::AcceptCompletion { replace } => {
+                // The word's characters after the caret, which Tab replaces.
+                let after = editor
+                    .view(view)
+                    .zip(editor.buffer(buffer_id))
+                    .map_or(0, |(v, b)| {
+                        let head = v.selections.primary().head;
+                        let doc = b.doc();
+                        let line_end = doc.line_end(doc.line_of(head));
+                        doc.slice(head..line_end)
+                            .chars()
+                            .take_while(|&c| ochrepad_core::complete::is_word_char(c, &word_chars))
+                            .count()
+                    });
+                if let Some(action) =
+                    state
+                        .completion
+                        .accept(replace, after, source.as_deref_mut(), buffer_id)
+                    && let Err(e) = editor.apply(view, action)
+                {
+                    state.last_error = Some(e);
+                }
+            }
         }
         state.reveal_caret = true;
         state.last_activity = now;
+    }
+    // The popup follows the word at the primary caret (not in read-only
+    // documents, nor with a selection or column selection).
+    {
+        let v = editor.view(view).expect("view exists");
+        let primary = v.selections.primary();
+        let caret = (primary.is_empty() && v.selections.rect().is_none()).then_some(primary.head);
+        let doc = editor.buffer(buffer_id).expect("buffer exists").doc();
+        let source = if read_only { None } else { source };
+        state.completion.update(doc, buffer_id, caret, source);
     }
 
     // From here on the document only changes through mouse selection, which
@@ -606,7 +694,7 @@ pub fn editor_view(
     );
     let (pressed, down, pointer, dt) = ui.input(|i| {
         (
-            i.pointer.primary_pressed(),
+            i.pointer.primary_pressed() && !on_popup,
             i.pointer.primary_down(),
             i.pointer.interact_pos(),
             i.stable_dt,
@@ -708,7 +796,7 @@ pub fn editor_view(
     // --- Right click: the context menu acts where it was opened -----------------
     // As in Scintilla: a click outside the selection moves the caret there
     // (on a line number, to the line's start); on the selection it stays.
-    let secondary = ui.input(|i| i.pointer.secondary_pressed());
+    let secondary = ui.input(|i| i.pointer.secondary_pressed()) && !on_popup;
     if secondary && response.contains_pointer() {
         // On a scrollbar or the map: the menu has no line to act on.
         state.context_line = None;
@@ -2322,6 +2410,19 @@ fn paint(
                 should_interrupt_composition: false,
             })
         });
+    }
+    // The completion popup (also while a click on it has the keyboard).
+    let caret_shown = state.completion.is_open().then(|| {
+        let (p, on_screen) = caret_pos(v.selections.primary().head, &mut state.cache);
+        on_screen.then(|| Rect::from_min_size(p, Vec2::new(f.cell_w, f.line_h)))
+    });
+    match caret_shown.flatten() {
+        Some(caret) => {
+            state
+                .completion
+                .paint(ui, Id::new(("ochrepad-completion", view.0)), caret, &f.font)
+        }
+        None => state.completion.paint_nothing(),
     }
 
     // The document map.

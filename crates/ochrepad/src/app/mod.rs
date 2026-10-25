@@ -149,6 +149,8 @@ pub struct OchrepadApp {
     pub viewers: crate::viewer::Viewers,
     /// Terminal tabs.
     pub terminals: crate::terminal::Terminals,
+    /// Where completions come from (words of the open documents, …).
+    pub completion: crate::completion::Completion,
     /// The viewer whose Open as Editable question is showing.
     confirm_editable: Option<crate::viewer::ViewerId>,
     view_states: HashMap<ViewId, EditorViewState>,
@@ -255,6 +257,7 @@ impl OchrepadApp {
             compares: Compares::default(),
             viewers: Default::default(),
             terminals: Default::default(),
+            completion: Default::default(),
             confirm_editable: None,
             view_states: HashMap::new(),
             untitled: HashMap::from([(buffer, "new 1".to_owned())]),
@@ -1057,6 +1060,10 @@ impl OchrepadApp {
             ui.ctx().request_repaint();
         }
         self.visible.clear();
+        if self.settings.completion && self.completion.tick(&self.editor, self.now, ui.ctx()) {
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(100));
+        }
         let editor = &self.editor;
         self.token_styles.retain(|b| editor.buffer(b).is_some());
         let limit = self.settings.highlight_limit_mb * 1024 * 1024;
@@ -1079,6 +1086,8 @@ impl OchrepadApp {
                 viewers: &mut self.viewers,
                 terminals: &mut self.terminals,
                 terminal_font: self.settings.editor_font_size(),
+                completion: self.settings.completion.then_some(&mut self.completion),
+                completion_settings: self.settings.completion_settings(),
                 fold_margin: self.settings.fold_margin,
                 word_wrap: self.settings.word_wrap,
                 document_map: self.settings.document_map,
@@ -3085,6 +3094,9 @@ struct Tabs<'a> {
     terminals: &'a mut crate::terminal::Terminals,
     /// The editor's zoomed font size, which terminals share.
     terminal_font: f32,
+    /// Completion's sources; `None` when it is turned off.
+    completion: Option<&'a mut crate::completion::Completion>,
+    completion_settings: crate::completion_popup::CompletionSettings,
     fold_margin: bool,
     word_wrap: bool,
     document_map: bool,
@@ -3327,6 +3339,8 @@ impl TabViewer for Tabs<'_> {
             crate::log_rules::LogStyle::new(self.log_rules, doc, ui.visuals().dark_mode)
         });
         let styled = self.token_styles.highlights(buffer, ui.visuals());
+        state.completion.settings = self.completion_settings;
+        let mut sources = self.completion.as_deref_mut().map(|c| c.source());
         let response = editor_view(
             ui,
             self.editor,
@@ -3342,6 +3356,9 @@ impl TabViewer for Tabs<'_> {
                     .as_ref()
                     .map(|s| s as &dyn crate::editor_view::RowStyle),
                 changes: self.changes.and_then(|c| c.marks(buffer)),
+                completion: sources
+                    .as_mut()
+                    .map(|s| s as &mut dyn crate::completion_popup::CompletionSource),
             },
         );
         let mut command = None;

@@ -116,6 +116,7 @@ Motions for `MoveCursor`:
 | `{"Action": "DeleteWordForward"}` | Deletes to the next word boundary. |
 | `{"Action": "Undo"}` | Undo. |
 | `{"Action": "Redo"}` | Redo. |
+| `"ShowCompletions"` | Shows the completion popup for the word at the caret, or every suggestion when there is no word yet (Ctrl+Space). |
 | `"ToggleOvertype"` | Switches between inserting and typing over the text (Insert), as the status bar's **OVR** shows. |
 
 ### Lines and case

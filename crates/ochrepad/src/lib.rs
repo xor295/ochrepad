@@ -4,6 +4,8 @@ pub mod app;
 pub mod bench;
 pub mod change_history;
 pub mod compare;
+pub mod completion;
+pub mod completion_popup;
 pub mod doc_map;
 pub mod document_list;
 pub mod editor_menu;

@@ -108,6 +108,14 @@ pub struct AppSettings {
     pub terminal_args: String,
     /// Lines a terminal keeps above its screen.
     pub terminal_scrollback: usize,
+    /// Code completion (the popup of words and names).
+    pub completion: bool,
+    /// It opens by itself while typing (else only with Ctrl+Space).
+    pub completion_auto: bool,
+    /// After this many characters of a word.
+    pub completion_min_chars: usize,
+    /// Enter accepts a completion (Tab always does).
+    pub completion_enter_accepts: bool,
     pub recent_folders: Vec<PathBuf>,
     pub recent_files: Vec<PathBuf>,
 }
@@ -153,6 +161,10 @@ impl Default for AppSettings {
             terminal_shell: String::new(),
             terminal_args: String::new(),
             terminal_scrollback: 10_000,
+            completion: true,
+            completion_auto: true,
+            completion_min_chars: 2,
+            completion_enter_accepts: true,
             recent_folders: Vec::new(),
             recent_files: Vec::new(),
         }
@@ -180,6 +192,16 @@ impl AppSettings {
         // Up to what the editor can load.
         self.viewer_threshold_mb = self.viewer_threshold_mb.clamp(1, 1024);
         self.terminal_scrollback = self.terminal_scrollback.min(100_000);
+        self.completion_min_chars = self.completion_min_chars.clamp(1, 5);
+    }
+
+    /// How the completion popup behaves.
+    pub fn completion_settings(&self) -> crate::completion_popup::CompletionSettings {
+        crate::completion_popup::CompletionSettings {
+            auto: self.completion_auto,
+            min_chars: self.completion_min_chars,
+            enter_accepts: self.completion_enter_accepts,
+        }
     }
 
     /// The editor font size after zooming.
@@ -359,6 +381,32 @@ impl AppSettings {
                         ui.add(egui::DragValue::new(col).range(1..=1000));
                     }
                 });
+                ui.end_row();
+
+                ui.label("Completion");
+                ui.horizontal(|ui| {
+                    ui.checkbox(&mut self.completion, "Suggest words and names");
+                    ui.add_enabled_ui(self.completion, |ui| {
+                        ui.checkbox(&mut self.completion_auto, "while typing, after");
+                        ui.add_enabled(
+                            self.completion_auto,
+                            egui::DragValue::new(&mut self.completion_min_chars).range(1..=5),
+                        );
+                        ui.label("characters");
+                    });
+                })
+                .response
+                .on_hover_text("Ctrl+Space shows suggestions at any time");
+                ui.end_row();
+
+                ui.label("");
+                ui.add_enabled(
+                    self.completion,
+                    egui::Checkbox::new(
+                        &mut self.completion_enter_accepts,
+                        "Enter accepts a suggestion (Tab always does)",
+                    ),
+                );
                 ui.end_row();
 
                 ui.label("Terminal shell");

@@ -114,7 +114,7 @@ fn part_start(prev: Option<char>, c: char, next: Option<char>) -> bool {
 const CHAR: i64 = 1;
 const SAME_CASE: i64 = 1;
 const AT_PART: i64 = 8;
-const RUN: i64 = 8;
+const RUN: i64 = 6;
 const AT_START: i64 = 12;
 const PREFIX: i64 = 30;
 const LEADING: i64 = 2;
@@ -122,50 +122,118 @@ const GAP: i64 = 1;
 const MAX_GAP_PENALTY: i64 = 10;
 
 /// How well `pattern` matches `label` (higher is better), or `None`. Both
-/// are compared as chars; `pattern` must not be empty.
+/// are compared as chars; `pattern` must not be empty. To match one pattern
+/// against many labels, prepare it once with [`Pattern`].
 pub fn match_score(pattern: &str, label: &str) -> Option<i64> {
-    match_positions(pattern, label, false).map(|(score, _)| score)
+    Pattern::new(pattern).score(label)
 }
 
 /// [`match_score`], with the char indices of `label` the pattern matched
 /// (for drawing them).
 pub fn match_with_positions(pattern: &str, label: &str) -> Option<(i64, Vec<usize>)> {
-    match_positions(pattern, label, true)
+    Pattern::new(pattern).positions(label)
 }
 
 fn lower(c: char) -> char {
-    c.to_lowercase().next().unwrap_or(c)
+    if c.is_ascii() {
+        c.to_ascii_lowercase()
+    } else {
+        c.to_lowercase().next().unwrap_or(c)
+    }
 }
 
-fn match_positions(pattern: &str, label: &str, want: bool) -> Option<(i64, Vec<usize>)> {
-    let p: Vec<char> = pattern.chars().collect();
-    let l: Vec<char> = label.chars().collect();
-    if p.is_empty() || p.len() > l.len() || l.len() > 256 {
-        return None;
+/// A typed pattern, prepared for matching many labels.
+pub struct Pattern {
+    chars: Vec<char>,
+    lower: Vec<char>,
+}
+
+impl Pattern {
+    pub fn new(pattern: &str) -> Self {
+        let chars: Vec<char> = pattern.chars().collect();
+        let lower = chars.iter().map(|&c| lower(c)).collect();
+        Self { chars, lower }
     }
-    // Quick refusal: the pattern must be a subsequence, ignoring case, and
-    // its first char must be the label's first or a part's start.
-    let pl: Vec<char> = p.iter().map(|&c| lower(c)).collect();
-    let ll: Vec<char> = l.iter().map(|&c| lower(c)).collect();
-    {
-        let mut i = 0;
-        for &c in &ll {
-            if i < pl.len() && c == pl[i] {
-                i += 1;
-            }
-        }
-        if i < pl.len() {
+
+    pub fn is_empty(&self) -> bool {
+        self.chars.is_empty()
+    }
+
+    /// How well it matches `label`, or `None` (see [`match_score`]).
+    pub fn score(&self, label: &str) -> Option<i64> {
+        if !self.might_match(label) {
             return None;
         }
+        match_positions(self, label, false).map(|(score, _)| score)
     }
-    let starts: Vec<bool> = (0..l.len())
-        .map(|j| part_start(j.checked_sub(1).map(|k| l[k]), l[j], l.get(j + 1).copied()))
-        .collect();
-    // A prefix, ignoring case: the best kind of match.
-    if ll[..pl.len()] == pl[..] {
-        let same = p.iter().zip(&l).filter(|(a, b)| a == b).count() as i64;
-        let score = PREFIX + AT_START + pl.len() as i64 * (CHAR + RUN) + same * SAME_CASE
-            - (l.len() - p.len()) as i64 / 4;
+
+    /// [`Pattern::score`], with the char indices of `label` matched.
+    pub fn positions(&self, label: &str) -> Option<(i64, Vec<usize>)> {
+        if !self.might_match(label) {
+            return None;
+        }
+        match_positions(self, label, true)
+    }
+
+    /// A quick look without allocating: whether the pattern, ignoring case,
+    /// is a subsequence of `label` starting at a part. Every label that
+    /// matches passes (a few that pass do not match).
+    pub fn might_match(&self, label: &str) -> bool {
+        if self.lower.is_empty() || label.len() > 1024 {
+            return false;
+        }
+        let mut i = 0;
+        let mut prev: Option<char> = None;
+        for c in label.chars() {
+            if i < self.lower.len() && lower(c) == self.lower[i] {
+                // The first char only where a part starts (generously: any
+                // capital counts).
+                let at_part = match prev {
+                    None => true,
+                    Some(p) => {
+                        !p.is_alphanumeric()
+                            || c.is_uppercase()
+                            || (c.is_numeric() && !p.is_numeric())
+                    }
+                };
+                if i > 0 || at_part {
+                    i += 1;
+                }
+            }
+            prev = Some(c);
+        }
+        i == self.lower.len()
+    }
+}
+
+fn match_positions(pattern: &Pattern, label: &str, want: bool) -> Option<(i64, Vec<usize>)> {
+    let p = &pattern.chars;
+    let pl = &pattern.lower;
+    if p.is_empty() {
+        return None;
+    }
+    // A prefix, ignoring case: the best kind of match, and the most common,
+    // so it is looked for without allocating.
+    let mut same = 0i64;
+    let mut prefix = true;
+    let mut chars = label.chars();
+    for (i, &want_lower) in pl.iter().enumerate() {
+        match chars.next() {
+            Some(c) if lower(c) == want_lower => same += i64::from(c == p[i]),
+            Some(_) => {
+                prefix = false;
+                break;
+            }
+            None => return None,
+        }
+    }
+    if prefix {
+        let rest = chars.count();
+        if rest + p.len() > 256 {
+            return None;
+        }
+        let score =
+            PREFIX + AT_START + pl.len() as i64 * (CHAR + RUN) + same * SAME_CASE - rest as i64 / 4;
         return Some((
             score,
             if want {
@@ -175,6 +243,14 @@ fn match_positions(pattern: &str, label: &str, want: bool) -> Option<(i64, Vec<u
             },
         ));
     }
+    let l: Vec<char> = label.chars().collect();
+    if p.len() > l.len() || l.len() > 256 {
+        return None;
+    }
+    let ll: Vec<char> = l.iter().map(|&c| lower(c)).collect();
+    let starts: Vec<bool> = (0..l.len())
+        .map(|j| part_start(j.checked_sub(1).map(|k| l[k]), l[j], l.get(j + 1).copied()))
+        .collect();
     // Otherwise the best placement: dp[i][j] is the best score with
     // pattern char i at label char j. Short patterns only match at part
     // starts or right after the previous match (initials, not scattered
@@ -258,6 +334,89 @@ fn match_positions(pattern: &str, label: &str, want: bool) -> Option<(i64, Vec<u
     Some((score - (m - n) as i64 / 4, positions))
 }
 
+/// Words with how often each occurs, indexed by the first letters of their
+/// parts (lower-cased), so a pattern only looks at the words it can match:
+/// `gtl` only at words with a part starting with `g`.
+#[derive(Clone, Debug, Default)]
+pub struct WordIndex {
+    words: Vec<(String, u32)>,
+    by_initial: std::collections::HashMap<char, Vec<u32>>,
+}
+
+impl WordIndex {
+    pub fn new(counts: impl IntoIterator<Item = (String, u32)>) -> Self {
+        let words: Vec<(String, u32)> = counts.into_iter().collect();
+        let mut by_initial: std::collections::HashMap<char, Vec<u32>> =
+            std::collections::HashMap::new();
+        for (i, (w, _)) in words.iter().enumerate() {
+            let chars: Vec<char> = w.chars().collect();
+            let mut seen: Vec<char> = Vec::new();
+            for j in 0..chars.len() {
+                let prev = j.checked_sub(1).map(|k| chars[k]);
+                // Generous, as `Pattern::might_match` is: any capital.
+                let start = part_start(prev, chars[j], chars.get(j + 1).copied())
+                    || (chars[j].is_uppercase() && prev.is_some());
+                if start {
+                    let c = lower(chars[j]);
+                    if !seen.contains(&c) {
+                        seen.push(c);
+                        by_initial.entry(c).or_default().push(i as u32);
+                    }
+                }
+            }
+        }
+        Self { words, by_initial }
+    }
+
+    pub fn len(&self) -> usize {
+        self.words.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.words.is_empty()
+    }
+
+    /// How often `word` occurs (0 if it does not).
+    pub fn count(&self, word: &str) -> u32 {
+        self.words
+            .iter()
+            .find(|(w, _)| w == word)
+            .map_or(0, |&(_, c)| c)
+    }
+
+    /// The most often any word occurs.
+    pub fn most(&self) -> u32 {
+        self.words.iter().map(|&(_, c)| c).max().unwrap_or(0)
+    }
+
+    /// Every word and its count.
+    pub fn iter(&self) -> impl Iterator<Item = (&str, u32)> + '_ {
+        self.words.iter().map(|(w, c)| (w.as_str(), *c))
+    }
+
+    /// The words `pattern` might match (see [`Pattern::might_match`]), with
+    /// their counts; every word for an empty pattern.
+    pub fn matching<'a>(
+        &'a self,
+        pattern: &'a Pattern,
+    ) -> Box<dyn Iterator<Item = (&'a str, u32)> + 'a> {
+        let Some(&first) = pattern.lower.first() else {
+            return Box::new(self.iter());
+        };
+        let bucket = self
+            .by_initial
+            .get(&first)
+            .map_or(&[][..], |v| v.as_slice());
+        Box::new(
+            bucket
+                .iter()
+                .map(|&i| &self.words[i as usize])
+                .filter(|(w, _)| pattern.might_match(w))
+                .map(|(w, c)| (w.as_str(), *c)),
+        )
+    }
+}
+
 /// The candidates that match `pattern`, best first, without duplicate
 /// labels (the best-ranked one is kept). A candidate equal to the pattern
 /// is left out: there is nothing to complete. At most `limit` are kept.
@@ -266,11 +425,12 @@ pub fn rank(
     candidates: impl IntoIterator<Item = Candidate>,
     limit: usize,
 ) -> Vec<Ranked> {
+    let prepared = Pattern::new(pattern);
     let mut ranked: Vec<Ranked> = candidates
         .into_iter()
         .filter(|c| c.label != pattern)
         .filter_map(|c| {
-            let quality = match_score(pattern, &c.label)?;
+            let quality = prepared.score(&c.label)?;
             let score =
                 quality * 100 + c.source.weight() * 10 + (c.boost.clamp(0.0, 1.0) * 100.0) as i64;
             Some(Ranked {
@@ -279,15 +439,46 @@ pub fn rank(
             })
         })
         .collect();
-    ranked.sort_by(|a, b| {
+    let order = |a: &Ranked, b: &Ranked| {
         b.score
             .cmp(&a.score)
             .then_with(|| a.candidate.source.cmp(&b.candidate.source))
             .then_with(|| a.candidate.label.len().cmp(&b.candidate.label.len()))
             .then_with(|| a.candidate.label.cmp(&b.candidate.label))
-    });
-    let mut seen = std::collections::HashSet::new();
-    ranked.retain(|r| seen.insert(r.candidate.label.clone()));
+    };
+    let dedup = |ranked: &mut Vec<Ranked>| {
+        let unique: Vec<bool> = {
+            let mut seen = std::collections::HashSet::new();
+            ranked
+                .iter()
+                .map(|r| seen.insert(r.candidate.label.as_str()))
+                .collect()
+        };
+        let mut unique = unique.into_iter();
+        ranked.retain(|_| unique.next().unwrap_or(false));
+    };
+    // Usually only the best few need sorting (with room for duplicates);
+    // if duplicates fill that room, everything is sorted.
+    let keep = limit.saturating_mul(4).max(1);
+    if ranked.len() > keep {
+        // The best `keep` move to the front, unsorted; the rest stay behind
+        // them for the slow path.
+        ranked.select_nth_unstable_by(keep - 1, order);
+        ranked[..keep].sort_by(order);
+        let mut seen = std::collections::HashSet::new();
+        let unique = ranked[..keep]
+            .iter()
+            .filter(|r| seen.insert(r.candidate.label.as_str()))
+            .count();
+        if unique >= limit {
+            ranked.truncate(keep);
+            dedup(&mut ranked);
+            ranked.truncate(limit);
+            return ranked;
+        }
+    }
+    ranked.sort_by(order);
+    dedup(&mut ranked);
     ranked.truncate(limit);
     ranked
 }
@@ -401,6 +592,9 @@ mod tests {
         assert_eq!(at, [0, 4, 9]);
         let (_, at) = match_with_positions("getl", "getTextLength").unwrap();
         assert_eq!(at, [0, 1, 2, 7]);
+        // Initials, not the letter just before the next part.
+        let (_, at) = match_with_positions("gtl", "getTextLength").unwrap();
+        assert_eq!(at, [0, 3, 7]);
     }
 
     #[test]
@@ -423,6 +617,18 @@ mod tests {
             10,
         );
         assert_eq!(r[0].candidate.label, "for");
+    }
+
+    #[test]
+    fn many_duplicates_still_fill_the_list() {
+        let words = std::iter::repeat_n("get", 500)
+            .chain(["getter", "gets", "getaway"])
+            .map(|w| Candidate::new(w, Kind::Word, Source::Word));
+        let r: Vec<String> = rank("ge", words, 3)
+            .into_iter()
+            .map(|r| r.candidate.label)
+            .collect();
+        assert_eq!(r, ["get", "gets", "getter"]);
     }
 
     #[test]
@@ -466,6 +672,42 @@ mod tests {
             doc.slice(word_start(&doc, caret, &['-'])..caret),
             "--main-bg"
         );
+    }
+
+    #[test]
+    fn the_word_index_finds_what_patterns_can_match() {
+        let index = WordIndex::new(
+            [
+                "getTextLength",
+                "get_text_length",
+                "settle",
+                "HTTPServer",
+                "über_alles",
+            ]
+            .into_iter()
+            .map(|w| (w.to_owned(), 1)),
+        );
+        let found = |p: &str| {
+            let pattern = Pattern::new(p);
+            let mut v: Vec<&str> = index.matching(&pattern).map(|(w, _)| w).collect();
+            v.sort();
+            v.into_iter().map(str::to_owned).collect::<Vec<_>>()
+        };
+        assert_eq!(found("gtl"), ["getTextLength", "get_text_length"]);
+        assert_eq!(found("tex"), ["getTextLength", "get_text_length"]);
+        assert_eq!(found("se"), ["HTTPServer", "settle"]);
+        assert_eq!(found("Ü"), ["über_alles"]);
+        assert_eq!(found("").len(), 5);
+        // Every word the index offers really matches or nearly; every word
+        // that matches is offered.
+        for p in ["g", "gt", "tl", "hs", "al", "tt"] {
+            let pattern = Pattern::new(p);
+            for (w, _) in index.iter() {
+                if pattern.score(w).is_some() {
+                    assert!(found(p).contains(&w.to_owned()), "{p} {w}");
+                }
+            }
+        }
     }
 
     #[test]

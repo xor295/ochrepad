@@ -26,6 +26,8 @@ pub enum EditorCommand {
     /// Edit > Line Operations > Split Lines, at the vertical edge or else
     /// the pane's width.
     SplitLines,
+    /// Shows the completion popup for the word at the caret (Ctrl+Space).
+    ShowCompletions,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -159,6 +161,7 @@ impl Default for Keymap {
             (Chord::new(Tab), act(Action::InsertTab)),
             (Chord::new(Escape), act(Action::CollapseSelections)),
             (Chord::new(Insert), EditorCommand::ToggleOvertype),
+            (Chord::new(Space).cmd(), EditorCommand::ShowCompletions),
             (Chord::new(A).cmd(), act(Action::SelectAll)),
             (Chord::new(Z).cmd(), act(Action::Undo)),
             (Chord::new(Y).cmd(), act(Action::Redo)),
