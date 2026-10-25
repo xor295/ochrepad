@@ -179,6 +179,54 @@ fn ctrl_click_on_a_compiler_location_opens_the_file_there() {
 }
 
 #[test]
+fn a_terminal_looks_right() {
+    let mut app = OchrepadApp::new();
+    // No shell starts, so the screen holds only what is fed to it.
+    app.settings.terminal_shell = "ochrepad-no-such-shell".to_owned();
+    let mut h = Harness::builder()
+        .with_size(Vec2::new(760.0, 600.0))
+        .with_step_dt(1.0 / 60.0)
+        .with_max_steps(10_000)
+        .build_ui_state(|ui, app: &mut OchrepadApp| app.show(ui), app);
+    h.run();
+    // A folder name that is the same on every machine (the status bar shows
+    // it).
+    let id = h
+        .state_mut()
+        .new_terminal_in(std::path::PathBuf::from("demo"));
+    h.run();
+    let t = h.state_mut().terminals.get_mut(id).unwrap();
+    t.title = Some("demo".to_owned());
+    t.feed(
+        "\x1b[2J\x1b[H$ cargo build\r\n\
+         \x1b[1m\x1b[32m   Compiling\x1b[0m demo v0.1.0\r\n\
+         \x1b[1m\x1b[31merror\x1b[0m\x1b[1m: expected `;`\x1b[0m\r\n\
+         \x1b[1m\x1b[34m  --> \x1b[0msrc/main.rs:3:5\r\n\
+         \x1b[3mitalic\x1b[0m \x1b[4munderlined\x1b[0m \x1b[7minverse\x1b[0m \
+         \x1b[38;2;204;119;34mtrue colour\x1b[0m \x1b[48;5;24m 256 \x1b[0m \x1b[2mdim\x1b[0m\r\n\
+         \u{256d}\u{2500}\u{2500}\u{2500}\u{2500}\u{256e} \u{2588}\u{2593}\u{2592}\u{2591} \u{2580}\u{2584}\r\n\
+         \u{2502}box \u{2502}\r\n\
+         \u{2570}\u{2500}\u{2500}\u{2500}\u{2500}\u{256f}\r\n$ "
+            .as_bytes(),
+    );
+    // "Compiling" selected.
+    {
+        use alacritty_terminal::index::{Column, Line, Point, Side};
+        use alacritty_terminal::selection::{Selection, SelectionType};
+        let mut term = t.term().lock();
+        let mut s = Selection::new(
+            SelectionType::Simple,
+            Point::new(Line(1), Column(3)),
+            Side::Left,
+        );
+        s.update(Point::new(Line(1), Column(11)), Side::Right);
+        term.selection = Some(s);
+    }
+    h.run();
+    h.snapshot("terminal");
+}
+
+#[test]
 fn ctrl_c_copies_a_selection_or_interrupts() {
     let mut h = harness();
     key(&mut h, Modifiers::COMMAND, Key::Backtick);
