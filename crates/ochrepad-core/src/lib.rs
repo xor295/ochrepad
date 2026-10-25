@@ -8,6 +8,7 @@ pub mod brackets;
 pub mod buffer;
 pub mod changeset;
 pub mod column_edit;
+pub mod complete;
 pub mod diff;
 pub mod display;
 pub mod editor;

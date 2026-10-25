@@ -257,7 +257,7 @@ user.
 
 | Step | Content | Done when |
 |---|---|---|
-| C0 | `cargo deny` in CI (advisories, licenses, sources, duplicate versions as warnings), with a `deny.toml`. Not an app dependency. | CI runs it on Windows and Linux; the current tree passes or each exception is written down. |
+| C0 | `cargo deny` in CI (advisories, licenses, sources, duplicate versions as warnings), with a `deny.toml`. Not an app dependency. | One CI job (the graph is resolved for both platforms' targets) and a weekly run; the current tree passes or each exception is written down. |
 | C1 | The popup, `Action::Complete` and `Action::Edits`, `core::complete` (matching, ranking), Ctrl+Space. | kittest: typing shows the popup, arrows and Tab accept, Esc closes, undo is one step, multi-caret; proptests for the Actions; the bench under budget. |
 | C2 | Document and open-document words, keyword tables, the scope at the caret (no popup in comments). | Tests per source; keyword table test; no popup in a comment or string. |
 | C3 | The folder index (words, then definitions), its cache and updates. | Index of ochrepad's own folder: time and memory written in the PR; a file changed in the terminal shows up within 30 s; tests for the cache and limits. |

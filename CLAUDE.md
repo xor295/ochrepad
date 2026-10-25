@@ -9,6 +9,7 @@ cargo build --release                         # target/release/ochrepad(.exe)
 cargo test --workspace                        # everything (~1 min in debug; props + incremental are the slow ones)
 cargo fmt
 cargo clippy --all-targets -- -D warnings
+cargo deny check                              # advisories, licenses, sources (deny.toml); CI runs it too
 UPDATE_SNAPSHOTS=1 cargo test -p ochrepad --test visual --test compare_ui --test find_ui --test preview
 cargo run --release -p ochrepad --example gen_perf_fixtures   # 50k-line .rs + 100 MB .txt in target/perf-fixtures
 cargo run --release -p ochrepad --example gen_perf_fixtures -- target/perf-fixtures --log 1024   # a 1 GB log (any size; delete after)
@@ -66,7 +67,7 @@ These are load-bearing. Check with the user before changing any of them.
 - `ochrepad-core` stays free of egui and of filesystem access. If you need either there, the design is wrong; ask.
 - No `unwrap()`/`expect()` on user data (file contents, patterns, config, session). Errors surface in the UI (`self.message` modal or inline).
 - User files are written only by atomic replace, and only from the worker thread. Never block a frame on I/O.
-- Dependencies are pinned exactly (`"=x.y.z"`). Ask before adding one. Approved additions since the plan: `image` (jpeg, webp), `winresource` (Windows build-dependency), `resvg` (no default features), `ignore` (fileio, for `.gitignore`), `md-5`, `sha1`, `sha2` (core, for the text tools' hashes and the undo history's text hash; `default-features = false`), `memmap2`, `memchr` (fileio, the viewer), `alacritty_terminal` (app, the terminal; no default features). All egui-ecosystem crates must stay on the same egui minor version (egui/eframe/egui_kittest 0.36, egui_dock 0.21, egui_commonmark 0.25).
+- Dependencies are pinned exactly (`"=x.y.z"`). Ask before adding one, and run `cargo deny check` after any change to `Cargo.lock` (CI's Dependencies job runs it, and weekly for new advisories). Approved additions since the plan: `image` (jpeg, webp), `winresource` (Windows build-dependency), `resvg` (no default features), `ignore` (fileio, for `.gitignore`), `md-5`, `sha1`, `sha2` (core, for the text tools' hashes and the undo history's text hash; `default-features = false`), `memmap2`, `memchr` (fileio, the viewer), `alacritty_terminal` (app, the terminal; no default features). All egui-ecosystem crates must stay on the same egui minor version (egui/eframe/egui_kittest 0.36, egui_dock 0.21, egui_commonmark 0.25).
 - egui 0.36 is Ui-first: `App::ui(&mut self, ui, frame)`, and panels show inside a `Ui`. Online examples are often older; check the crate source in `~/.cargo/registry` rather than memory.
 - Match Notepad++ behaviour where it has an opinion (shortcuts, autosave-as-backup, exit without prompting when backups are on).
 - User documentation lives in `docs/` (index: `docs/README.md`; the README links each page). Update the page when you change the behaviour it describes. `crates/ochrepad/tests/docs.rs` fails when a new `Action` variant has no example in `docs/keymap.md`, or when a JSON example in the docs stops parsing.
