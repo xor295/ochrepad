@@ -606,18 +606,20 @@ impl Client {
         self.docs.get(uri).map(|d| &d.text)
     }
 
-    /// The document's text is now `doc`: sends what changed.
-    pub fn change(&mut self, uri: &str, doc: &Document) {
+    /// The document's text is now `doc`: sends what changed. Returns the
+    /// range of the old text that changed and the new text's range in its
+    /// place (`None` when nothing did).
+    pub fn change(
+        &mut self,
+        uri: &str,
+        doc: &Document,
+    ) -> Option<(Range<ByteOffset>, Range<ByteOffset>)> {
         let (sync, units) = (self.sync, self.units);
-        let Some(d) = self.docs.get_mut(uri) else {
-            return;
-        };
-        let Some((old, new)) = d.text.changed_range(doc) else {
-            return;
-        };
+        let d = self.docs.get_mut(uri)?;
+        let (old, new) = d.text.changed_range(doc)?;
         if !d.sent {
             d.text = doc.clone();
-            return;
+            return Some((old, new));
         }
         d.version += 1;
         let change = match sync {
@@ -625,7 +627,7 @@ impl Client {
             Sync::Full => Some(json!({ "text": doc.to_string() })),
             Sync::Incremental => Some(json!({
                 "range": range_json(&d.text, &old, units),
-                "text": doc.slice(new),
+                "text": doc.slice(new.clone()),
             })),
         };
         d.text = doc.clone();
@@ -639,6 +641,7 @@ impl Client {
                 }),
             );
         }
+        Some((old, new))
     }
 
     pub fn save(&mut self, uri: &str) {

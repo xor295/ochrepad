@@ -54,9 +54,13 @@ A fast, native text editor in the spirit of Notepad++, written in Rust with
   your documents and the open folder, keywords, and the functions and types
   the highlighting finds; `gtl` finds `getTextLength`
   ([more](docs/completion.md)).
+- **Language servers** when you have them installed (rust-analyzer,
+  pyright, gopls, clangd, …): problems underlined as you type, and what a
+  name is when you rest the pointer on it. They run only in folders you
+  trust ([more](docs/language-servers.md)).
 
-Not included (by design, for now): right-to-left text, proportional fonts,
-plugins and language servers.
+Not included (by design, for now): right-to-left text, proportional fonts
+and plugins.
 
 ## Download
 

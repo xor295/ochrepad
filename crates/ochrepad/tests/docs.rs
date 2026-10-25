@@ -59,6 +59,8 @@ fn table_commands(md: &str) -> Vec<String> {
                     "\"BeginEndSelectColumn\"",
                     "\"SplitLines\"",
                     "\"ShowCompletions\"",
+                    "\"NextProblem\"",
+                    "\"PreviousProblem\"",
                 ]
                 .contains(&s.as_str())
         })

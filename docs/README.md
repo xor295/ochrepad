@@ -29,6 +29,9 @@ menu item to explain:
   type, and smart indentation.
 - [Completion](completion.md): the suggestion list, how typed letters
   match names, where suggestions come from, and indexing the open folder.
+- [Language servers](language-servers.md): using rust-analyzer, pyright
+  and others for problems and hover information, trusting folders, and
+  `lsp.json`.
 - [The terminal](terminal.md): terminal tabs, the shell, the keys a
   terminal takes, copy and paste, Ctrl+clicking links and compiler errors.
 - [Key bindings](keymap.md): the `keymap.json` format and every command you

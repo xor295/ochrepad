@@ -116,6 +116,8 @@ Motions for `MoveCursor`:
 | `{"Action": "DeleteWordForward"}` | Deletes to the next word boundary. |
 | `{"Action": "Undo"}` | Undo. |
 | `{"Action": "Redo"}` | Redo. |
+| `"NextProblem"` | Moves the caret to the next error, warning or note a language server reported, round the end of the document (Alt+F8). |
+| `"PreviousProblem"` | The same, backwards (Alt+Shift+F8). |
 | `"ShowCompletions"` | Shows the completion popup for the word at the caret, or every suggestion when there is no word yet (Ctrl+Space). |
 | `"ToggleOvertype"` | Switches between inserting and typing over the text (Insert), as the status bar's **OVR** shows. |
 

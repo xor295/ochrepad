@@ -27,6 +27,7 @@ mod edit_tools;
 mod external;
 mod file_extras;
 mod history_store;
+mod language_servers;
 mod prefs;
 mod replace_in_files;
 mod search;
@@ -151,6 +152,14 @@ pub struct OchrepadApp {
     pub terminals: crate::terminal::Terminals,
     /// Where completions come from (words of the open documents, …).
     pub completion: crate::completion::Completion,
+    /// Language servers for the open documents.
+    pub language_servers: crate::lsp::LanguageServers,
+    /// View > Language Servers is open.
+    pub show_language_servers: bool,
+    /// The tooltip for what the pointer rests on (diagnostics, hover).
+    hover: crate::hover::Hover,
+    /// View > Problems.
+    pub problems: crate::problems::ProblemsPanel,
     /// The viewer whose Open as Editable question is showing.
     confirm_editable: Option<crate::viewer::ViewerId>,
     view_states: HashMap<ViewId, EditorViewState>,
@@ -258,6 +267,10 @@ impl OchrepadApp {
             viewers: Default::default(),
             terminals: Default::default(),
             completion: Default::default(),
+            language_servers: Default::default(),
+            show_language_servers: false,
+            hover: Default::default(),
+            problems: Default::default(),
             confirm_editable: None,
             view_states: HashMap::new(),
             untitled: HashMap::from([(buffer, "new 1".to_owned())]),
@@ -1047,6 +1060,27 @@ impl OchrepadApp {
                 self.go_to_result(go);
             }
         }
+        if self.problems.open {
+            let root = self.tree.as_ref().map(|t| t.root().to_path_buf());
+            let go = Panel::bottom("problems")
+                .resizable(true)
+                .default_size(200.0)
+                .show(ui, |ui| {
+                    self.problems
+                        .ui(ui, &self.language_servers.diagnostics, root.as_deref())
+                })
+                .inner;
+            // Only a local file, as the servers' Show Document.
+            if let Some(go) = go
+                && crate::safe_images::is_local_path(&go.path)
+                && go.path.is_file()
+            {
+                self.open_file_at(
+                    &go.path,
+                    Some((go.line as usize + 1, go.column as usize + 1)),
+                );
+            }
+        }
 
         self.sidebar(ui);
         self.function_list_panel(ui);
@@ -1078,6 +1112,7 @@ impl OchrepadApp {
             ui.ctx()
                 .request_repaint_after(std::time::Duration::from_millis(100));
         }
+        self.language_servers_tick(ui);
         if let Some((path, bytes)) = self.completion.take_cache_write() {
             let tag = self
                 .persist
@@ -1103,6 +1138,8 @@ impl OchrepadApp {
             let style = crate::theme::dock_style(ui.style());
             let find_highlight = self.find.highlighter();
             let mut tabs = Tabs {
+                language_servers: &mut self.language_servers,
+                hover: &mut self.hover,
                 look: self.settings.look(),
                 log_rules: &self.log_rules,
                 tab_width: self.settings.tab_width,
@@ -1228,6 +1265,8 @@ impl OchrepadApp {
         self.hash_dialog(ui);
         self.summary_dialog(ui);
         self.about_dialog(ui);
+        self.language_server_question(ui);
+        self.language_servers_window(ui);
         self.rename_dialog(ui);
         self.replace_in_files_frame(ui);
         self.edit_tools_frame(ui);
@@ -2789,6 +2828,12 @@ impl OchrepadApp {
             .on_hover_text("A panel listing the document's functions, types and headings");
         ui.checkbox(&mut self.settings.change_history, "Change History")
             .on_hover_text("Mark the lines changed since the file was saved, in the gutter");
+        ui.checkbox(&mut self.problems.open, "Problems")
+            .on_hover_text("A panel listing the problems language servers report");
+        if ui.button("Language Servers…").clicked() {
+            self.show_language_servers = true;
+            ui.close();
+        }
         let buffer = self.buffer_id();
         if let Some(id) = self.focused_viewer() {
             // A viewer reads what the file gains by itself; following keeps
@@ -2991,6 +3036,7 @@ impl OchrepadApp {
                 {
                     self.go_to_line = Some(String::new());
                 }
+                self.language_server_status(ui);
                 if let Some(note) = self.completion.folder_status() {
                     ui.separator();
                     ui.add(egui::Label::new(egui::RichText::new(note).weak()).truncate());
@@ -3123,6 +3169,9 @@ struct Tabs<'a> {
     terminal_font: f32,
     /// Completion's sources; `None` when it is turned off.
     completion: Option<&'a mut crate::completion::Completion>,
+    /// Language servers (diagnostics, and completions from them).
+    language_servers: &'a mut crate::lsp::LanguageServers,
+    hover: &'a mut crate::hover::Hover,
     completion_settings: crate::completion_popup::CompletionSettings,
     fold_margin: bool,
     word_wrap: bool,
@@ -3366,6 +3415,8 @@ impl TabViewer for Tabs<'_> {
             crate::log_rules::LogStyle::new(self.log_rules, doc, ui.visuals().dark_mode)
         });
         let styled = self.token_styles.highlights(buffer, ui.visuals());
+        let underlines =
+            crate::lsp::underlines(self.language_servers.diagnostics_of(buffer), ui.visuals());
         state.completion.settings = self.completion_settings;
         let mut sources = self.completion.as_deref_mut().map(|c| c.source());
         let response = editor_view(
@@ -3386,8 +3437,22 @@ impl TabViewer for Tabs<'_> {
                 completion: sources
                     .as_mut()
                     .map(|s| s as &mut dyn crate::completion_popup::CompletionSource),
+                underlines: &underlines,
             },
         );
+        let rest = state.hover;
+        let response = match self.editor.buffer(buffer).map(|b| b.doc().clone()) {
+            Some(doc) => self.hover.show(
+                response,
+                view,
+                buffer,
+                &doc,
+                rest,
+                ui.input(|i| i.time),
+                self.language_servers,
+            ),
+            None => response,
+        };
         let mut command = None;
         let doc_dir = self
             .editor

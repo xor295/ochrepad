@@ -28,6 +28,10 @@ pub enum EditorCommand {
     SplitLines,
     /// Shows the completion popup for the word at the caret (Ctrl+Space).
     ShowCompletions,
+    /// Moves to the next problem a language server reported (Alt+F8).
+    NextProblem,
+    /// Moves to the previous one (Alt+Shift+F8).
+    PreviousProblem,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -162,6 +166,8 @@ impl Default for Keymap {
             (Chord::new(Escape), act(Action::CollapseSelections)),
             (Chord::new(Insert), EditorCommand::ToggleOvertype),
             (Chord::new(Space).cmd(), EditorCommand::ShowCompletions),
+            (Chord::new(F8).alt(), EditorCommand::NextProblem),
+            (Chord::new(F8).alt().shift(), EditorCommand::PreviousProblem),
             (Chord::new(A).cmd(), act(Action::SelectAll)),
             (Chord::new(Z).cmd(), act(Action::Undo)),
             (Chord::new(Y).cmd(), act(Action::Redo)),

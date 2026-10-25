@@ -434,6 +434,7 @@ impl Compare {
                         changes: None,
                         token_styles: &[],
                         completion: None,
+                        underlines: &[],
                     },
                 );
             });

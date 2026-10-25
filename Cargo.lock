@@ -2880,6 +2880,7 @@ dependencies = [
  "notify",
  "ochrepad-core",
  "ochrepad-fileio",
+ "ochrepad-lsp",
  "ochrepad-syntax",
  "resvg",
  "rfd",

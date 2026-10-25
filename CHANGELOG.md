@@ -27,6 +27,14 @@ people downloading the release.
   nothing installed, stays out of comments and strings, and remembers the
   folder between runs so only changed files are read again. Preferences can
   turn it off or change when it opens. See `docs/completion.md`.
+- **Language servers.** With rust-analyzer, pyright, gopls, clangd,
+  typescript-language-server or marksman installed (or another server
+  added in `lsp.json`), problems are underlined as you type, counted in the
+  status bar and listed in View > Problems (Alt+F8 goes to the next one),
+  and resting the pointer on a name shows what the server knows about it.
+  ochrepad asks before a server first runs in a folder, since servers run
+  project code. View > Language Servers shows each server's state and log.
+  See `docs/language-servers.md`.
 - A **?** menu with **About**, which shows the version, links to the
   GitHub repository and crates.io, and the license.
 

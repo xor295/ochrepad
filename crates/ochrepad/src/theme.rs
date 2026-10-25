@@ -168,6 +168,37 @@ pub fn accent(visuals: &Visuals) -> Color32 {
     visuals.text_cursor.stroke.color
 }
 
+/// A diagnostic's colour by rank (0 an error, 1 a warning, 2 information,
+/// 3 a hint): red, yellow, blue, grey. Never the ochre accent, which means
+/// the selection and the caret.
+pub fn diagnostic_color(visuals: &Visuals, rank: u8) -> Color32 {
+    let dark = visuals.dark_mode;
+    match rank {
+        0 => {
+            if dark {
+                Color32::from_rgb(0xF0, 0x5A, 0x50)
+            } else {
+                Color32::from_rgb(0xD0, 0x2E, 0x2E)
+            }
+        }
+        1 => {
+            if dark {
+                Color32::from_rgb(0xE8, 0xD0, 0x40)
+            } else {
+                Color32::from_rgb(0xB0, 0x90, 0x00)
+            }
+        }
+        2 => {
+            if dark {
+                Color32::from_rgb(0x5A, 0xA8, 0xF0)
+            } else {
+                Color32::from_rgb(0x1F, 0x6F, 0xB8)
+            }
+        }
+        _ => visuals.weak_text_color(),
+    }
+}
+
 /// Background of find-panel matches in the editor: teal, the complement of
 /// ochre, so matches never look like the (ochre) selection.
 pub fn match_bg(visuals: &Visuals) -> Color32 {

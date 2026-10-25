@@ -121,6 +121,14 @@ pub struct AppSettings {
     /// Completion offers the open folder's words (which are indexed on a
     /// thread).
     pub completion_folder: bool,
+    /// Language servers run for the open documents (in trusted folders).
+    pub language_servers: bool,
+    /// Folders where language servers may run.
+    pub lsp_trusted: Vec<PathBuf>,
+    /// Folders where they may not (asked once, answered no).
+    pub lsp_declined: Vec<PathBuf>,
+    /// Servers never to start.
+    pub lsp_never: Vec<String>,
     pub recent_folders: Vec<PathBuf>,
     pub recent_files: Vec<PathBuf>,
 }
@@ -172,6 +180,10 @@ impl Default for AppSettings {
             completion_enter_accepts: true,
             completion_other_documents: true,
             completion_folder: true,
+            language_servers: true,
+            lsp_trusted: Vec::new(),
+            lsp_declined: Vec::new(),
+            lsp_never: Vec::new(),
             recent_folders: Vec::new(),
             recent_files: Vec::new(),
         }

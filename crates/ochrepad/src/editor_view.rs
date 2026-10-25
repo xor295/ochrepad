@@ -101,6 +101,9 @@ pub struct EditorViewState {
     pub symbols: Symbols,
     pub edge_column: Option<usize>,
     last_activity: f64,
+    /// The text under the pointer (an offset in it) and since when it has
+    /// rested there; `None` when the pointer is not over text.
+    pub hover: Option<(ByteOffset, f64)>,
     /// Whether the editor had the focus last frame (gaining it restarts the
     /// caret's blink, so the caret shows at once).
     was_focused: bool,
@@ -162,6 +165,7 @@ impl Default for EditorViewState {
             symbols: Symbols::default(),
             edge_column: None,
             last_activity: 0.0,
+            hover: None,
             was_focused: false,
             preedit: None,
             drag: None,
@@ -315,6 +319,10 @@ enum Op {
         replace: bool,
     },
     ShowCompletions,
+    /// The next (or previous) diagnostic.
+    GoToProblem {
+        back: bool,
+    },
 }
 
 /// Per-row colours from outside the editor: a compare view's diff, or a
@@ -346,6 +354,20 @@ pub struct Decorations<'a> {
     pub token_styles: &'a [(&'a Searcher, egui::Color32)],
     /// Where completions come from; `None` turns completion off.
     pub completion: Option<&'a mut dyn crate::completion_popup::CompletionSource>,
+    /// Lines under text (a language server's diagnostics), sorted by start.
+    pub underlines: &'a [Underline],
+}
+
+/// A wavy or dotted line under a range of text (a diagnostic).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Underline {
+    pub range: std::ops::Range<ByteOffset>,
+    pub color: egui::Color32,
+    /// Dotted (a hint) rather than wavy.
+    pub dotted: bool,
+    /// 0 for an error, 1 a warning, 2 information, 3 a hint: errors and
+    /// warnings are also marked in the gutter.
+    pub rank: u8,
 }
 
 /// Shows the editor for `view` filling the available space. `label` names the
@@ -545,6 +567,10 @@ pub fn editor_view(
                         width: state.split_width(),
                     })),
                     Some(EditorCommand::ShowCompletions) => ops.push(Op::ShowCompletions),
+                    Some(EditorCommand::NextProblem) => ops.push(Op::GoToProblem { back: false }),
+                    Some(EditorCommand::PreviousProblem) => {
+                        ops.push(Op::GoToProblem { back: true })
+                    }
                     None => {}
                 },
                 Event::Text(t)
@@ -607,6 +633,28 @@ pub fn editor_view(
             Op::ToggleOvertype => editor.settings.overtype = !editor.settings.overtype,
             Op::BeginEndSelect { column } => begin_end_select(editor, view, state, column),
             Op::ShowCompletions => state.completion.invoke(),
+            Op::GoToProblem { back } => {
+                let head = editor
+                    .view(view)
+                    .map_or(ByteOffset(0), |v| v.selections.primary().head);
+                // Errors, warnings and information; not hints. Round the
+                // end of the document.
+                let starts: Vec<ByteOffset> = decorations
+                    .underlines
+                    .iter()
+                    .filter(|u| u.rank <= 2)
+                    .map(|u| u.range.start)
+                    .collect();
+                let to = if back {
+                    starts.iter().rev().find(|s| **s < head).or(starts.last())
+                } else {
+                    starts.iter().find(|s| **s > head).or(starts.first())
+                };
+                if let Some(&to) = to {
+                    let _ = editor.apply(view, Action::SetSelections(SelectionSet::caret(to)));
+                    state.reveal_caret = true;
+                }
+            }
             Op::AcceptCompletion { replace } => {
                 // The word's characters after the caret, which Tab replaces.
                 let completion = &state.completion;
@@ -1099,6 +1147,17 @@ pub fn editor_view(
             ui.ctx().set_cursor_icon(CursorIcon::Text);
         }
     }
+    // The text under the pointer (for hover information).
+    let over_text = hover.filter(|p| f.content.contains(*p)).and_then(|p| {
+        let (layout, x) = layout_at(editor, view, &mut state.cache, &f, top, x_off, ui, p);
+        (x >= 0.0 && x < layout.width)
+            .then(|| hit_test(editor, view, &mut state.cache, &f, top, x_off, ui, p))
+    });
+    state.hover = match (over_text, state.hover) {
+        (Some(at), Some((was, since))) if at == was => Some((at, since)),
+        (Some(at), _) => Some((at, now)),
+        (None, _) => None,
+    };
     // Fold chevrons for every header show while the pointer is on the gutter.
     let show_chevrons = hover.is_some_and(|p| f.gutter.contains(p));
     // The name of a special character under the pointer, while it is drawn.
@@ -1133,6 +1192,7 @@ pub fn editor_view(
         decorations.row_style,
         decorations.changes,
         decorations.token_styles,
+        decorations.underlines,
     );
     match tip {
         Some(tip) => response.on_hover_text_at_pointer(tip),
@@ -1929,6 +1989,29 @@ fn layout_at(
     (layout, x)
 }
 
+/// A diagnostic's line under the text from `xa` to `xb`, at `y`.
+fn paint_underline(painter: &egui::Painter, xa: f32, xb: f32, y: f32, u: &Underline) {
+    if u.dotted {
+        let mut x = xa + 1.0;
+        while x < xb {
+            painter.circle_filled(Pos2::new(x, y), 0.8, u.color);
+            x += 3.0;
+        }
+        return;
+    }
+    let mut points = Vec::new();
+    let mut x = xa;
+    let mut up = true;
+    while x <= xb {
+        points.push(Pos2::new(x, if up { y - 1.5 } else { y + 0.5 }));
+        x += 2.0;
+        up = !up;
+    }
+    if points.len() > 1 {
+        painter.add(egui::Shape::line(points, Stroke::new(1.0, u.color)));
+    }
+}
+
 /// Pixel -> byte offset, through the same `LineLayout` painting uses.
 #[allow(clippy::too_many_arguments)]
 fn hit_test(
@@ -2019,6 +2102,7 @@ fn paint(
     row_style: Option<&dyn RowStyle>,
     changes: Option<&crate::change_history::LineMarks>,
     token_styles: &[(&Searcher, egui::Color32)],
+    underlines: &[Underline],
 ) {
     let Some(v) = editor.view(view) else { return };
     let doc = doc_of(editor, buffer);
@@ -2261,6 +2345,19 @@ fn paint(
         }
         paint_line_text(&row_painter, &layout, rx0, y, &f.font, f.line_h);
         paint_marks(&row_painter, &layout, rx0, y, f, symbols, &marks);
+        // Diagnostics: under the text, a cell wide at least.
+        let from = underlines.partition_point(|u| u.range.end < row_start);
+        for u in underlines[from..]
+            .iter()
+            .take_while(|u| u.range.start <= row_end)
+        {
+            if u.range.end < row_start {
+                continue;
+            }
+            let (a, b) = (u.range.start.max(row_start), u.range.end.min(row_end));
+            let (xa, xb) = (x_at(a), x_at(b).max(x_at(a) + f.cell_w));
+            paint_underline(&text_painter, xa, xb, y + f.line_h - 2.0, u);
+        }
         // Matching brackets and tag names are outlined.
         let outline = |a: ByteOffset, b: ByteOffset, color: egui::Color32| {
             let r = Rect::from_min_max(
@@ -2316,6 +2413,23 @@ fn paint(
             }
         }
 
+        // An error or warning starting on the line: a dot at the gutter's
+        // left, in the worst one's colour.
+        if rows.text_sub(row) == Some(0) {
+            let from = underlines.partition_point(|u| u.range.start < line_start);
+            let on_line = underlines[from..]
+                .iter()
+                .take_while(|u| u.range.start <= line_end)
+                .filter(|u| u.rank <= 1);
+            if let Some(u) = on_line.min_by_key(|u| u.rank) {
+                let r = (f.line_h * 0.16).max(2.0);
+                gutter_painter.circle_filled(
+                    Pos2::new(f.gutter.min.x + r + 2.0, y + f.line_h / 2.0),
+                    r,
+                    u.color,
+                );
+            }
+        }
         // The line number and fold chevron go on a line's first row. A
         // bookmarked line's number sits on a tag in the accent colour.
         if rows.text_sub(row) == Some(0) {

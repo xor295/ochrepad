@@ -22,6 +22,7 @@ image = { version = "=0.25.10", default-features = false, features = ["jpeg", "w
 notify = "=8.2.0"
 ochrepad-core.workspace = true
 ochrepad-fileio.workspace = true
+ochrepad-lsp.workspace = true
 ochrepad-syntax.workspace = true
 # SVGs in the Markdown preview with a restricted <image> resolver
 # (safe_images.rs); the same version egui_extras already uses.
@@ -36,6 +37,7 @@ unicode-segmentation = "=1.13.3"
 winresource = { version = "=0.1.31", default-features = false }
 
 [dev-dependencies]
+ochrepad-lsp = { workspace = true, features = ["testing"] }
 egui_kittest = { version = "=0.36.2", features = ["wgpu", "snapshot"] }
 tempfile = "=3.27.0"
 
