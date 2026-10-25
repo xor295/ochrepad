@@ -401,3 +401,18 @@ fn open_file_in_the_viewer_leaves_the_clicked_document_alone() {
     let doc = app.editor.buffer(v.buffer()).unwrap().doc();
     assert_eq!(doc.line_of(v.selections.primary().head), 0);
 }
+
+#[test]
+fn about_shows_the_version_links_and_license() {
+    let mut h = harness();
+    click(&mut h, "?");
+    click(&mut h, "About");
+    h.get_by_label("ochrepad");
+    h.get_by_label("A fast, native text editor in the spirit of Notepad++");
+    h.get_by_label(&format!("Version {}", env!("CARGO_PKG_VERSION")));
+    h.get_by_label("Source code on GitHub");
+    h.get_by_label("ochrepad on crates.io");
+    h.get_by_label("Released under the MIT license.");
+    click(&mut h, "Close");
+    assert!(h.query_by_label("ochrepad on crates.io").is_none());
+}

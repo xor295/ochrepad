@@ -56,6 +56,16 @@ pub struct Session {
     /// the editor tabs: index `tabs.len() + i` is `viewers[i]`.
     #[serde(default)]
     pub viewers: Vec<SessionViewer>,
+    /// Terminal tabs, in tab order; in `layout` they come after the
+    /// viewers. Their shells start again, in the same folders.
+    #[serde(default)]
+    pub terminals: Vec<SessionTerminal>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SessionTerminal {
+    /// The folder the shell started in.
+    pub cwd: PathBuf,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -465,10 +475,23 @@ impl OchrepadApp {
                 });
             }
         }
+        let mut terminal_index = HashMap::new();
+        for (_, tab) in self.dock.iter_all_tabs() {
+            if let Tab::Terminal(id) = tab
+                && let Some(t) = self.terminals.get(*id)
+            {
+                terminal_index.insert(*id, session.terminals.len());
+                session
+                    .terminals
+                    .push(SessionTerminal { cwd: t.cwd.clone() });
+            }
+        }
         let editors = session.tabs.len();
+        let viewers = session.viewers.len();
         session.layout = Some(self.dock.filter_map_tabs(|t| match t {
             Tab::Editor(v) => tab_index.get(v).copied(),
             Tab::Viewer(id) => viewer_index.get(id).map(|i| editors + i),
+            Tab::Terminal(id) => terminal_index.get(id).map(|i| editors + viewers + i),
             Tab::Preview(_) | Tab::Compare(_) => None,
         }));
         session.active = tab_index.get(&self.active).copied();
@@ -646,10 +669,19 @@ impl OchrepadApp {
             .collect();
         let restored_viewers: Vec<crate::viewer::ViewerId> =
             viewer_tabs.iter().flatten().copied().collect();
+        // Terminals start their shells when they are first shown.
+        let terminal_tabs: Vec<crate::terminal::TerminalId> = session
+            .terminals
+            .iter()
+            .map(|st| self.add_terminal(st.cwd.clone()))
+            .collect();
         if restored.is_empty() {
-            // Only viewers: beside the startup tab.
+            // Only viewers and terminals: beside the startup tab, and below.
             for id in &restored_viewers {
                 self.dock.push_to_focused_leaf(Tab::Viewer(*id));
+            }
+            for id in &terminal_tabs {
+                self.place_terminal(*id);
             }
             if !problems.is_empty() {
                 self.message = Some(format!(
@@ -660,25 +692,31 @@ impl OchrepadApp {
             return;
         }
         let editors = views.len();
-        let dock = session
+        let viewers = viewer_tabs.len();
+        let all = restored.len() + restored_viewers.len() + terminal_tabs.len();
+        let laid_out = session
             .layout
             .map(|l| {
                 l.filter_map_tabs(|i| match i.checked_sub(editors) {
                     None => views.get(*i).copied().flatten().map(Tab::Editor),
-                    Some(v) => viewer_tabs.get(v).copied().flatten().map(Tab::Viewer),
+                    Some(v) if v < viewers => {
+                        viewer_tabs.get(v).copied().flatten().map(Tab::Viewer)
+                    }
+                    Some(v) => terminal_tabs.get(v - viewers).copied().map(Tab::Terminal),
                 })
             })
-            .filter(|d| d.iter_all_tabs().count() == restored.len() + restored_viewers.len())
-            .unwrap_or_else(|| {
-                DockState::new(
-                    restored
-                        .iter()
-                        .copied()
-                        .map(Tab::Editor)
-                        .chain(restored_viewers.iter().copied().map(Tab::Viewer))
-                        .collect(),
-                )
-            });
+            .filter(|d| d.iter_all_tabs().count() == all);
+        let placed = laid_out.is_some();
+        let dock = laid_out.unwrap_or_else(|| {
+            DockState::new(
+                restored
+                    .iter()
+                    .copied()
+                    .map(Tab::Editor)
+                    .chain(restored_viewers.iter().copied().map(Tab::Viewer))
+                    .collect(),
+            )
+        });
 
         // Replace the empty startup tab(s).
         let startup: Vec<ViewId> = self.tabs();
@@ -693,6 +731,11 @@ impl OchrepadApp {
                 self.editor.remove_buffer(b);
                 self.highlighting.detach(b);
                 self.untitled.remove(&b);
+            }
+        }
+        if !placed {
+            for id in &terminal_tabs {
+                self.place_terminal(*id);
             }
         }
         let next = self

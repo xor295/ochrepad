@@ -27,6 +27,8 @@ menu item to explain:
   files, bookmarks, the right-click menu, the summary, multi-select, paste
   from history, read-only documents, full screen, closing brackets as you
   type, and smart indentation.
+- [The terminal](terminal.md): terminal tabs, the shell, the keys a
+  terminal takes, copy and paste, Ctrl+clicking links and compiler errors.
 - [Key bindings](keymap.md): the `keymap.json` format and every command you
   can bind.
 - [Backups, sessions and files changed elsewhere](backups-and-session.md):

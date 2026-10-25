@@ -81,7 +81,7 @@ fn the_view_menu_turns_wrap_on_and_off() {
     let mut h = harness(LONG, 500.0);
     h.state_mut().settings.word_wrap = false;
     // Tall enough for the whole View menu.
-    h.set_size(Vec2::new(500.0, 600.0));
+    h.set_size(Vec2::new(500.0, 720.0));
     h.run();
     assert!(with_rows(&h, |r| !r.wraps()));
     h.get_by_label("View").click();

@@ -99,6 +99,15 @@ pub struct AppSettings {
     pub sidebar_width: f32,
     /// View > Always on Top.
     pub always_on_top: bool,
+    /// A file changed by another program reloads without asking when it
+    /// has no unsaved changes (Notepad++'s "Update silently").
+    pub reload_silently: bool,
+    /// The terminal's shell; empty for the default (`terminal::default_shell`).
+    pub terminal_shell: String,
+    /// Its arguments, separated by spaces.
+    pub terminal_args: String,
+    /// Lines a terminal keeps above its screen.
+    pub terminal_scrollback: usize,
     pub recent_folders: Vec<PathBuf>,
     pub recent_files: Vec<PathBuf>,
 }
@@ -140,6 +149,10 @@ impl Default for AppSettings {
             show_sidebar: true,
             sidebar_width: 240.0,
             always_on_top: false,
+            reload_silently: true,
+            terminal_shell: String::new(),
+            terminal_args: String::new(),
+            terminal_scrollback: 10_000,
             recent_folders: Vec::new(),
             recent_files: Vec::new(),
         }
@@ -166,6 +179,7 @@ impl AppSettings {
         self.edge_column = self.edge_column.map(|c| c.clamp(1, 1000));
         // Up to what the editor can load.
         self.viewer_threshold_mb = self.viewer_threshold_mb.clamp(1, 1024);
+        self.terminal_scrollback = self.terminal_scrollback.min(100_000);
     }
 
     /// The editor font size after zooming.
@@ -303,6 +317,13 @@ impl AppSettings {
                 ui.checkbox(&mut self.write_through, "Also save files that have a name");
                 ui.end_row();
 
+                ui.label("Files changed elsewhere");
+                ui.checkbox(
+                    &mut self.reload_silently,
+                    "Reload them without asking when they have no unsaved changes",
+                );
+                ui.end_row();
+
                 ui.label("Undo history");
                 ui.checkbox(
                     &mut self.undo_history,
@@ -337,6 +358,31 @@ impl AppSettings {
                     if let Some(col) = &mut self.edge_column {
                         ui.add(egui::DragValue::new(col).range(1..=1000));
                     }
+                });
+                ui.end_row();
+
+                ui.label("Terminal shell");
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.terminal_shell)
+                        .hint_text(crate::terminal::default_shell().program)
+                        .desired_width(220.0),
+                )
+                .on_hover_text("The program new terminals run; empty for the default");
+                ui.end_row();
+
+                ui.label("Its arguments");
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.terminal_args)
+                        .hint_text("none")
+                        .desired_width(220.0),
+                )
+                .on_hover_text("Separated by spaces, e.g. -NoLogo");
+                ui.end_row();
+
+                ui.label("Terminal scrollback");
+                ui.horizontal(|ui| {
+                    ui.add(egui::DragValue::new(&mut self.terminal_scrollback).range(0..=100_000));
+                    ui.label("lines");
                 });
                 ui.end_row();
             });

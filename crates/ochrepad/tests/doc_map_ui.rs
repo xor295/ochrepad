@@ -115,7 +115,8 @@ fn the_map_hides_when_narrow_or_turned_off() {
     h.run();
     assert_eq!(first_line(&h), 0);
 
-    let mut h = harness(&code(40), Vec2::new(800.0, 600.0));
+    // Tall enough for the whole View menu.
+    let mut h = harness(&code(40), Vec2::new(800.0, 720.0));
     h.get_by_label("View").click();
     h.run();
     h.get_by_label("Document Map").click();

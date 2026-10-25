@@ -161,13 +161,17 @@ because opening it would send your Windows credentials to that server.
 ## Files changed by other programs
 
 ochrepad watches the folders of the files you have open. When another program
-changes or deletes one of them, ochrepad asks what to do, a moment after the
-change (so a program that writes a file in several steps is only noticed
-once):
+changes or deletes one of them, ochrepad notices a moment after the change (so
+a program that writes a file in several steps is only noticed once).
+
+A file with no unsaved changes simply reloads, as Notepad++ does with "Update
+silently" (files over 16 MB still ask, as reading one takes a moment). To be asked instead, turn off **Settings > Preferences > Files
+changed elsewhere: Reload them without asking**. Otherwise ochrepad asks what
+to do:
 
 | What happened | You can |
 |---|---|
-| A file with no unsaved changes was changed | **Reload** it, or **Keep this version** |
+| A file with no unsaved changes was changed (when silent reloading is off) | **Reload** it, or **Keep this version** |
 | A file with unsaved changes was changed | **Reload** it and lose your changes, or **Keep my changes** |
 | A file was deleted or moved away | **Keep open** (the tab becomes unsaved, so saving writes it back) or **Close** |
 
