@@ -177,6 +177,10 @@ fn recent_files_are_remembered() {
         h.run();
         h.state_mut().flush_disk();
     }
+    // The autosave timer writes the session once 7 s of frame time have
+    // passed, which a slow run reaches; restored tabs would then also be
+    // labelled "a.txt". Only the recent files list is under test here.
+    let _ = std::fs::remove_file(d.config().join("session.json"));
     let mut h = app(&d);
     let names: Vec<String> = h
         .state()
