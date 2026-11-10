@@ -90,6 +90,26 @@ impl Chord {
     }
 }
 
+impl Chord {
+    /// The chord as the menus write keys: `Ctrl+/` where [`Display`] (the
+    /// form `keymap.json` takes) has `Ctrl+Slash`.
+    ///
+    /// [`Display`]: std::fmt::Display
+    pub fn label(&self) -> String {
+        let text = self.to_string();
+        let name = self.key.name();
+        let key = match self.key {
+            // Words, not the arrow symbols the fonts may lack.
+            Key::ArrowUp | Key::ArrowDown | Key::ArrowLeft | Key::ArrowRight => name,
+            key => key.symbol_or_name(),
+        };
+        match text.strip_suffix(name) {
+            Some(modifiers) => format!("{modifiers}{key}"),
+            None => text,
+        }
+    }
+}
+
 impl std::fmt::Display for Chord {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if self.command {
@@ -317,6 +337,14 @@ impl Keymap {
                 command: Some(command),
             })
             .collect()
+    }
+
+    /// The first key bound to `command`, to show beside its name.
+    pub fn chord_for(&self, command: &EditorCommand) -> Option<Chord> {
+        self.bindings
+            .iter()
+            .find(|(_, c)| c == command)
+            .map(|(chord, _)| *chord)
     }
 
     pub fn lookup(&self, key: Key, modifiers: Modifiers) -> Option<&EditorCommand> {

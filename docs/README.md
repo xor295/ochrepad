@@ -34,6 +34,8 @@ menu item to explain:
   `lsp.json`.
 - [The terminal](terminal.md): terminal tabs, the shell, the keys a
   terminal takes, copy and paste, Ctrl+clicking links and compiler errors.
+- [The command palette](command-palette.md): Ctrl+Shift+A, finding any
+  command by typing part of its name.
 - [Key bindings](keymap.md): the `keymap.json` format and every command you
   can bind.
 - [Backups, sessions and files changed elsewhere](backups-and-session.md):
