@@ -150,14 +150,18 @@ fn commands_follow_what_has_the_focus_and_show_their_keys() {
 fn the_palette_looks_right() {
     let mut h = harness("pear\napple\nfig\n");
     h.set_size(Vec2::new(760.0, 420.0));
-    // No soft shadow under the palette here: renderers blur it a little
-    // differently (Linux CI's software Vulkan against Windows'), which is
-    // not what this image is for.
+    // Text under a translucent gradient is blended a little differently by
+    // each renderer (Linux CI's software Vulkan against Windows'), enough
+    // to fail the comparison. So the image has neither of the palette's
+    // gradients over text: no soft shadow (which fell on the status bar),
+    // and a list short enough not to scroll (a list that scrolls fades
+    // out over its last row).
     h.ctx
         .all_styles_mut(|s| s.visuals.popup_shadow = egui::Shadow::NONE);
     h.run();
     open(&mut h);
-    typ(&mut h, "line");
+    typ(&mut h, "comment");
+    assert!(h.state().palette_names().len() < 12, "no scrolling");
     key(&mut h, Modifiers::NONE, Key::ArrowDown);
     util::snapshot(&mut h, "palette");
 }

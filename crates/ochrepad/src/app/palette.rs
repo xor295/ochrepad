@@ -142,7 +142,7 @@ impl Commands<'_> {
             .app
             .keymap
             .chord_for(&EditorCommand::Action(action.clone()))
-            .map(|c| c.to_string())
+            .map(|c| c.label())
             .unwrap_or_default();
         self.out.push(Command {
             name: name.into(),
