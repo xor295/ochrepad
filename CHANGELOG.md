@@ -26,6 +26,17 @@ people downloading the release.
   part that matched.
 - Sort Lines with "remove duplicates" left duplicates that were not next
   to each other after a numeric, by-length or column sort.
+- In the viewer for huge files, Find Next stayed on a match further than
+  10,000 bytes along a line (the part of a long line that is not shown)
+  and never reached the matches after it.
+- In the viewer, a file with Windows line endings could show about a
+  thousand lines one line off, each with the text of the line before it,
+  and search results there had the wrong line numbers. This happened only
+  when a line break fell exactly across two of the reads that index the
+  file.
+- A language server named with its extension in `lsp.json` on Windows
+  (`"rust-analyzer.exe"`, `"pyright-langserver.cmd"`) was not found on
+  `PATH`.
 
 ## [0.4.0] - 2026-10-25
 

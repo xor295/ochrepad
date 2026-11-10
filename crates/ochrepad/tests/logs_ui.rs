@@ -309,11 +309,7 @@ fn a_log_looks_right() {
 fn saving_a_followed_file_does_not_append_the_saved_text_again() {
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("app.log");
-    std::fs::write(
-        &file, "line 1
-",
-    )
-    .unwrap();
+    std::fs::write(&file, "line 1\n").unwrap();
     let mut h = harness(Vec2::new(800.0, 300.0));
     h.state_mut().open_path(&file);
     h.run();
@@ -331,33 +327,16 @@ fn saving_a_followed_file_does_not_append_the_saved_text_again() {
         modifiers: Modifiers::NONE,
     });
     h.run();
-    assert_eq!(
-        text(&h),
-        "line 1
-mine
-"
-    );
+    assert_eq!(text(&h), "line 1\nmine\n");
     h.state_mut().save();
     h.state_mut().flush_disk();
     h.run();
     assert!(!h.state().buffer().is_dirty());
 
-    append(
-        &file, b"line 2
-",
-    );
+    append(&file, b"line 2\n");
     wait_for(&mut h, |a| {
-        a.buffer().doc().to_string().ends_with(
-            "line 2
-",
-        )
+        a.buffer().doc().to_string().ends_with("line 2\n")
     });
-    assert_eq!(
-        text(&h),
-        "line 1
-mine
-line 2
-"
-    );
+    assert_eq!(text(&h), "line 1\nmine\nline 2\n");
     assert!(!h.state().buffer().is_dirty());
 }

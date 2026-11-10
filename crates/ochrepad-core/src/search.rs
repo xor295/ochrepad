@@ -351,7 +351,7 @@ impl Matcher for CursorRegex {
             return replacement.to_owned();
         }
         // The groups of the match itself: the search ends where the match
-        // does (the text after it is still context for `$` and ``), so a
+        // does (the text after it is still context for `$` and `\b`), so a
         // match cut short by the end of a selection is not read past it.
         let mut caps: Captures = self.re.create_captures();
         for end in [m.end, doc.len().0] {

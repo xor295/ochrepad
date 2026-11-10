@@ -283,10 +283,7 @@ impl OchrepadApp {
                 }) => self.session_saved(&path, files, unnamed, d.result),
                 Some(PendingJob::Snapshot { buffer, revision }) => {
                     if let Err(e) = d.result {
-                        self.message = Some(format!(
-                            "Could not write a backup:
-{e}"
-                        ));
+                        self.message = Some(format!("Could not write a backup:\n{e}"));
                         // Not backed up after all: the next round tries
                         // again, and an exit asks instead of relying on it.
                         if self.persist.snapshotted.get(&buffer) == Some(&revision) {

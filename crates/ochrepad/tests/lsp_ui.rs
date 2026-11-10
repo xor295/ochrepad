@@ -780,8 +780,7 @@ fn format_on_save_saves_every_document_asked_for() {
             "documentFormattingProvider": true,
         }))
         .answer("textDocument/formatting", |_| {
-            json!([{"range": {"start": {"line": 0, "character": 11}, "end": {"line": 0, "character": 11}}, "newText": "
-"}])
+            json!([{"range": {"start": {"line": 0, "character": 11}, "end": {"line": 0, "character": 11}}, "newText": "\n"}])
         });
     let (dir, mut h) = open_rust_file(&server);
     h.state_mut()
@@ -789,12 +788,7 @@ fn format_on_save_saves_every_document_asked_for() {
         .lsp_trusted
         .push(dir.path().to_path_buf());
     let other = dir.path().join("other.rs");
-    std::fs::write(
-        &other,
-        "fn main() {}
-",
-    )
-    .unwrap();
+    std::fs::write(&other, "fn main() {}\n").unwrap();
     h.state_mut().open_path(&other);
     wait(&mut h, "both documents open", |_| {
         server.params("textDocument/didOpen").len() == 2
@@ -806,13 +800,8 @@ fn format_on_save_saves_every_document_asked_for() {
     let first = h.state().tabs()[0];
     h.state_mut().activate(first);
     assert!(h.state_mut().save());
-    let formatted = |p: &std::path::Path| {
-        std::fs::read_to_string(p).is_ok_and(|t| {
-            t == "fn main() {
-}
-"
-        })
-    };
+    let formatted =
+        |p: &std::path::Path| std::fs::read_to_string(p).is_ok_and(|t| t == "fn main() {\n}\n");
     let main = dir.path().join("main.rs");
     wait(&mut h, "both formatted files on disk", |_| {
         formatted(&main) && formatted(&other)

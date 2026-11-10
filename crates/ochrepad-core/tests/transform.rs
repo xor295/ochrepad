@@ -299,22 +299,10 @@ fn shuffling_keeps_the_lines_and_the_seed_decides_the_order() {
 
 #[test]
 fn a_numeric_sort_removes_duplicates_that_are_not_next_to_each_other() {
-    let mut t = setup(
-        "|1 a
-1 b
-1 a
-0 c
-",
-    );
+    let mut t = setup("|1 a\n1 b\n1 a\n0 c\n");
     t.apply(sort(|o| {
         o.numeric = true;
         o.remove_duplicates = true;
     }));
-    assert_eq!(
-        t.text(),
-        "0 c
-1 a
-1 b
-"
-    );
+    assert_eq!(t.text(), "0 c\n1 a\n1 b\n");
 }

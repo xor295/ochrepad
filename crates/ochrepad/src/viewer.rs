@@ -300,6 +300,11 @@ pub struct ViewerState {
     task: Option<Task>,
     /// A match found by a search, waiting for the index to reach it.
     pending_select: Option<(Range<u64>, bool)>,
+    /// The last match selected: its bytes in the file (of generation `.0`)
+    /// and the selection it became. A match past the part of a long line
+    /// that is shown becomes a caret at the cut, so the next search must
+    /// go on from the match's bytes, not from the caret.
+    found: Option<(u64, Range<u64>, Pos, Pos)>,
     /// Go to Line waiting for the index: (line, column).
     pending_go_to: Option<(u64, usize)>,
     /// A line to scroll to the top once the index reaches it (a session
@@ -332,6 +337,7 @@ impl Default for ViewerState {
             reveal: false,
             task: None,
             pending_select: None,
+            found: None,
             pending_go_to: None,
             pending_top: None,
             events: Vec::new(),
@@ -572,8 +578,18 @@ impl ViewerState {
     ) -> Result<(), String> {
         let searcher = Searcher::new_raw(query).map_err(|e| e.0)?;
         let (a, b) = self.ordered();
-        let from_start = self.file_offset(file, a).unwrap_or(0);
-        let from_end = self.file_offset(file, b).unwrap_or(from_start);
+        let (from_start, from_end) = match &self.found {
+            // Still on the match found last: go on from where it is.
+            Some((generation, range, fa, fb))
+                if *generation == file.generation() && (*fa, *fb) == (a, b) =>
+            {
+                (range.start, range.end)
+            }
+            _ => {
+                let from_start = self.file_offset(file, a).unwrap_or(0);
+                (from_start, self.file_offset(file, b).unwrap_or(from_start))
+            }
+        };
         let wrap = query.options.wrap;
         let stop = Arc::new(AtomicBool::new(false));
         let src = file.source(stop.clone());
@@ -790,6 +806,7 @@ impl ViewerState {
                 (self.pos_of(file, range.start), self.pos_of(file, range.end))
         {
             self.pending_select = None;
+            self.found = Some((file.generation(), range, a, b));
             self.anchor = a;
             self.head = b;
             self.goal_x = None;

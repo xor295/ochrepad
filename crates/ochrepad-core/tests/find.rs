@@ -172,18 +172,11 @@ fn a_match_cut_short_by_the_selection_expands_to_itself() {
     });
     assert_eq!(t.text(), "[fo:f]o bar");
 
-    // The text after a match is still there for `$` and ``.
-    let mut t = setup(
-        "|one two
-three",
-    );
+    // The text after a match is still there for `$` and `\b`.
+    let mut t = setup("|one two\nthree");
     t.apply(Action::ReplaceAll {
         query: query(r"(\w+)$", |o| o.regex = true),
         replacement: "<$1>".into(),
     });
-    assert_eq!(
-        t.text(),
-        "one <two>
-<three>"
-    );
+    assert_eq!(t.text(), "one <two>\n<three>");
 }
