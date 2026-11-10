@@ -514,3 +514,24 @@ fn a_documents_indentation_comes_back_with_the_session() {
     let indent = h.state().buffer().indent;
     assert!(!indent.use_spaces && indent.width == 8, "{indent:?}");
 }
+
+#[test]
+fn exit_asks_when_a_backup_cannot_be_written() {
+    let d = dirs();
+    // A file where the backup folder would be: no snapshot can be written.
+    std::fs::create_dir_all(&d.data).unwrap();
+    write(&d.data.join("backup"), "in the way");
+    let mut h = app(&d);
+    typ(&mut h, "unsaved");
+    h.state_mut().request_exit();
+    h.run();
+    assert!(!h.state().may_close(), "the work is not backed up");
+    assert!(
+        h.state()
+            .message()
+            .is_some_and(|m| m.contains("Could not write a backup")),
+        "{:?}",
+        h.state().message()
+    );
+    h.get_by_label("Save changes to new 1?");
+}

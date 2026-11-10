@@ -179,6 +179,56 @@ fn ctrl_click_on_a_compiler_location_opens_the_file_there() {
 }
 
 #[test]
+fn a_reported_press_is_released_even_if_shift_went_down_meanwhile() {
+    let mut app = OchrepadApp::new();
+    // No shell starts: the "program" is what is fed to the terminal.
+    app.settings.terminal_shell = "ochrepad-no-such-shell".to_owned();
+    let mut h = Harness::builder()
+        .with_size(Vec2::new(760.0, 600.0))
+        .with_step_dt(1.0 / 60.0)
+        .with_max_steps(10_000)
+        .build_ui_state(|ui, app: &mut OchrepadApp| app.show(ui), app);
+    h.run();
+    let id = h
+        .state_mut()
+        .new_terminal_in(std::path::PathBuf::from("demo"));
+    h.run();
+    // A program that takes the mouse (as vim with mouse=a).
+    h.state_mut()
+        .terminals
+        .get_mut(id)
+        .unwrap()
+        .feed(b"\x1b[2J\x1b[H\x1b[?1000h\x1b[?1006h");
+    h.run();
+    let held =
+        |h: &Harness<'_, OchrepadApp>| h.state().terminals.get(id).unwrap().view.mouse_held();
+
+    let rect = h.get_by_label_contains("Terminal: ").rect();
+    let pos = egui::pos2(rect.min.x + 60.0, rect.min.y + 40.0);
+    let button = |h: &mut Harness<'_, OchrepadApp>, pressed: bool, modifiers: Modifiers| {
+        h.event(Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers,
+        });
+        h.step();
+    };
+    h.event(Event::PointerMoved(pos));
+    h.step();
+    button(&mut h, true, Modifiers::NONE);
+    assert!(held(&h), "the press went to the program");
+    // Shift (which makes the mouse select text instead) goes down before
+    // the release.
+    h.event(Event::ModifiersChanged(Modifiers::SHIFT));
+    h.step();
+    button(&mut h, false, Modifiers::SHIFT);
+    h.event(Event::ModifiersChanged(Modifiers::NONE));
+    h.run();
+    assert!(!held(&h), "and so did its release");
+}
+
+#[test]
 fn a_terminal_not_shown_still_notices_its_shell_ending() {
     let mut h = harness();
     key(&mut h, Modifiers::COMMAND, Key::Backtick);

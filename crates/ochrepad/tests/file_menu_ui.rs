@@ -141,3 +141,34 @@ fn clicking_the_caret_position_opens_go_to_line() {
     h.run();
     h.get_by_label_contains("Go to line");
 }
+
+#[test]
+fn a_save_asked_for_while_the_file_is_renamed_goes_to_the_new_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("old.txt");
+    std::fs::write(&file, "text").unwrap();
+    let mut h = harness();
+    h.state_mut().open_path(&file);
+    h.run();
+    type_text(&mut h, "more ");
+    h.state_mut().open_rename();
+    h.run();
+    for _ in 0.."old.txt".len() {
+        key(&mut h, Modifiers::NONE, Key::Backspace);
+    }
+    type_text(&mut h, "new.txt");
+    // One frame: the rename is queued. Ctrl+S before the app has heard
+    // that it is done, while the document still has its old name.
+    h.key_press(Key::Enter);
+    h.step();
+    assert!(h.state_mut().save());
+    h.state_mut().flush_disk();
+    h.run();
+    assert!(!file.exists(), "the old name is not written again");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("new.txt")).unwrap(),
+        "more text"
+    );
+    assert_eq!(h.state().file_name(), "new.txt");
+    assert!(!h.state().buffer().is_dirty());
+}

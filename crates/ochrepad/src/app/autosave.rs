@@ -108,6 +108,9 @@ pub(super) enum PendingJob {
         buffer: BufferId,
         revision: u64,
         path: PathBuf,
+        /// Saved under another name than the document had (Save As): it
+        /// takes the name when the write succeeds.
+        save_as: bool,
         /// The text written (the change history compares with it).
         doc: ochrepad_core::Document,
     },
@@ -133,6 +136,11 @@ pub(super) enum PendingJob {
         files: usize,
         unnamed: usize,
     },
+    /// A backup snapshot of `buffer` at `revision`.
+    Snapshot {
+        buffer: BufferId,
+        revision: u64,
+    },
     Other,
 }
 
@@ -150,6 +158,11 @@ pub(super) struct Persist {
     pub(super) history_written: HashMap<BufferId, (u64, PathBuf)>,
     /// Revision of the last snapshot written for each buffer.
     snapshotted: HashMap<BufferId, u64>,
+    /// A snapshot could not be written since the exit began.
+    snapshot_failed: bool,
+    /// Documents whose save waits for a rename of their file (or a folder
+    /// above it) that the worker has not done yet.
+    after_rename: Vec<BufferId>,
     pub saving: HashSet<BufferId>,
     last_tick: Option<f64>,
     last_session: Vec<u8>,
@@ -198,6 +211,18 @@ impl OchrepadApp {
         let Some(b) = self.editor.buffer(buffer) else {
             return false;
         };
+        let save_as = b.meta.path.as_deref() != Some(path.as_path());
+        // The file is being renamed: a save queued now would run after the
+        // rename and write the old name again. It is saved under the name
+        // it has once the rename is done (or was refused).
+        if !save_as && self.rename_pending(&path) {
+            if !self.persist.after_rename.contains(&buffer) {
+                self.persist.after_rename.push(buffer);
+            }
+            // A close or exit waiting on this save waits for it too.
+            self.persist.saving.insert(buffer);
+            return true;
+        }
         let job = Job::Save {
             path: path.clone(),
             doc: b.doc().clone(),
@@ -212,11 +237,34 @@ impl OchrepadApp {
                 buffer,
                 revision,
                 path,
+                save_as,
                 doc,
             },
         );
         self.persist.saving.insert(buffer);
         true
+    }
+
+    /// Whether a rename of `path`, or of a folder above it, is queued.
+    fn rename_pending(&self, path: &Path) -> bool {
+        self.persist.pending.values().any(|job| {
+            matches!(
+                job,
+                PendingJob::Tree(super::workspace::TreeJob::Rename { from, .. })
+                    if path.starts_with(from)
+            )
+        })
+    }
+
+    /// A rename finished (or was refused): the saves that waited for it.
+    fn save_after_rename(&mut self) {
+        for buffer in std::mem::take(&mut self.persist.after_rename) {
+            self.persist.saving.remove(&buffer);
+            let path = self.editor.buffer(buffer).and_then(|b| b.meta.path.clone());
+            if let Some(path) = path {
+                self.submit_save(buffer, path);
+            }
+        }
     }
 
     /// Handles finished disk jobs.
@@ -231,8 +279,14 @@ impl OchrepadApp {
 
     /// Waits for every queued write (exit, tests).
     pub fn flush_disk(&mut self) {
-        let done = self.persist.worker.wait_idle();
-        self.handle_done(done);
+        loop {
+            let done = self.persist.worker.wait_idle();
+            self.handle_done(done);
+            // A finished job may queue another (a save after a rename).
+            if self.persist.worker.in_flight() == 0 {
+                break;
+            }
+        }
     }
 
     fn handle_done(&mut self, done: Vec<fileio::worker::Done>) {
@@ -242,6 +296,7 @@ impl OchrepadApp {
                     buffer,
                     revision,
                     path,
+                    save_as,
                     doc,
                 }) => {
                     self.persist.saving.remove(&buffer);
@@ -250,7 +305,7 @@ impl OchrepadApp {
                             self.changes.saved(buffer, doc, revision);
                             self.completion.saved(&path);
                             self.language_servers.saved(buffer);
-                            self.save_finished(buffer, revision, path);
+                            self.save_finished(buffer, revision, path, save_as);
                         }
                         Err(e) => {
                             self.message = Some(format!("Could not save {}:\n{e}", path.display()));
@@ -261,7 +316,13 @@ impl OchrepadApp {
                         }
                     }
                 }
-                Some(PendingJob::Tree(job)) => self.tree_job_done(job, d.result),
+                Some(PendingJob::Tree(job)) => {
+                    let rename = matches!(job, super::workspace::TreeJob::Rename { .. });
+                    self.tree_job_done(job, d.result);
+                    if rename {
+                        self.save_after_rename();
+                    }
+                }
                 Some(PendingJob::ReplaceInFiles { path, matches }) => {
                     self.replace_in_files_saved(&path, matches, d.result);
                 }
@@ -274,6 +335,17 @@ impl OchrepadApp {
                     files,
                     unnamed,
                 }) => self.session_saved(&path, files, unnamed, d.result),
+                Some(PendingJob::Snapshot { buffer, revision }) => {
+                    if let Err(e) = d.result {
+                        self.message = Some(format!("Could not write a backup:\n{e}"));
+                        // Not backed up after all: the next round tries
+                        // again, and an exit asks instead of relying on it.
+                        if self.persist.snapshotted.get(&buffer) == Some(&revision) {
+                            self.persist.snapshotted.remove(&buffer);
+                        }
+                        self.persist.snapshot_failed = true;
+                    }
+                }
                 Some(PendingJob::Other) | None => {
                     if let Err(e) = d.result {
                         self.message = Some(format!("Could not write a backup:\n{e}"));
@@ -283,12 +355,15 @@ impl OchrepadApp {
         }
     }
 
-    fn save_finished(&mut self, buffer: BufferId, revision: u64, path: PathBuf) {
+    fn save_finished(&mut self, buffer: BufferId, revision: u64, path: PathBuf, save_as: bool) {
         let Some(b) = self.editor.buffer_mut(buffer) else {
             return;
         };
         b.mark_saved_at(revision);
-        let renamed = b.meta.path.as_deref() != Some(path.as_path());
+        // Only a Save As gives the document the name: a plain save that
+        // finishes after a Save As elsewhere (or a rename) does not take
+        // it back to the old one.
+        let renamed = save_as && b.meta.path.as_deref() != Some(path.as_path());
         if renamed {
             b.meta.path = Some(path.clone());
         }
@@ -304,6 +379,7 @@ impl OchrepadApp {
             self.write_history(buffer);
         }
         self.record_disk_stamp(buffer);
+        self.refresh_follow_tail(buffer);
         if self.is_keymap_file(&path) {
             self.reload_keymap();
         }
@@ -386,7 +462,13 @@ impl OchrepadApp {
                 },
             };
             let tag = self.persist.worker.submit(job);
-            self.persist.pending.insert(tag, PendingJob::Other);
+            self.persist.pending.insert(
+                tag,
+                PendingJob::Snapshot {
+                    buffer: id,
+                    revision,
+                },
+            );
             self.persist.snapshotted.insert(id, revision);
             self.write_history(id);
         }
@@ -547,13 +629,22 @@ impl OchrepadApp {
     }
 
     /// Exit with snapshots on: back up everything, write the session, wait
-    /// for the disk, and close without asking.
-    pub(super) fn exit_with_snapshots(&mut self) {
+    /// for the disk, and close without asking. False when a backup could
+    /// not be written (the message says so): the exit must ask about
+    /// unsaved documents instead, as with backups off.
+    pub(super) fn exit_with_snapshots(&mut self) -> bool {
+        // A backup still being written that fails is tried again below.
+        self.flush_disk();
+        self.persist.snapshot_failed = false;
         self.snapshot_dirty();
         self.write_all_histories();
         self.write_session();
         self.flush_disk();
+        if self.persist.snapshot_failed {
+            return false;
+        }
         self.close_confirmed = true;
+        true
     }
 
     /// Restores the session written at the last exit.

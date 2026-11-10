@@ -57,7 +57,7 @@ impl OchrepadApp {
                     edit,
                     units,
                 } => {
-                    let result = self.apply_workspace_edit(&edit, units);
+                    let result = self.apply_workspace_edit(&edit, units, None);
                     if let Err(e) = &result {
                         self.message = Some(format!("The code action was not applied:\n{e}"));
                     }

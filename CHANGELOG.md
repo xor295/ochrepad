@@ -10,6 +10,54 @@ people downloading the release.
 
 ## [Unreleased]
 
+### Fixed
+
+- A followed file (View > Follow) no longer shows text twice after you
+  type at its end and save: what the file gained next was added after the
+  text just saved, again.
+- Exiting no longer closes without asking when a backup of unsaved work
+  could not be written (a full disk, a backup folder that cannot be
+  written). ochrepad says so and asks about each unsaved document, as it
+  does with backups off; a failed backup is also tried again.
+- With format on save, saving a second document before the language server
+  had formatted the first no longer leaves the first unsaved.
+- A regex Replace All "in selection" whose match was cut short by the end
+  of the selection put the whole word in for `$0` and the groups, not the
+  part that matched.
+- Sort Lines with "remove duplicates" left duplicates that were not next
+  to each other after a numeric, by-length or column sort.
+- In the viewer for huge files, Find Next stayed on a match further than
+  10,000 bytes along a line (the part of a long line that is not shown)
+  and never reached the matches after it.
+- In the viewer, a file with Windows line endings could show about a
+  thousand lines one line off, each with the text of the line before it,
+  and search results there had the wrong line numbers. This happened only
+  when a line break fell exactly across two of the reads that index the
+  file.
+- A language server's completions for one place were offered again,
+  without asking the server, after the text before the word had changed
+  (`foo.` replaced by `bar.`) or code had been added elsewhere.
+- Problem underlines stayed a few characters off after typing that opened
+  the completion list, until the language server reported again.
+- Rename (Shift+F6) no longer puts a language server's edits into a
+  document that changed while the server was working; it says so and
+  changes nothing.
+- Saving right after File > Rename (before the rename had finished) wrote
+  the file under its old name again and undid the rename. The save now
+  waits and goes to the new name. A save that finishes after a Save As
+  elsewhere no longer takes the document back to its old name either.
+- Typing a letter and Tab (or Enter) so fast that both arrived together
+  could accept a completion over the wrong characters (`pprintln`).
+- A language server stopped while it was still starting (servers turned
+  off, or its last document closed) was started again as if it had
+  crashed.
+- In a terminal program that takes the mouse (`vim` with `mouse=a`),
+  pressing Shift between a click's press and release left the program
+  thinking the button was still held.
+- A language server named with its extension in `lsp.json` on Windows
+  (`"rust-analyzer.exe"`, `"pyright-langserver.cmd"`) was not found on
+  `PATH`.
+
 ## [0.4.0] - 2026-10-25
 
 ### Added

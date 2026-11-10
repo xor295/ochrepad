@@ -552,7 +552,12 @@ impl Client {
                 self.shutdown = Some((id, Instant::now()));
                 self.state = State::Stopping;
             }
-            State::Starting => self.exit(),
+            State::Starting => {
+                // The answer to `initialize` may still come (a server reads
+                // it before `exit`): it must not start the session again.
+                self.init_id = None;
+                self.exit();
+            }
             _ => {}
         }
     }

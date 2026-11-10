@@ -324,6 +324,8 @@ enum Op {
     /// word after the caret).
     AcceptCompletion {
         replace: bool,
+        /// What the key does when there is nothing to accept after all.
+        otherwise: Option<Action>,
     },
     ShowCompletions,
     /// The next (or previous) diagnostic.
@@ -512,7 +514,10 @@ pub fn editor_view(
     // it comes back).
     let clicked = state.completion.take_click();
     if clicked {
-        ops.push(Op::AcceptCompletion { replace: false });
+        ops.push(Op::AcceptCompletion {
+            replace: false,
+            otherwise: None,
+        });
         state.request_focus = true;
     } else if !focused && !on_popup {
         // A click on the popup takes the keyboard for a moment; anything
@@ -533,7 +538,13 @@ pub fn editor_view(
                     crate::completion_popup::KeyResult::Pass => {}
                     crate::completion_popup::KeyResult::Taken => continue,
                     crate::completion_popup::KeyResult::Accept { replace } => {
-                        ops.push(Op::AcceptCompletion { replace });
+                        // What the key does without the popup, in case the
+                        // item no longer fits by the time it is accepted.
+                        let otherwise = match keymap.lookup(*key, *modifiers) {
+                            Some(EditorCommand::Action(a)) => Some(a.clone()),
+                            _ => None,
+                        };
+                        ops.push(Op::AcceptCompletion { replace, otherwise });
                         continue;
                     }
                 }
@@ -663,7 +674,7 @@ pub fn editor_view(
                     state.reveal_caret = true;
                 }
             }
-            Op::AcceptCompletion { replace } => {
+            Op::AcceptCompletion { replace, otherwise } => {
                 // The word's characters after the caret, which Tab replaces.
                 let completion = &state.completion;
                 let after = editor
@@ -683,15 +694,24 @@ pub fn editor_view(
                     .zip(editor.view(view))
                     .map(|(b, v)| (b.doc().clone(), v.selections.clone()))
                     .expect("view exists");
-                if let Some(action) = state.completion.accept(
-                    replace,
-                    after,
-                    source.as_deref_mut(),
-                    buffer_id,
-                    &doc,
-                    sels.primary().head,
-                    sels.len(),
-                ) && let Err(e) = editor.apply(view, action)
+                // An item that does not fit what an earlier key of this
+                // frame left of the word is not put in: the key does what
+                // it does without the popup (as it would a frame later,
+                // when the popup has followed the typing).
+                let action = state
+                    .completion
+                    .accept(
+                        replace,
+                        after,
+                        source.as_deref_mut(),
+                        buffer_id,
+                        &doc,
+                        sels.primary().head,
+                        sels.len(),
+                    )
+                    .or(otherwise);
+                if let Some(action) = action
+                    && let Err(e) = editor.apply(view, action)
                 {
                     state.last_error = Some(e);
                 }

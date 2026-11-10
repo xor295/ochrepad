@@ -33,10 +33,32 @@ pub struct ServerCompletion {
     resolving: Option<(u64, usize, Tag, i64)>,
 }
 
+/// What is around the word a request was for: the list it got serves a
+/// later request only if this is the same (so only the word was typed
+/// further), not when other text now ends at the same offset.
+#[derive(Clone, PartialEq, Eq)]
+struct Around {
+    /// The word's line up to the word.
+    before: String,
+    /// Bytes of the document after the caret.
+    after: usize,
+}
+
+impl Around {
+    fn of(req: &CompletionRequest<'_>) -> Self {
+        let line_start = req.doc.line_start(req.doc.line_of(req.start));
+        Self {
+            before: req.doc.slice(line_start..req.start),
+            after: req.doc.len().0.saturating_sub(req.caret.0),
+        }
+    }
+}
+
 /// A request in flight, for the word starting at `start`.
 struct Pending {
     buffer: BufferId,
     start: ByteOffset,
+    around: Around,
     prefix: String,
     tag: Tag,
     id: i64,
@@ -48,6 +70,7 @@ struct List {
     number: u64,
     buffer: BufferId,
     start: ByteOffset,
+    around: Around,
     prefix: String,
     /// More items may match a longer prefix: ask again as typing goes on.
     incomplete: bool,
@@ -91,6 +114,7 @@ impl ServerCompletion {
                 number,
                 buffer: p.buffer,
                 start: p.start,
+                around: p.around,
                 prefix: p.prefix,
                 incomplete,
                 items,
@@ -137,18 +161,22 @@ impl ServerCompletion {
         req: &CompletionRequest<'_>,
         servers: &mut LanguageServers,
     ) -> Vec<Candidate> {
-        let same_word = |buffer: BufferId, start: ByteOffset, prefix: &str| {
-            buffer == req.buffer && start == req.start && req.prefix.starts_with(prefix)
+        let around = Around::of(req);
+        let same_word = |buffer: BufferId, start: ByteOffset, a: &Around, prefix: &str| {
+            buffer == req.buffer
+                && start == req.start
+                && *a == around
+                && req.prefix.starts_with(prefix)
         };
         let list = self
             .list
             .as_ref()
-            .filter(|l| same_word(l.buffer, l.start, &l.prefix));
+            .filter(|l| same_word(l.buffer, l.start, &l.around, &l.prefix));
         let covered = list.is_some_and(|l| !l.incomplete || l.prefix == req.prefix);
         let asked = self
             .pending
             .as_ref()
-            .is_some_and(|p| same_word(p.buffer, p.start, &p.prefix));
+            .is_some_and(|p| same_word(p.buffer, p.start, &p.around, &p.prefix));
         if !covered && !asked {
             let incomplete = list.is_some();
             self.ask(req, incomplete, servers);
@@ -156,7 +184,7 @@ impl ServerCompletion {
         let Some(list) = self
             .list
             .as_ref()
-            .filter(|l| same_word(l.buffer, l.start, &l.prefix))
+            .filter(|l| same_word(l.buffer, l.start, &l.around, &l.prefix))
         else {
             return Vec::new();
         };
@@ -231,6 +259,7 @@ impl ServerCompletion {
             self.pending = Some(Pending {
                 buffer: req.buffer,
                 start: req.start,
+                around: Around::of(req),
                 prefix: req.prefix.to_owned(),
                 tag,
                 id,

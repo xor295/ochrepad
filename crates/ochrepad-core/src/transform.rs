@@ -47,7 +47,8 @@ pub struct SortOptions {
     /// Compare by the number at the start of each line (integer or
     /// decimal); lines without one sort first.
     pub numeric: bool,
-    /// Drop lines equal to the line before them after sorting.
+    /// Keep only the first of equal lines after sorting (lines that differ
+    /// only in case are equal with `case_insensitive`).
     pub remove_duplicates: bool,
     /// Compare by length in characters (then as text).
     #[serde(default)]
@@ -311,14 +312,16 @@ pub(crate) fn sort(
         let mut order: Vec<usize> = (0..lines.len()).collect();
         order.sort_by(|&a, &b| compare(a, b)); // stable
         if o.remove_duplicates {
-            let same = |a: &str, b: &str| {
-                if o.case_insensitive {
-                    a.to_lowercase() == b.to_lowercase()
+            // Equal lines are not always next to each other: lines with the
+            // same number, length or text in the rectangle keep their order.
+            let mut seen = HashSet::new();
+            order.retain(|&i| {
+                seen.insert(if o.case_insensitive {
+                    lines[i].to_lowercase()
                 } else {
-                    a == b
-                }
-            };
-            order.dedup_by(|b, a| same(&lines[*a], &lines[*b]));
+                    lines[i].clone()
+                })
+            });
         }
         order
     })

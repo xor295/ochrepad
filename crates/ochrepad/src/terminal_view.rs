@@ -61,6 +61,12 @@ impl TerminalViewState {
     pub fn request_focus(&mut self) {
         self.request_focus = true;
     }
+
+    /// Whether the program was told of a mouse button's press and not yet
+    /// of its release.
+    pub fn mouse_held(&self) -> bool {
+        self.reporting.is_some()
+    }
 }
 
 pub fn terminal_widget_id(id: TerminalId) -> Id {
@@ -611,6 +617,26 @@ fn mouse(
                     open = Some(link.target.clone());
                     continue;
                 }
+                // The release of a press the program was told about goes to
+                // it too, even if Shift went down since (which would make
+                // this a selection's release, and leave the button "held"
+                // in every later drag report). A program that stopped
+                // taking the mouse in between is told nothing.
+                if !pressed && t.view.reporting == Some(button) {
+                    t.view.reporting = None;
+                    if mode.intersects(TermMode::MOUSE_MODE) {
+                        report(
+                            t,
+                            Some(button),
+                            MouseAction::Release,
+                            modifiers,
+                            col,
+                            row,
+                            mode,
+                        );
+                    }
+                    continue;
+                }
                 if reporting {
                     if pressed && in_grid(pos) && response.contains_pointer() {
                         t.view.reporting = Some(button);
@@ -619,17 +645,6 @@ fn mouse(
                             t,
                             Some(button),
                             MouseAction::Press,
-                            modifiers,
-                            col,
-                            row,
-                            mode,
-                        );
-                    } else if !pressed && t.view.reporting == Some(button) {
-                        t.view.reporting = None;
-                        report(
-                            t,
-                            Some(button),
-                            MouseAction::Release,
                             modifiers,
                             col,
                             row,

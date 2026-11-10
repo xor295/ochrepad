@@ -771,3 +771,183 @@ fn go_to_symbol_searches_the_server_and_opens_the_one_chosen() {
     h.run();
     h.get_by_label("Ln 2, Col 4");
 }
+
+#[test]
+fn format_on_save_saves_every_document_asked_for() {
+    let server = FakeServer::new()
+        .capabilities(json!({
+            "textDocumentSync": { "openClose": true, "change": 2 },
+            "documentFormattingProvider": true,
+        }))
+        .answer("textDocument/formatting", |_| {
+            json!([{"range": {"start": {"line": 0, "character": 11}, "end": {"line": 0, "character": 11}}, "newText": "\n"}])
+        });
+    let (dir, mut h) = open_rust_file(&server);
+    h.state_mut()
+        .settings
+        .lsp_trusted
+        .push(dir.path().to_path_buf());
+    let other = dir.path().join("other.rs");
+    std::fs::write(&other, "fn main() {}\n").unwrap();
+    h.state_mut().open_path(&other);
+    wait(&mut h, "both documents open", |_| {
+        server.params("textDocument/didOpen").len() == 2
+    });
+    h.state_mut().settings.format_on_save = true;
+
+    // Ctrl+S in one document, then in the other before the server answers.
+    assert!(h.state_mut().save());
+    let first = h.state().tabs()[0];
+    h.state_mut().activate(first);
+    assert!(h.state_mut().save());
+    let formatted =
+        |p: &std::path::Path| std::fs::read_to_string(p).is_ok_and(|t| t == "fn main() {\n}\n");
+    let main = dir.path().join("main.rs");
+    wait(&mut h, "both formatted files on disk", |_| {
+        formatted(&main) && formatted(&other)
+    });
+}
+
+#[test]
+fn diagnostics_move_with_typing_that_a_completion_request_sent_first() {
+    let server = diagnostics_on_open()
+        .capabilities(json!({
+            "textDocumentSync": { "openClose": true, "change": 2 },
+            "completionProvider": {},
+        }))
+        .answer("textDocument/completion", |_| json!([]));
+    let (dir, mut h) = open_rust_file(&server);
+    h.state_mut()
+        .settings
+        .lsp_trusted
+        .push(dir.path().to_path_buf());
+    let range = |h: &Harness<'_, OchrepadApp>| {
+        let app = h.state();
+        app.language_servers
+            .diagnostics_of(app.buffer_id())
+            .first()
+            .and_then(|d| d.range.clone())
+            .map(|r| (r.start.0, r.end.0))
+    };
+    wait(&mut h, "the diagnostic on `main`", |h| {
+        range(h) == Some((3, 7))
+    });
+    // The second character opens the popup, whose request sends the edit
+    // to the server in the frame it is typed.
+    typ(&mut h, "ab");
+    wait(&mut h, "the completion request", |_| {
+        !server.params("textDocument/completion").is_empty()
+    });
+    assert_eq!(text(&h), "abfn main() {}\n");
+    assert_eq!(range(&h), Some((5, 9)), "still on `main`");
+}
+
+#[test]
+fn a_servers_list_is_not_used_again_for_other_text_at_the_same_place() {
+    let server = FakeServer::new()
+        .capabilities(json!({
+            "textDocumentSync": { "openClose": true, "change": 2 },
+            "completionProvider": {},
+        }))
+        .answer(
+            "textDocument/completion",
+            |_| json!({"isIncomplete": false, "items": [{"label": "push_item", "kind": 3}]}),
+        );
+    let (dir, mut h) = open_rust_file(&server);
+    h.state_mut()
+        .settings
+        .lsp_trusted
+        .push(dir.path().to_path_buf());
+    wait(&mut h, "didOpen", |_| {
+        !server.params("textDocument/didOpen").is_empty()
+    });
+    // Requests for the word at the end of "?? pu" on the last line.
+    let asked = || {
+        server
+            .params("textDocument/completion")
+            .iter()
+            .filter(|p| p["position"] == json!({"line": 1, "character": 5}))
+            .count()
+    };
+    let key = |h: &mut Harness<'_, OchrepadApp>, m: egui::Modifiers, k: egui::Key| {
+        h.key_press_modifiers(m, k);
+        h.run();
+    };
+    key(&mut h, egui::Modifiers::COMMAND, egui::Key::End);
+    typ(&mut h, "xx pu");
+    wait(&mut h, "the server's item", |h| {
+        labels(h).first().map(String::as_str) == Some("push_item")
+    });
+    assert_eq!(asked(), 1);
+    // Other text before the word, which still starts at the same offset.
+    key(&mut h, egui::Modifiers::NONE, egui::Key::Escape);
+    key(&mut h, egui::Modifiers::NONE, egui::Key::Home);
+    // (One character: too short a word for the popup to ask about.)
+    key(&mut h, egui::Modifiers::SHIFT, egui::Key::ArrowRight);
+    typ(&mut h, "y");
+    key(&mut h, egui::Modifiers::NONE, egui::Key::End);
+    assert_eq!(text(&h), "fn main() {}\nyx pu");
+    key(&mut h, egui::Modifiers::COMMAND, egui::Key::Space);
+    wait(&mut h, "the server asked again", |_| asked() == 2);
+}
+
+#[test]
+fn rename_is_not_applied_to_a_document_that_changed_while_the_server_worked() {
+    // As many servers answer: edits without document versions.
+    let server = FakeServer::new()
+        .capabilities(json!({
+            "textDocumentSync": { "openClose": true, "change": 2 },
+            "renameProvider": true,
+        }))
+        .answer("textDocument/rename", |p| {
+            // Slow enough for the document to change meanwhile.
+            std::thread::sleep(Duration::from_millis(300));
+            let uri = p["textDocument"]["uri"].as_str().unwrap().to_owned();
+            json!({"changes": {uri: [
+                {"range": {"start": {"line": 0, "character": 3}, "end": {"line": 0, "character": 7}},
+                 "newText": p["newName"]},
+            ]}})
+        });
+    let (dir, mut h) = open_rust_file(&server);
+    h.state_mut()
+        .settings
+        .lsp_trusted
+        .push(dir.path().to_path_buf());
+    wait(&mut h, "didOpen", |_| {
+        !server.params("textDocument/didOpen").is_empty()
+    });
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::G);
+    h.run();
+    h.event(Event::Text("1:4".into()));
+    h.key_press(egui::Key::Enter);
+    h.run();
+    h.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::F6);
+    wait(&mut h, "the rename dialog", |h| {
+        h.query_by_label("Rename main to:").is_some()
+    });
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    h.event(Event::Text("start".into()));
+    // The request is sent; the document changes before the answer comes.
+    h.key_press(egui::Key::Enter);
+    wait(&mut h, "the rename request", |_| {
+        !server.params("textDocument/rename").is_empty()
+    });
+    let view = h.state().active_view();
+    h.state_mut()
+        .editor
+        .apply(
+            view,
+            ochrepad_core::Action::SetSelections(ochrepad_core::SelectionSet::caret(
+                ochrepad_core::ByteOffset(0),
+            )),
+        )
+        .unwrap();
+    h.state_mut()
+        .editor
+        .apply(view, ochrepad_core::Action::InsertText("// x\n".into()))
+        .unwrap();
+    wait(&mut h, "the refusal", |h| h.state().message().is_some());
+    let message = h.state().message().unwrap().to_owned();
+    assert!(message.contains("changed while"), "{message}");
+    assert_eq!(text(&h), "// x\nfn main() {}\n", "nothing was renamed");
+}

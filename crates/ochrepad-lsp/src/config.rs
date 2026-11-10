@@ -128,9 +128,17 @@ fn resolve_in(program: &str, path: &std::ffi::OsStr, avoid: &[&Path]) -> Option<
     }
     let extensions: Vec<String> = if cfg!(windows) {
         let ext = std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".into());
-        ext.split(';')
-            .filter(|e| e.starts_with('.'))
-            .map(str::to_lowercase)
+        // A name given with its extension (`rust-analyzer.exe`,
+        // `pyright-langserver.cmd`) is looked for as it is first.
+        given
+            .extension()
+            .map(|_| String::new())
+            .into_iter()
+            .chain(
+                ext.split(';')
+                    .filter(|e| e.starts_with('.'))
+                    .map(str::to_lowercase),
+            )
             .collect()
     } else {
         vec![String::new()]
@@ -232,8 +240,14 @@ mod tests {
         // On PATH: found, unless it is in the project or PATH names it
         // relatively.
         let path = std::env::join_paths([Path::new("."), dir.path()]).unwrap();
-        assert_eq!(resolve_in(name, &path, &[]), Some(file));
+        assert_eq!(resolve_in(name, &path, &[]), Some(file.clone()));
         assert_eq!(resolve_in(name, &path, &[dir.path()]), None);
+        // Named with its extension, as `lsp.json` may.
+        if cfg!(windows) {
+            let named = format!("{name}.exe");
+            assert_eq!(resolve_in(&named, &path, &[]), Some(file));
+            assert_eq!(resolve_in(&named, &path, &[dir.path()]), None);
+        }
     }
 
     #[test]

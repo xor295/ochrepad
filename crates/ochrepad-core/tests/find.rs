@@ -157,3 +157,26 @@ fn a_recorded_find_replays_from_wherever_the_caret_is() {
     assert_eq!(t.text(), "a DONE b DONE c DONE");
     assert_eq!(runs, 3);
 }
+
+#[test]
+fn a_match_cut_short_by_the_selection_expands_to_itself() {
+    // `\w+` matches only "fo" inside the selection; `$0` is that, not "foo".
+    let mut t = setup("foo bar");
+    t.set_sels(vec![(0, 2)]);
+    t.apply(Action::ReplaceAll {
+        query: query(r"(\w)\w*", |o| {
+            o.regex = true;
+            o.in_selection = true;
+        }),
+        replacement: "[$0:$1]".into(),
+    });
+    assert_eq!(t.text(), "[fo:f]o bar");
+
+    // The text after a match is still there for `$` and `\b`.
+    let mut t = setup("|one two\nthree");
+    t.apply(Action::ReplaceAll {
+        query: query(r"(\w+)$", |o| o.regex = true),
+        replacement: "<$1>".into(),
+    });
+    assert_eq!(t.text(), "one <two>\n<three>");
+}

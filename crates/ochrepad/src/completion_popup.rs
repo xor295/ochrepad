@@ -317,13 +317,26 @@ impl CompletionState {
         let p = self.popup.take()?;
         let index = self.clicked.take().unwrap_or(p.selected);
         let item = p.items.get(index)?;
+        // What is typed of the word now. A key earlier in this frame may
+        // have changed it since the list was made (a letter and Tab in one
+        // frame): the word as it is now is what gets replaced, and only by
+        // an item that still fits it.
+        if caret < p.start || doc.line_of(caret) != doc.line_of(p.start) {
+            return None;
+        }
+        let typed = doc.slice(p.start..caret);
+        if typed != p.prefix
+            && !complete::Pattern::new(&typed).might_match(item.candidate.filter_text())
+        {
+            return None;
+        }
         let text = item.candidate.text().to_owned();
         // A folder: go on with its contents.
         if p.path && text.ends_with('/') {
             self.typed = true;
         }
         let complete = Action::Complete {
-            before: p.prefix.chars().count(),
+            before: typed.chars().count(),
             after: if replace { after } else { 0 },
             text: text.clone(),
         };

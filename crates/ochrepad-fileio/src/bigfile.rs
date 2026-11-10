@@ -301,6 +301,11 @@ fn build_index(file: &File, index: &Mutex<Index>, cancel: &AtomicBool, chunk: us
 fn publish(index: &Mutex<Index>, state: &Index) {
     let mut shared = lock(index);
     let have = shared.stops.len().min(state.stops.len());
+    // The last stop published may have moved: a `\r` that ended one read
+    // turned out to start a CR LF, so the line after it starts a byte later.
+    if let Some(last) = have.checked_sub(1) {
+        shared.stops[last] = state.stops[last];
+    }
     shared.stops.extend_from_slice(&state.stops[have..]);
     shared.breaks = state.breaks;
     shared.scanned = state.scanned;
@@ -857,6 +862,25 @@ mod tests {
             // CR LF three times, LF once, a lone CR twice.
             assert_eq!(index.breaks, 6, "chunk {chunk}");
             assert_eq!(index.endings, [3, 1, 2], "chunk {chunk}");
+        }
+    }
+
+    #[test]
+    fn a_stop_after_a_break_split_across_reads_is_where_the_line_starts() {
+        // Line 1024 starts after the CR LF at bytes 3070..3072; reads of 1
+        // and 37 bytes (3071 = 37 × 83) end between its `\r` and `\n`.
+        let text = "x\r\n".repeat(3000);
+        let (_d, path) = write(text.as_bytes());
+        let file = File::open(&path).unwrap();
+        for chunk in [1, 2, 37, 1 << 20] {
+            let index = Mutex::new(Index {
+                stops: vec![0],
+                ..Index::default()
+            });
+            build_index(&file, &index, &AtomicBool::new(false), chunk);
+            let index = lock(&index);
+            assert_eq!(index.stops, [0, 3072, 6144], "chunk {chunk}");
+            assert_eq!(index.endings, [3000, 0, 0], "chunk {chunk}");
         }
     }
 

@@ -315,6 +315,49 @@ fn utf16_files_are_refused_with_a_message() {
 }
 
 #[test]
+fn find_next_goes_on_past_matches_in_the_part_of_a_line_not_shown() {
+    let d = Dirs::new();
+    // Two matches far along a line (only its first 10,000 bytes are
+    // shown), and one on the next line.
+    let text = format!(
+        "{} ERROR {} ERROR\nERROR end\n",
+        "x".repeat(15_000),
+        "y".repeat(5_000)
+    );
+    let path = d.file("long.log", &text);
+    let mut h = harness();
+    open_viewer(&mut h, &path);
+    let id = match focused_tab(&mut h) {
+        Some(Tab::Viewer(id)) => id,
+        other => panic!("{other:?}"),
+    };
+    let found = |h: &mut Harness<'_, OchrepadApp>| {
+        wait_for(h, |h| {
+            h.state()
+                .viewers
+                .get(id)
+                .is_some_and(|v| !v.state.searching())
+        });
+    };
+    key(&mut h, Modifiers::COMMAND, Key::F);
+    h.event(Event::Text("ERROR".into()));
+    h.run();
+    key(&mut h, Modifiers::NONE, Key::Enter);
+    found(&mut h);
+    key(&mut h, Modifiers::NONE, Key::F3);
+    found(&mut h);
+    assert!(h.query_by_label("Ln 2, Col 6").is_none(), "still on line 1");
+    key(&mut h, Modifiers::NONE, Key::F3);
+    wait_for(&mut h, |h| h.query_by_label("Ln 2, Col 6").is_some());
+    // And back: the second match of line 1, then on to line 2 again.
+    key(&mut h, Modifiers::SHIFT, Key::F3);
+    found(&mut h);
+    assert!(h.query_by_label("Ln 2, Col 6").is_none());
+    key(&mut h, Modifiers::NONE, Key::F3);
+    wait_for(&mut h, |h| h.query_by_label("Ln 2, Col 6").is_some());
+}
+
+#[test]
 fn the_viewer_looks_right() {
     let d = Dirs::new();
     let text = format!(
