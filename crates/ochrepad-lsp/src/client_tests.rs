@@ -261,6 +261,25 @@ fn what_the_server_asks_and_tells() {
 }
 
 #[test]
+fn a_server_stopped_while_it_starts_stays_stopped() {
+    let server = FakeServer::new();
+    let mut c = start(&server.launch());
+    assert!(matches!(c.state, State::Starting));
+    c.shutdown();
+    // The server still answers `initialize`, then reads `exit` and ends.
+    let events = until(&mut c, |e| matches!(e, Event::Stopped { .. }));
+    assert!(
+        !events.iter().any(|e| matches!(e, Event::Started)),
+        "{events:?}"
+    );
+    assert!(
+        matches!(c.state, State::Stopped { asked: true, .. }),
+        "{:?}",
+        c.state
+    );
+}
+
+#[test]
 fn a_server_that_quits_or_never_starts() {
     let quits = Launch::InProcess(Arc::new(|_, _| {}));
     let mut c = start(&quits);

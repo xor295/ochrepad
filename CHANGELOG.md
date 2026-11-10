@@ -39,6 +39,12 @@ people downloading the release.
   (`foo.` replaced by `bar.`) or code had been added elsewhere.
 - Problem underlines stayed a few characters off after typing that opened
   the completion list, until the language server reported again.
+- A language server stopped while it was still starting (servers turned
+  off, or its last document closed) was started again as if it had
+  crashed.
+- In a terminal program that takes the mouse (`vim` with `mouse=a`),
+  pressing Shift between a click's press and release left the program
+  thinking the button was still held.
 - A language server named with its extension in `lsp.json` on Windows
   (`"rust-analyzer.exe"`, `"pyright-langserver.cmd"`) was not found on
   `PATH`.

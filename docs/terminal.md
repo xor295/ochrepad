@@ -125,6 +125,10 @@ itself; one with unsaved changes asks first. See
   Git Bash's "ignore Ctrl+C" setting, and Ctrl+C then does not interrupt
   programs in its terminals. Start ochrepad another way (the Start menu,
   Explorer, PowerShell).
+- On Windows, Ctrl+Insert is Ctrl+C to the terminal (copy a selection, or
+  interrupt the program when nothing is selected), and Ctrl+Shift+Delete
+  is Ctrl+Shift+X: the keys arrive as the same Copy and Cut commands, so
+  the terminal cannot tell them apart.
 - Keyboard layouts that type characters with AltGr may not reach the
   terminal; the editor has the same limit.
 - The terminal does not know the shell's current folder after `cd`, so the
