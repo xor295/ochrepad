@@ -350,10 +350,18 @@ impl Matcher for CursorRegex {
         if !self.expand_captures {
             return replacement.to_owned();
         }
+        // The groups of the match itself: the search ends where the match
+        // does (the text after it is still context for `$` and ``), so a
+        // match cut short by the end of a selection is not read past it.
         let mut caps: Captures = self.re.create_captures();
-        let mut inp = input(doc, m.start..doc.len().0);
-        inp.anchored(Anchored::Yes);
-        self.re.captures(inp, &mut caps);
+        for end in [m.end, doc.len().0] {
+            let mut inp = input(doc, m.start..end);
+            inp.anchored(Anchored::Yes);
+            self.re.captures(inp, &mut caps);
+            if caps.is_match() {
+                break;
+            }
+        }
         let replacement = unescape(replacement);
         let mut out = String::new();
         interpolate::string(

@@ -177,7 +177,8 @@ pub struct OchrepadApp {
     /// Rename, while it asks and waits.
     renaming: Option<edits::Rename>,
     /// Format Document's request in flight.
-    formatting: Option<edits::Formatting>,
+    /// Formatting requests in flight, at most one per document.
+    formatting: Vec<edits::Formatting>,
     /// Code actions: asked for, shown, or running.
     code_actions: Option<code_actions::CodeActions>,
     /// Search > Go to Symbol in Folder, while it is open.
@@ -297,7 +298,7 @@ impl OchrepadApp {
             signature: Default::default(),
             definition: None,
             renaming: None,
-            formatting: None,
+            formatting: Vec::new(),
             code_actions: None,
             symbol_search: None,
             problems: Default::default(),
@@ -676,8 +677,7 @@ impl OchrepadApp {
             );
             return;
         }
-        if self.snapshots_active() {
-            self.exit_with_snapshots();
+        if self.snapshots_active() && self.exit_with_snapshots() {
             return;
         }
         self.exiting = true;

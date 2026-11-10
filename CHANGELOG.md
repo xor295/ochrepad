@@ -10,6 +10,23 @@ people downloading the release.
 
 ## [Unreleased]
 
+### Fixed
+
+- A followed file (View > Follow) no longer shows text twice after you
+  type at its end and save: what the file gained next was added after the
+  text just saved, again.
+- Exiting no longer closes without asking when a backup of unsaved work
+  could not be written (a full disk, a backup folder that cannot be
+  written). ochrepad says so and asks about each unsaved document, as it
+  does with backups off; a failed backup is also tried again.
+- With format on save, saving a second document before the language server
+  had formatted the first no longer leaves the first unsaved.
+- A regex Replace All "in selection" whose match was cut short by the end
+  of the selection put the whole word in for `$0` and the groups, not the
+  part that matched.
+- Sort Lines with "remove duplicates" left duplicates that were not next
+  to each other after a numeric, by-length or column sort.
+
 ## [0.4.0] - 2026-10-25
 
 ### Added

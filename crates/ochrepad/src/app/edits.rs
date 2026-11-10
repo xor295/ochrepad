@@ -11,6 +11,7 @@ use egui::{Id, Key, Modal, Ui};
 use ochrepad_core::position::{ColumnUnits, from_lsp_position};
 use ochrepad_core::{Action, BufferId, ByteOffset, Document, TextEdit};
 use ochrepad_lsp::Tag;
+use ochrepad_lsp::message::ResponseError;
 use ochrepad_lsp::uri::{file_path, normalize, plain_path};
 use serde_json::{Value, json};
 
@@ -140,11 +141,17 @@ impl OchrepadApp {
         let Some((tag, id)) = sent else {
             return false;
         };
-        if let Some(f) = self.formatting.take() {
+        // A newer request for the same document replaces the one in
+        // flight, and keeps the save that one owed. Other documents'
+        // requests go on: each is answered (and saved) by itself.
+        let mut then_save = then_save;
+        if let Some(at) = self.formatting.iter().position(|f| f.buffer == buffer) {
+            let f = self.formatting.remove(at);
             self.language_servers.cancel(f.buffer, f.id);
             let _ = self.language_servers.take_answer(f.tag);
+            then_save |= f.then_save;
         }
-        self.formatting = Some(Formatting {
+        self.formatting.push(Formatting {
             buffer,
             tag,
             id,
@@ -219,15 +226,21 @@ impl OchrepadApp {
     }
 
     fn formatting_tick(&mut self) {
-        let Some(f) = &self.formatting else {
-            return;
-        };
-        let Some(answer) = self.language_servers.take_answer(f.tag) else {
-            return;
-        };
-        let Some(f) = self.formatting.take() else {
-            return;
-        };
+        let mut at = 0;
+        while at < self.formatting.len() {
+            match self.language_servers.take_answer(self.formatting[at].tag) {
+                Some(answer) => {
+                    let f = self.formatting.remove(at);
+                    self.formatted(f, answer);
+                }
+                None => at += 1,
+            }
+        }
+    }
+
+    /// A formatting request's answer: applies it, and saves if it was asked
+    /// for by a save.
+    fn formatted(&mut self, f: Formatting, answer: Result<Value, ResponseError>) {
         match answer {
             Ok(Value::Array(edits)) => {
                 let doc = self.editor.buffer(f.buffer).map(|b| b.doc().clone());

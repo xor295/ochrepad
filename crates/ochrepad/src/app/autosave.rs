@@ -133,6 +133,11 @@ pub(super) enum PendingJob {
         files: usize,
         unnamed: usize,
     },
+    /// A backup snapshot of `buffer` at `revision`.
+    Snapshot {
+        buffer: BufferId,
+        revision: u64,
+    },
     Other,
 }
 
@@ -150,6 +155,8 @@ pub(super) struct Persist {
     pub(super) history_written: HashMap<BufferId, (u64, PathBuf)>,
     /// Revision of the last snapshot written for each buffer.
     snapshotted: HashMap<BufferId, u64>,
+    /// A snapshot could not be written since the exit began.
+    snapshot_failed: bool,
     pub saving: HashSet<BufferId>,
     last_tick: Option<f64>,
     last_session: Vec<u8>,
@@ -274,6 +281,20 @@ impl OchrepadApp {
                     files,
                     unnamed,
                 }) => self.session_saved(&path, files, unnamed, d.result),
+                Some(PendingJob::Snapshot { buffer, revision }) => {
+                    if let Err(e) = d.result {
+                        self.message = Some(format!(
+                            "Could not write a backup:
+{e}"
+                        ));
+                        // Not backed up after all: the next round tries
+                        // again, and an exit asks instead of relying on it.
+                        if self.persist.snapshotted.get(&buffer) == Some(&revision) {
+                            self.persist.snapshotted.remove(&buffer);
+                        }
+                        self.persist.snapshot_failed = true;
+                    }
+                }
                 Some(PendingJob::Other) | None => {
                     if let Err(e) = d.result {
                         self.message = Some(format!("Could not write a backup:\n{e}"));
@@ -304,6 +325,7 @@ impl OchrepadApp {
             self.write_history(buffer);
         }
         self.record_disk_stamp(buffer);
+        self.refresh_follow_tail(buffer);
         if self.is_keymap_file(&path) {
             self.reload_keymap();
         }
@@ -386,7 +408,13 @@ impl OchrepadApp {
                 },
             };
             let tag = self.persist.worker.submit(job);
-            self.persist.pending.insert(tag, PendingJob::Other);
+            self.persist.pending.insert(
+                tag,
+                PendingJob::Snapshot {
+                    buffer: id,
+                    revision,
+                },
+            );
             self.persist.snapshotted.insert(id, revision);
             self.write_history(id);
         }
@@ -547,13 +575,22 @@ impl OchrepadApp {
     }
 
     /// Exit with snapshots on: back up everything, write the session, wait
-    /// for the disk, and close without asking.
-    pub(super) fn exit_with_snapshots(&mut self) {
+    /// for the disk, and close without asking. False when a backup could
+    /// not be written (the message says so): the exit must ask about
+    /// unsaved documents instead, as with backups off.
+    pub(super) fn exit_with_snapshots(&mut self) -> bool {
+        // A backup still being written that fails is tried again below.
+        self.flush_disk();
+        self.persist.snapshot_failed = false;
         self.snapshot_dirty();
         self.write_all_histories();
         self.write_session();
         self.flush_disk();
+        if self.persist.snapshot_failed {
+            return false;
+        }
         self.close_confirmed = true;
+        true
     }
 
     /// Restores the session written at the last exit.

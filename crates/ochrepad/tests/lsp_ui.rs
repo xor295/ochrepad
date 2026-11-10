@@ -771,3 +771,50 @@ fn go_to_symbol_searches_the_server_and_opens_the_one_chosen() {
     h.run();
     h.get_by_label("Ln 2, Col 4");
 }
+
+#[test]
+fn format_on_save_saves_every_document_asked_for() {
+    let server = FakeServer::new()
+        .capabilities(json!({
+            "textDocumentSync": { "openClose": true, "change": 2 },
+            "documentFormattingProvider": true,
+        }))
+        .answer("textDocument/formatting", |_| {
+            json!([{"range": {"start": {"line": 0, "character": 11}, "end": {"line": 0, "character": 11}}, "newText": "
+"}])
+        });
+    let (dir, mut h) = open_rust_file(&server);
+    h.state_mut()
+        .settings
+        .lsp_trusted
+        .push(dir.path().to_path_buf());
+    let other = dir.path().join("other.rs");
+    std::fs::write(
+        &other,
+        "fn main() {}
+",
+    )
+    .unwrap();
+    h.state_mut().open_path(&other);
+    wait(&mut h, "both documents open", |_| {
+        server.params("textDocument/didOpen").len() == 2
+    });
+    h.state_mut().settings.format_on_save = true;
+
+    // Ctrl+S in one document, then in the other before the server answers.
+    assert!(h.state_mut().save());
+    let first = h.state().tabs()[0];
+    h.state_mut().activate(first);
+    assert!(h.state_mut().save());
+    let formatted = |p: &std::path::Path| {
+        std::fs::read_to_string(p).is_ok_and(|t| {
+            t == "fn main() {
+}
+"
+        })
+    };
+    let main = dir.path().join("main.rs");
+    wait(&mut h, "both formatted files on disk", |_| {
+        formatted(&main) && formatted(&other)
+    });
+}

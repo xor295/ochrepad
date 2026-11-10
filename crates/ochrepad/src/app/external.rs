@@ -119,6 +119,26 @@ impl OchrepadApp {
         self.external.stamps.insert(buffer, s);
     }
 
+    /// Remembers the end of a followed document's file again, after the
+    /// document was saved to it or reloaded from it. Without this the next
+    /// thing the file gains would be appended after an end the document
+    /// has moved past, and what was saved since would be there twice.
+    pub(super) fn refresh_follow_tail(&mut self, buffer: BufferId) {
+        if !self.external.follow.contains(&buffer) {
+            return;
+        }
+        let tail = self
+            .editor
+            .buffer(buffer)
+            .and_then(|b| b.meta.path.as_deref())
+            .and_then(read_tail);
+        match tail {
+            Some(t) => self.external.tails.insert(buffer, t),
+            // No end to compare with: the next change reloads.
+            None => self.external.tails.remove(&buffer),
+        };
+    }
+
     /// The external changes waiting for an answer.
     pub fn pending_disk_changes(&self) -> Vec<(BufferId, DiskChange)> {
         self.external.queue.iter().copied().collect()
@@ -405,6 +425,7 @@ impl OchrepadApp {
         match result {
             Ok(()) => {
                 self.record_disk_stamp(buffer);
+                self.refresh_follow_tail(buffer);
                 self.delete_snapshot(buffer);
                 true
             }

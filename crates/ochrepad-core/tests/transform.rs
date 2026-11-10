@@ -296,3 +296,25 @@ fn shuffling_keeps_the_lines_and_the_seed_decides_the_order() {
     assert_eq!(got, want, "the same lines");
     assert!(a.ends_with('\n'), "the final line break stays");
 }
+
+#[test]
+fn a_numeric_sort_removes_duplicates_that_are_not_next_to_each_other() {
+    let mut t = setup(
+        "|1 a
+1 b
+1 a
+0 c
+",
+    );
+    t.apply(sort(|o| {
+        o.numeric = true;
+        o.remove_duplicates = true;
+    }));
+    assert_eq!(
+        t.text(),
+        "0 c
+1 a
+1 b
+"
+    );
+}
