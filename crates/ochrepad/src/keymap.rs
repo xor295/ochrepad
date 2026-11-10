@@ -319,6 +319,14 @@ impl Keymap {
             .collect()
     }
 
+    /// The first key bound to `command`, to show beside its name.
+    pub fn chord_for(&self, command: &EditorCommand) -> Option<Chord> {
+        self.bindings
+            .iter()
+            .find(|(_, c)| c == command)
+            .map(|(chord, _)| *chord)
+    }
+
     pub fn lookup(&self, key: Key, modifiers: Modifiers) -> Option<&EditorCommand> {
         self.bindings
             .iter()

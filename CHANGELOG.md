@@ -10,6 +10,16 @@ people downloading the release.
 
 ## [Unreleased]
 
+### Added
+
+- **A command palette.** Ctrl+Shift+A (or the **Commands** button at the
+  right of the menu bar) lists every command by its menu path; type a few
+  letters of the name, such as `sort asc` or `wrap`, and press Enter. Each
+  command shows its shortcut, settings show whether they are on, and the
+  commands you ran last come first. It also sets the language and syntax
+  theme, runs saved macros, and works from a terminal tab. See
+  `docs/command-palette.md`.
+
 ### Fixed
 
 - A followed file (View > Follow) no longer shows text twice after you

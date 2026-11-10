@@ -58,6 +58,8 @@ A fast, native text editor in the spirit of Notepad++, written in Rust with
   pyright, gopls, clangd, …): problems underlined as you type, and what a
   name is when you rest the pointer on it. They run only in folders you
   trust ([more](docs/language-servers.md)).
+- **A command palette** (Ctrl+Shift+A): every command by name, found by
+  typing a few of its letters ([more](docs/command-palette.md)).
 
 Not included (by design, for now): right-to-left text, proportional fonts
 and plugins.
@@ -120,6 +122,7 @@ Most of Notepad++'s shortcuts work as they do there. The everyday ones:
 | Bookmark a line, next, previous | Ctrl+F2, F2, Shift+F2 |
 | Fold, unfold, fold all | Ctrl+Alt+F, Ctrl+Alt+Shift+F, Alt+0 |
 | Record, play a macro | Ctrl+Shift+R, Ctrl+Shift+P |
+| Command palette (every command by name) | Ctrl+Shift+A |
 | Next/previous tab, reopen closed tab | Ctrl+Tab, Ctrl+Shift+Tab, Ctrl+Shift+T |
 | Markdown preview, sidebar | Ctrl+Shift+M, Ctrl+Shift+E |
 | Terminal, new terminal | Ctrl+\`, Ctrl+Shift+\` |

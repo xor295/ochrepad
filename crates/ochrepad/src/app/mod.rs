@@ -31,6 +31,7 @@ mod file_extras;
 mod history_store;
 mod language_servers;
 mod navigate;
+mod palette;
 mod prefs;
 mod replace_in_files;
 mod search;
@@ -177,6 +178,8 @@ pub struct OchrepadApp {
     /// Rename, while it asks and waits.
     renaming: Option<edits::Rename>,
     /// Format Document's request in flight.
+    /// The command palette (Ctrl+Shift+A).
+    palette: palette::Palette,
     /// Formatting requests in flight, at most one per document.
     formatting: Vec<edits::Formatting>,
     /// Code actions: asked for, shown, or running.
@@ -298,6 +301,7 @@ impl OchrepadApp {
             signature: Default::default(),
             definition: None,
             renaming: None,
+            palette: Default::default(),
             formatting: Vec::new(),
             code_actions: None,
             symbol_search: None,
@@ -961,6 +965,8 @@ impl OchrepadApp {
         self.poll_exports(ui);
         self.watch_files(ui);
         self.drag_and_drop(ui);
+        // The command palette's keys come before everyone else's.
+        self.palette_keys(ui);
         // A terminal with the keyboard gets nearly every key.
         if self.terminal_has_keyboard(ui) {
             self.terminal_shortcuts(ui);
@@ -1321,6 +1327,7 @@ impl OchrepadApp {
         self.edit_tools_frame(ui);
         self.external_dialog(ui);
         self.preferences_window(ui);
+        self.palette_ui(ui);
         if let Some((source, repeat)) = self.macros.dialogs(ui) {
             self.play_macro(source, repeat);
         }
@@ -1616,10 +1623,18 @@ impl OchrepadApp {
                 bar_menu(ui, "?", |ui| self.help_menu(ui)),
             ];
             switch_menu_on_hover(ui, &titles);
+            self.palette_button(ui);
         });
     }
 
     fn help_menu(&mut self, ui: &mut Ui) {
+        if ui
+            .add(Button::new("Command Palette…").shortcut_text(palette::OPEN_PALETTE_TEXT))
+            .clicked()
+        {
+            self.toggle_palette();
+            ui.close();
+        }
         if ui.button("About").clicked() {
             self.about = Some(about::AboutDialog::default());
             ui.close();

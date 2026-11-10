@@ -53,6 +53,7 @@ ochrepad would otherwise use (Ctrl+W, Ctrl+N, Ctrl+R and so on), except:
 | Ctrl+\`, Ctrl+Shift+\` | Show the editor or the terminal, open a new terminal |
 | Ctrl+Tab, Ctrl+Shift+Tab, Ctrl+PageUp, Ctrl+PageDown | Switch tabs |
 | F11 | Full screen |
+| Ctrl+Shift+A | The [command palette](command-palette.md) |
 
 The menus still work with the mouse.
 
