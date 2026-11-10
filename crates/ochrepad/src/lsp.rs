@@ -360,14 +360,8 @@ impl LanguageServers {
             Some(d) if d.revision == revision => {}
             Some(d) => {
                 d.revision = revision;
-                if let Some((old, new)) = s.client.change(&uri, doc)
-                    && let Some(f) = self.diagnostics.get_mut(&uri)
-                {
-                    for item in &mut f.items {
-                        if let Some(r) = &mut item.range {
-                            *r = map(r.start, &old, &new)..map(r.end, &old, &new);
-                        }
-                    }
+                if let Some((old, new)) = s.client.change(&uri, doc) {
+                    shift_diagnostics(&mut self.diagnostics, &uri, &old, &new);
                 }
             }
             None => {
@@ -747,10 +741,15 @@ impl LanguageServers {
             return None;
         }
         let uri = uri.to_owned();
-        s.client.change(&uri, doc);
+        let changed = s.client.change(&uri, doc);
         let p = params(&s.client, &uri);
-        let id = s.client.request(method, p, tag, timeout)?;
-        Some((tag, id))
+        let id = s.client.request(method, p, tag, timeout);
+        // The edit this sent is not seen again by `serve` (the server's
+        // copy is up to date by then): the diagnostics move with it here.
+        if let Some((old, new)) = changed {
+            shift_diagnostics(&mut self.diagnostics, &uri, &old, &new);
+        }
+        Some((tag, id?))
     }
 
     /// Gives up on a request about `buffer`'s document.
@@ -840,6 +839,24 @@ fn setup(file: &Path, open_folder: Option<&Path>, servers: &[ServerConfig]) -> O
 
 /// `pos` after the edit that replaced `old` with `new` (inside the
 /// replaced text: the end of the new text).
+/// Moves `uri`'s diagnostics through an edit that replaced `old` with what
+/// is now at `new`.
+fn shift_diagnostics(
+    diagnostics: &mut HashMap<String, FileDiagnostics>,
+    uri: &str,
+    old: &Range<ByteOffset>,
+    new: &Range<ByteOffset>,
+) {
+    let Some(f) = diagnostics.get_mut(uri) else {
+        return;
+    };
+    for item in &mut f.items {
+        if let Some(r) = &mut item.range {
+            *r = map(r.start, old, new)..map(r.end, old, new);
+        }
+    }
+}
+
 fn map(pos: ByteOffset, old: &Range<ByteOffset>, new: &Range<ByteOffset>) -> ByteOffset {
     if pos <= old.start {
         pos

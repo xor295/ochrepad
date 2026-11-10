@@ -34,6 +34,11 @@ people downloading the release.
   and search results there had the wrong line numbers. This happened only
   when a line break fell exactly across two of the reads that index the
   file.
+- A language server's completions for one place were offered again,
+  without asking the server, after the text before the word had changed
+  (`foo.` replaced by `bar.`) or code had been added elsewhere.
+- Problem underlines stayed a few characters off after typing that opened
+  the completion list, until the language server reported again.
 - A language server named with its extension in `lsp.json` on Windows
   (`"rust-analyzer.exe"`, `"pyright-langserver.cmd"`) was not found on
   `PATH`.
