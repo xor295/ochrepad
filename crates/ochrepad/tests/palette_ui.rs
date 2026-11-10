@@ -150,6 +150,11 @@ fn commands_follow_what_has_the_focus_and_show_their_keys() {
 fn the_palette_looks_right() {
     let mut h = harness("pear\napple\nfig\n");
     h.set_size(Vec2::new(760.0, 420.0));
+    // No soft shadow under the palette here: renderers blur it a little
+    // differently (Linux CI's software Vulkan against Windows'), which is
+    // not what this image is for.
+    h.ctx
+        .all_styles_mut(|s| s.visuals.popup_shadow = egui::Shadow::NONE);
     h.run();
     open(&mut h);
     typ(&mut h, "line");
