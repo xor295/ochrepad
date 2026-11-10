@@ -215,7 +215,7 @@ impl OchrepadApp {
             return;
         }
         if let Some(edit) = action.get("edit")
-            && let Err(e) = self.apply_workspace_edit(edit, units)
+            && let Err(e) = self.apply_workspace_edit(edit, units, None)
         {
             self.message = Some(format!("The code action was not applied:\n{e}"));
             return;

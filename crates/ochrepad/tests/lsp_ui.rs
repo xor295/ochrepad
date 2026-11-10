@@ -890,3 +890,64 @@ fn a_servers_list_is_not_used_again_for_other_text_at_the_same_place() {
     key(&mut h, egui::Modifiers::COMMAND, egui::Key::Space);
     wait(&mut h, "the server asked again", |_| asked() == 2);
 }
+
+#[test]
+fn rename_is_not_applied_to_a_document_that_changed_while_the_server_worked() {
+    // As many servers answer: edits without document versions.
+    let server = FakeServer::new()
+        .capabilities(json!({
+            "textDocumentSync": { "openClose": true, "change": 2 },
+            "renameProvider": true,
+        }))
+        .answer("textDocument/rename", |p| {
+            // Slow enough for the document to change meanwhile.
+            std::thread::sleep(Duration::from_millis(300));
+            let uri = p["textDocument"]["uri"].as_str().unwrap().to_owned();
+            json!({"changes": {uri: [
+                {"range": {"start": {"line": 0, "character": 3}, "end": {"line": 0, "character": 7}},
+                 "newText": p["newName"]},
+            ]}})
+        });
+    let (dir, mut h) = open_rust_file(&server);
+    h.state_mut()
+        .settings
+        .lsp_trusted
+        .push(dir.path().to_path_buf());
+    wait(&mut h, "didOpen", |_| {
+        !server.params("textDocument/didOpen").is_empty()
+    });
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::G);
+    h.run();
+    h.event(Event::Text("1:4".into()));
+    h.key_press(egui::Key::Enter);
+    h.run();
+    h.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::F6);
+    wait(&mut h, "the rename dialog", |h| {
+        h.query_by_label("Rename main to:").is_some()
+    });
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    h.event(Event::Text("start".into()));
+    // The request is sent; the document changes before the answer comes.
+    h.key_press(egui::Key::Enter);
+    wait(&mut h, "the rename request", |_| {
+        !server.params("textDocument/rename").is_empty()
+    });
+    let view = h.state().active_view();
+    h.state_mut()
+        .editor
+        .apply(
+            view,
+            ochrepad_core::Action::SetSelections(ochrepad_core::SelectionSet::caret(
+                ochrepad_core::ByteOffset(0),
+            )),
+        )
+        .unwrap();
+    h.state_mut()
+        .editor
+        .apply(view, ochrepad_core::Action::InsertText("// x\n".into()))
+        .unwrap();
+    wait(&mut h, "the refusal", |h| h.state().message().is_some());
+    let message = h.state().message().unwrap().to_owned();
+    assert!(message.contains("changed while"), "{message}");
+    assert_eq!(text(&h), "// x\nfn main() {}\n", "nothing was renamed");
+}

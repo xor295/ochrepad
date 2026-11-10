@@ -32,9 +32,18 @@ pub(super) enum Rename {
         old: String,
         new: String,
     },
-    /// Waiting for the server's edits.
-    Renaming { tag: Tag, units: ColumnUnits },
+    /// Waiting for the server's edits; `seen` is every open document's
+    /// revision when it was asked.
+    Renaming {
+        tag: Tag,
+        units: ColumnUnits,
+        seen: Revisions,
+    },
 }
+
+/// Open documents' revisions when a server was asked for edits. Its edits
+/// are for that text: a document that changed since gets none of them.
+pub(super) type Revisions = std::collections::HashMap<BufferId, u64>;
 
 /// A formatting request in flight.
 pub(super) struct Formatting {
@@ -211,9 +220,9 @@ impl OchrepadApp {
                     old,
                 });
             }
-            Some(Rename::Renaming { units, .. }) => match answer {
+            Some(Rename::Renaming { units, seen, .. }) => match answer {
                 Ok(Value::Null) => self.note_text("The language server made no changes"),
-                Ok(edit) => match self.apply_workspace_edit(&edit, units) {
+                Ok(edit) => match self.apply_workspace_edit(&edit, units, Some(&seen)) {
                     Ok(0) => self.note_text("The language server made no changes"),
                     Ok(1) => self.note_text("Renamed"),
                     Ok(n) => self.note_text(format!("Renamed in {n} files (not saved yet)")),
@@ -336,7 +345,10 @@ impl OchrepadApp {
                     Duration::from_secs(60),
                 );
                 match sent {
-                    Some((tag, _)) => self.renaming = Some(Rename::Renaming { tag, units }),
+                    Some((tag, _)) => {
+                        let seen = self.revisions();
+                        self.renaming = Some(Rename::Renaming { tag, units, seen });
+                    }
                     None => self.note_text("The language server stopped"),
                 }
                 self.view_state_mut().request_focus();
@@ -349,12 +361,24 @@ impl OchrepadApp {
         }
     }
 
+    /// Every open document's revision now.
+    pub(super) fn revisions(&self) -> Revisions {
+        self.editor
+            .buffers()
+            .map(|b| (b.id(), b.revision()))
+            .collect()
+    }
+
     /// Applies a server's workspace edit; the number of files changed.
-    /// Nothing is applied unless every edit fits its document.
+    /// Nothing is applied unless every edit fits its document, and (with
+    /// `seen`, the revisions when the server was asked) unless every
+    /// document it edits is as it was then: servers often leave out the
+    /// document versions that would say so.
     pub(super) fn apply_workspace_edit(
         &mut self,
         edit: &Value,
         units: ColumnUnits,
+        seen: Option<&Revisions>,
     ) -> Result<usize, String> {
         let files = workspace_edits(edit)?;
         let active = self.active;
@@ -368,6 +392,15 @@ impl OchrepadApp {
                     {
                         return Err(format!(
                             "{} changed since the language server looked at it",
+                            f.path.display()
+                        ));
+                    }
+                    let revision = self.editor.buffer(b).map(|b| b.revision());
+                    if let Some(then) = seen.and_then(|s| s.get(&b))
+                        && revision != Some(*then)
+                    {
+                        return Err(format!(
+                            "{} changed while the language server worked",
                             f.path.display()
                         ));
                     }

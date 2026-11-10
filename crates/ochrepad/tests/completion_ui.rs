@@ -390,3 +390,34 @@ fn the_other_documents_and_the_folder_can_be_left_out() {
     typ(&mut h, " else");
     assert_eq!(labels(&h), ["elsewhere_defined"]);
 }
+
+#[test]
+fn a_letter_and_tab_in_one_frame_replace_the_word_as_it_is_then() {
+    let mut h = harness(WORDS);
+    typ(&mut h, "pr");
+    let first = labels(&h)[0].clone();
+    assert!(first.starts_with("pri"), "{first}");
+    // Fast typing: both keys arrive before the popup is made again (the
+    // harness gives each queued event a frame of its own, so these go
+    // straight into the next frame's input).
+    let tab = || Event::Key {
+        key: Key::Tab,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Modifiers::NONE,
+    };
+    h.input_mut().events.push(Event::Text("i".into()));
+    h.input_mut().events.push(tab());
+    h.run();
+    assert_eq!(text(&h), format!("{WORDS}{first}"));
+
+    // An item that no longer fits what is typed is not put in: Tab is a
+    // tab, as it is once the popup has closed.
+    let mut h = harness(WORDS);
+    typ(&mut h, "pr");
+    h.input_mut().events.push(Event::Text("z".into()));
+    h.input_mut().events.push(tab());
+    h.run();
+    assert_eq!(text(&h), format!("{WORDS}prz\t"));
+}

@@ -108,6 +108,9 @@ pub(super) enum PendingJob {
         buffer: BufferId,
         revision: u64,
         path: PathBuf,
+        /// Saved under another name than the document had (Save As): it
+        /// takes the name when the write succeeds.
+        save_as: bool,
         /// The text written (the change history compares with it).
         doc: ochrepad_core::Document,
     },
@@ -157,6 +160,9 @@ pub(super) struct Persist {
     snapshotted: HashMap<BufferId, u64>,
     /// A snapshot could not be written since the exit began.
     snapshot_failed: bool,
+    /// Documents whose save waits for a rename of their file (or a folder
+    /// above it) that the worker has not done yet.
+    after_rename: Vec<BufferId>,
     pub saving: HashSet<BufferId>,
     last_tick: Option<f64>,
     last_session: Vec<u8>,
@@ -205,6 +211,18 @@ impl OchrepadApp {
         let Some(b) = self.editor.buffer(buffer) else {
             return false;
         };
+        let save_as = b.meta.path.as_deref() != Some(path.as_path());
+        // The file is being renamed: a save queued now would run after the
+        // rename and write the old name again. It is saved under the name
+        // it has once the rename is done (or was refused).
+        if !save_as && self.rename_pending(&path) {
+            if !self.persist.after_rename.contains(&buffer) {
+                self.persist.after_rename.push(buffer);
+            }
+            // A close or exit waiting on this save waits for it too.
+            self.persist.saving.insert(buffer);
+            return true;
+        }
         let job = Job::Save {
             path: path.clone(),
             doc: b.doc().clone(),
@@ -219,11 +237,34 @@ impl OchrepadApp {
                 buffer,
                 revision,
                 path,
+                save_as,
                 doc,
             },
         );
         self.persist.saving.insert(buffer);
         true
+    }
+
+    /// Whether a rename of `path`, or of a folder above it, is queued.
+    fn rename_pending(&self, path: &Path) -> bool {
+        self.persist.pending.values().any(|job| {
+            matches!(
+                job,
+                PendingJob::Tree(super::workspace::TreeJob::Rename { from, .. })
+                    if path.starts_with(from)
+            )
+        })
+    }
+
+    /// A rename finished (or was refused): the saves that waited for it.
+    fn save_after_rename(&mut self) {
+        for buffer in std::mem::take(&mut self.persist.after_rename) {
+            self.persist.saving.remove(&buffer);
+            let path = self.editor.buffer(buffer).and_then(|b| b.meta.path.clone());
+            if let Some(path) = path {
+                self.submit_save(buffer, path);
+            }
+        }
     }
 
     /// Handles finished disk jobs.
@@ -238,8 +279,14 @@ impl OchrepadApp {
 
     /// Waits for every queued write (exit, tests).
     pub fn flush_disk(&mut self) {
-        let done = self.persist.worker.wait_idle();
-        self.handle_done(done);
+        loop {
+            let done = self.persist.worker.wait_idle();
+            self.handle_done(done);
+            // A finished job may queue another (a save after a rename).
+            if self.persist.worker.in_flight() == 0 {
+                break;
+            }
+        }
     }
 
     fn handle_done(&mut self, done: Vec<fileio::worker::Done>) {
@@ -249,6 +296,7 @@ impl OchrepadApp {
                     buffer,
                     revision,
                     path,
+                    save_as,
                     doc,
                 }) => {
                     self.persist.saving.remove(&buffer);
@@ -257,7 +305,7 @@ impl OchrepadApp {
                             self.changes.saved(buffer, doc, revision);
                             self.completion.saved(&path);
                             self.language_servers.saved(buffer);
-                            self.save_finished(buffer, revision, path);
+                            self.save_finished(buffer, revision, path, save_as);
                         }
                         Err(e) => {
                             self.message = Some(format!("Could not save {}:\n{e}", path.display()));
@@ -268,7 +316,13 @@ impl OchrepadApp {
                         }
                     }
                 }
-                Some(PendingJob::Tree(job)) => self.tree_job_done(job, d.result),
+                Some(PendingJob::Tree(job)) => {
+                    let rename = matches!(job, super::workspace::TreeJob::Rename { .. });
+                    self.tree_job_done(job, d.result);
+                    if rename {
+                        self.save_after_rename();
+                    }
+                }
                 Some(PendingJob::ReplaceInFiles { path, matches }) => {
                     self.replace_in_files_saved(&path, matches, d.result);
                 }
@@ -301,12 +355,15 @@ impl OchrepadApp {
         }
     }
 
-    fn save_finished(&mut self, buffer: BufferId, revision: u64, path: PathBuf) {
+    fn save_finished(&mut self, buffer: BufferId, revision: u64, path: PathBuf, save_as: bool) {
         let Some(b) = self.editor.buffer_mut(buffer) else {
             return;
         };
         b.mark_saved_at(revision);
-        let renamed = b.meta.path.as_deref() != Some(path.as_path());
+        // Only a Save As gives the document the name: a plain save that
+        // finishes after a Save As elsewhere (or a rename) does not take
+        // it back to the old one.
+        let renamed = save_as && b.meta.path.as_deref() != Some(path.as_path());
         if renamed {
             b.meta.path = Some(path.clone());
         }

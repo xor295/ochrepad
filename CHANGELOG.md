@@ -39,6 +39,15 @@ people downloading the release.
   (`foo.` replaced by `bar.`) or code had been added elsewhere.
 - Problem underlines stayed a few characters off after typing that opened
   the completion list, until the language server reported again.
+- Rename (Shift+F6) no longer puts a language server's edits into a
+  document that changed while the server was working; it says so and
+  changes nothing.
+- Saving right after File > Rename (before the rename had finished) wrote
+  the file under its old name again and undid the rename. The save now
+  waits and goes to the new name. A save that finishes after a Save As
+  elsewhere no longer takes the document back to its old name either.
+- Typing a letter and Tab (or Enter) so fast that both arrived together
+  could accept a completion over the wrong characters (`pprintln`).
 - A language server stopped while it was still starting (servers turned
   off, or its last document closed) was started again as if it had
   crashed.
