@@ -10,6 +10,8 @@ people downloading the release.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-09
+
 ### Added
 
 - **A command palette.** Ctrl+Shift+A (or the **Commands** button at the
@@ -67,6 +69,14 @@ people downloading the release.
 - A language server named with its extension in `lsp.json` on Windows
   (`"rust-analyzer.exe"`, `"pyright-langserver.cmd"`) was not found on
   `PATH`.
+
+### Dependency Updates
+- pulldown-cmark 0.13.4 → 0.13.6 (transitive via egui_commonmark): RUSTSEC-2026-0433, 
+  quadratic parsing of nested image wikilinks with ENABLE_WIKILINKS. egui_commonmark
+  0.25 never sets that option, so the Markdown preview was not affected; this only 
+  clears the advisory.
+- async-executor 1.14.0 → 1.14.1 (transitive via eframe/accesskit on Linux): 1.14.0 
+  was yanked, which cargo deny reported once the advisory above was gone.
 
 ## [0.4.0] - 2026-10-25
 
