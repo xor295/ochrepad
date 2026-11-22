@@ -2,6 +2,8 @@
 //! terminal takes from the app, closing. A real shell runs (`cmd.exe` on
 //! Windows, `/bin/sh` on Linux).
 
+mod util;
+
 use std::time::Duration;
 
 use egui::{Event, Key, Modifiers, Vec2};
@@ -272,6 +274,7 @@ fn a_terminal_looks_right() {
         .with_size(Vec2::new(760.0, 600.0))
         .with_step_dt(1.0 / 60.0)
         .with_max_steps(10_000)
+        .renderer(util::renderer())
         .build_ui_state(|ui, app: &mut OchrepadApp| app.show(ui), app);
     h.run();
     // A folder name that is the same on every machine (the status bar shows

@@ -14,6 +14,7 @@ fn app_harness(app: OchrepadApp) -> Harness<'static, OchrepadApp> {
         .with_size(Vec2::new(900.0, 560.0))
         .with_step_dt(1.0 / 60.0)
         .with_max_steps(10_000)
+        .renderer(util::renderer())
         .build_ui_state(|ui, app: &mut OchrepadApp| app.show(ui), app);
     h.run();
     h

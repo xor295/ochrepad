@@ -16,7 +16,7 @@ fn harness(text: &str, width: f32) -> Harness<'static, OchrepadApp> {
         .with_size(Vec2::new(width, 260.0))
         .with_step_dt(1.0 / 60.0)
         .with_max_steps(10_000)
-        .wgpu()
+        .renderer(util::renderer())
         .build_ui_state(|ui, app: &mut OchrepadApp| app.show(ui), app);
     h.event(Event::Paste(text.to_owned()));
     h.run();
