@@ -10,6 +10,15 @@ people downloading the release.
 
 ## [Unreleased]
 
+### Dependency Updates
+- rustix 1.1.5 → 1.1.6 (transitive via alacritty_terminal, tempfile, winit and
+  others): RUSTSEC-2026-0486, unsound extended-attribute functions given a
+  zero-length buffer. Nothing in ochrepad's dependency tree calls them; this
+  only clears the advisory.
+- url 2.5.8 → 2.5.9 (transitive via eframe's webbrowser): RUSTSEC-2026-0592,
+  stack overflow in `Url::origin()` on nested `blob:` URLs. webbrowser does not
+  call `origin()`; this only clears the advisory.
+
 ## [0.5.0] - 2026-11-09
 
 ### Added
