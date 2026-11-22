@@ -1,5 +1,7 @@
 //! Files that used to crash or hang the app (the 0.3.0 security review).
 
+mod util;
+
 use egui::{Event, Key, Modifiers, Vec2};
 use egui_kittest::Harness;
 use ochrepad::OchrepadApp;
@@ -9,7 +11,7 @@ fn harness() -> Harness<'static, OchrepadApp> {
         .with_size(Vec2::new(800.0, 400.0))
         .with_step_dt(1.0 / 60.0)
         .with_max_steps(10_000)
-        .wgpu()
+        .renderer(util::renderer())
         .build_ui_state(|ui, app: &mut OchrepadApp| app.show(ui), OchrepadApp::new());
     h.run();
     h

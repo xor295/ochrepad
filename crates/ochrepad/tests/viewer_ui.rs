@@ -1,5 +1,7 @@
 //! 0.3.0 P7: files too large to edit open read-only in a viewer.
 
+mod util;
+
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -370,7 +372,7 @@ fn the_viewer_looks_right() {
         .with_size(Vec2::new(640.0, 300.0))
         .with_step_dt(1.0 / 60.0)
         .with_max_steps(10_000)
-        .wgpu()
+        .renderer(util::renderer())
         .build_ui_state(|ui, app: &mut OchrepadApp| app.show(ui), OchrepadApp::new());
     h.run();
     open_viewer(&mut h, &path);
@@ -540,7 +542,7 @@ fn a_filtered_log_in_the_viewer_looks_right() {
         .with_size(Vec2::new(640.0, 260.0))
         .with_step_dt(1.0 / 60.0)
         .with_max_steps(10_000)
-        .wgpu()
+        .renderer(util::renderer())
         .build_ui_state(|ui, app: &mut OchrepadApp| app.show(ui), OchrepadApp::new());
     h.run();
     open_viewer(&mut h, &path);

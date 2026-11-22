@@ -1,5 +1,7 @@
 //! M11: Markdown preview tabs.
 
+mod util;
+
 use std::path::Path;
 
 use egui::{Event, Key, Modifiers, Vec2};
@@ -248,7 +250,7 @@ fn snapshot_with_a_relative_image() {
         .with_step_dt(1.0 / 60.0)
         .with_max_steps(10_000)
         .with_wait_for_pending_images(true)
-        .wgpu()
+        .renderer(util::renderer())
         .build_ui_state(|ui, app: &mut OchrepadApp| app.show(ui), OchrepadApp::new());
     h.state_mut().open_path(&file);
     h.state_mut().open_preview();
@@ -275,7 +277,7 @@ fn a_wide_image_without_an_extension_is_shrunk() {
         .with_step_dt(1.0 / 60.0)
         .with_max_steps(10_000)
         .with_wait_for_pending_images(true)
-        .wgpu()
+        .renderer(util::renderer())
         .build_ui_state(|ui, app: &mut OchrepadApp| app.show(ui), OchrepadApp::new());
     h.state_mut().open_path(&file);
     h.state_mut().open_preview();

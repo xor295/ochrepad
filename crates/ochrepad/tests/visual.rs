@@ -19,7 +19,7 @@ fn harness() -> Harness<'static, OchrepadApp> {
         // Background highlighting runs on a wall-clock budget; let `run`
         // wait for it even on a loaded machine.
         .with_max_steps(10_000)
-        .wgpu()
+        .renderer(util::renderer())
         .build_ui_state(|ui, app: &mut OchrepadApp| app.show(ui), OchrepadApp::new());
     h.event(Event::Paste(SAMPLE.to_owned()));
     h.run();
@@ -106,7 +106,7 @@ fn render_with_system_fonts() {
         // Background highlighting runs on a wall-clock budget; let `run`
         // wait for it even on a loaded machine.
         .with_max_steps(10_000)
-        .wgpu()
+        .renderer(util::renderer())
         .build_ui_state(|ui, app: &mut OchrepadApp| app.show(ui), OchrepadApp::new());
     let font = ochrepad::fonts::install(&h.ctx);
     println!("CJK font: {font:?}");

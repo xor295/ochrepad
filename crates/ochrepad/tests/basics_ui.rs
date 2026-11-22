@@ -12,7 +12,7 @@ fn harness(size: Vec2) -> Harness<'static, OchrepadApp> {
         .with_size(size)
         .with_step_dt(1.0 / 60.0)
         .with_max_steps(10_000)
-        .wgpu()
+        .renderer(util::renderer())
         .build_ui_state(|ui, app: &mut OchrepadApp| app.show(ui), OchrepadApp::new());
     h.run();
     h
