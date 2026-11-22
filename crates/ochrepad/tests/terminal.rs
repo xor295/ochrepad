@@ -115,7 +115,11 @@ fn resizing_reaches_the_program() {
         t.screen_text().iter().any(|l| {
             let l = l.trim();
             // `stty size` prints "rows cols"; `mode con` a "Columns: 50" line.
-            l == "24 50" || (l.starts_with("Columns:") && l.ends_with(" 50"))
+            // When the command is typed before the shell's first prompt, the
+            // prompt lands in front of the answer ("$ 24 50").
+            l == "24 50"
+                || l.ends_with("$ 24 50")
+                || (l.starts_with("Columns:") && l.ends_with(" 50"))
         })
     });
     assert!(told, "screen:\n{}", t.screen_text().join("\n"));
