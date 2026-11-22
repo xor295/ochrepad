@@ -71,10 +71,10 @@ impl LineSet {
         }
         let b = self.blocks.partition_point(|&n| n <= i) - 1;
         let mut left = i - self.blocks[b];
-        for w in b * BLOCK..((b + 1) * BLOCK).min(self.words.len()) {
-            let ones = u64::from(self.words[w].count_ones());
+        for (w, &word) in self.words.iter().enumerate().skip(b * BLOCK).take(BLOCK) {
+            let ones = u64::from(word.count_ones());
             if left < ones {
-                return Some(w as u64 * 64 + nth_one(self.words[w], left));
+                return Some(w as u64 * 64 + nth_one(word, left));
             }
             left -= ones;
         }
@@ -98,10 +98,10 @@ impl LineSet {
             return i;
         };
         let mut left = i - out_before(b);
-        for w in b * BLOCK..((b + 1) * BLOCK).min(self.words.len()) {
-            let zeros = 64 - u64::from(self.words[w].count_ones());
+        for (w, &word) in self.words.iter().enumerate().skip(b * BLOCK).take(BLOCK) {
+            let zeros = 64 - u64::from(word.count_ones());
             if left < zeros {
-                return w as u64 * 64 + nth_one(!self.words[w], left);
+                return w as u64 * 64 + nth_one(!word, left);
             }
             left -= zeros;
         }
