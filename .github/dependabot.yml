@@ -1,0 +1,19 @@
+# Dependabot security updates only: when an advisory is published for a
+# crate in Cargo.lock, Dependabot opens one pull request bumping it (CI's
+# advisory check only warns). Version updates are off
+# (open-pull-requests-limit: 0): dependencies are pinned exactly and the
+# egui crates move together, so they are updated by hand.
+#
+# Needs Dependabot alerts and Dependabot security updates turned on in
+# the repository's Settings > Security and quality > Advanced Security.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
+    groups:
+      security:
+        applies-to: security-updates
+        patterns: ["*"]
