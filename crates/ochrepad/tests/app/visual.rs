@@ -8,7 +8,7 @@ use egui_kittest::Harness;
 use ochrepad::OchrepadApp;
 use ochrepad_core::{Action, ByteOffset, Selection, SelectionSet};
 
-mod util;
+use crate::util;
 
 const SAMPLE: &str = "fn main() {\n\tlet greeting = \"héllo\";\n\tprintln!(\"{greeting}, wörld\");\n}\n// e\u{301} 👍🏽 👨‍👩‍👧 end\n";
 
@@ -96,7 +96,7 @@ fn snapshot_split_view() {
 }
 
 /// Not a snapshot: renders with the system CJK font to a PNG for a human to
-/// look at. `cargo test -p ochrepad --test visual -- --ignored`
+/// look at. `cargo test -p ochrepad --test app visual:: -- --ignored`
 #[test]
 #[ignore]
 fn render_with_system_fonts() {

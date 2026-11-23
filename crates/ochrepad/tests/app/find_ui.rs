@@ -5,7 +5,7 @@ use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
 use ochrepad::OchrepadApp;
 
-mod util;
+use crate::util;
 
 fn with_text(text: &str) -> Harness<'static, OchrepadApp> {
     let mut h = Harness::builder()

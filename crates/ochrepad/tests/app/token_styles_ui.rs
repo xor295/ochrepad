@@ -1,6 +1,6 @@
 //! Search > Style All Occurrences of Token, Clear Style, Jump Up/Down.
 
-mod util;
+use crate::util;
 
 use egui::{Event, Key, Modifiers, Vec2};
 use egui_kittest::Harness;

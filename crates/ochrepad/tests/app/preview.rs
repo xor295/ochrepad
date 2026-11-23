@@ -1,6 +1,6 @@
 //! M11: Markdown preview tabs.
 
-mod util;
+use crate::util;
 
 use std::path::Path;
 

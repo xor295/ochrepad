@@ -1,7 +1,7 @@
 //! The change history: the gutter marks the lines changed since the file
 //! was saved.
 
-mod util;
+use crate::util;
 
 use std::time::Duration;
 

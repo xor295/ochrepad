@@ -1,6 +1,6 @@
 //! View > Function List: the panel of what the document defines.
 
-mod util;
+use crate::util;
 
 use std::time::Duration;
 

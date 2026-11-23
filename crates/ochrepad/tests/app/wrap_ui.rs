@@ -1,7 +1,7 @@
 //! Word wrap in the editor: the View menu toggle, rows that follow the
 //! pane's width, clicking on wrapped rows, Home/End and the look.
 
-mod util;
+use crate::util;
 
 use egui::{Event, FontId, Key, Modifiers, PointerButton, Pos2, Vec2};
 use egui_kittest::Harness;

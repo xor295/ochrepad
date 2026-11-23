@@ -2,7 +2,7 @@
 //! terminal takes from the app, closing. A real shell runs (`cmd.exe` on
 //! Windows, `/bin/sh` on Linux).
 
-mod util;
+use crate::util;
 
 use std::time::Duration;
 

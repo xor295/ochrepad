@@ -1,6 +1,6 @@
 //! 0.3.0 P7: files too large to edit open read-only in a viewer.
 
-mod util;
+use crate::util;
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;

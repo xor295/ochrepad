@@ -1,0 +1,8 @@
+# The toolchain CI, releases and local builds use. A new stable Rust brings
+# new clippy lints and a full rebuild (CI's cache is per compiler), so it is
+# taken on purpose: bump this, fix what clippy reports, commit.
+[toolchain]
+channel = "1.100.0"
+profile = "minimal"
+components = ["rustfmt", "clippy"]
+targets = ["x86_64-unknown-linux-gnu"]
