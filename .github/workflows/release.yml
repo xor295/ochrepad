@@ -56,11 +56,11 @@ jobs:
             exit 1
           fi
 
+      # The version is in rust-toolchain.toml.
       - name: Install Rust
         shell: bash
         run: |
-          rustup toolchain install stable --profile minimal
-          rustup default stable
+          rustup toolchain install
           rustc --version
 
       - name: Install Linux packages

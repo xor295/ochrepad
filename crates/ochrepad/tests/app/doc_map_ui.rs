@@ -1,7 +1,7 @@
 //! The document map: clicking and dragging it scrolls the editor, and it
 //! hides when the pane is narrow or the View menu turns it off.
 
-mod util;
+use crate::util;
 
 use egui::{Event, Modifiers, PointerButton, Pos2, Vec2};
 use egui_kittest::Harness;

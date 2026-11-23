@@ -1,6 +1,6 @@
 //! 0.3.0 P3: zoom and View > Show Symbol.
 
-mod util;
+use crate::util;
 
 use egui::{Event, FontId, Key, Modifiers, MouseWheelUnit, Pos2, TouchPhase, Vec2};
 use egui_kittest::Harness;

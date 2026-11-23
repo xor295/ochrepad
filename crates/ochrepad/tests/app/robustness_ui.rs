@@ -1,6 +1,6 @@
 //! Files that used to crash or hang the app (the 0.3.0 security review).
 
-mod util;
+use crate::util;
 
 use egui::{Event, Key, Modifiers, Vec2};
 use egui_kittest::Harness;

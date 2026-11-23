@@ -1,7 +1,7 @@
 //! 0.3.0 P6: log tools in the editor: the filter bar, highlight rules and
 //! follow mode.
 
-mod util;
+use crate::util;
 
 use std::time::Duration;
 

@@ -1,7 +1,7 @@
 //! Find All and Replace All across open documents, and the Search Results
 //! panel.
 
-mod util;
+use crate::util;
 
 use egui::{Event, Key, Modifiers, Vec2};
 use egui_kittest::Harness;

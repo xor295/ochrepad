@@ -4,7 +4,7 @@
 //! client:
 //!
 //! ```sh
-//! cargo test -p ochrepad --test real_servers -- --ignored --nocapture
+//! cargo test -p ochrepad --test app real_servers:: -- --ignored --nocapture
 //! ```
 //!
 //! It passes without doing anything when rust-analyzer is not on `PATH`.

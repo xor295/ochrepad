@@ -1,7 +1,7 @@
 //! Code folding in the editor: the fold margin, the folded-line marker, the
 //! shortcuts and the View menu.
 
-mod util;
+use crate::util;
 
 use egui::{Event, FontId, Key, Modifiers, PointerButton, Pos2, Vec2};
 use egui_kittest::Harness;

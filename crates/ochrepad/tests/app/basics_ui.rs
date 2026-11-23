@@ -1,6 +1,6 @@
 //! 0.3.0 P1 in the app: Go to Line, Tab/Shift+Tab, comments and brackets.
 
-mod util;
+use crate::util;
 
 use egui::{Event, Key, Modifiers, Vec2};
 use egui_kittest::Harness;

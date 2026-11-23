@@ -1,7 +1,7 @@
 //! Bookmarks in the app: the keys, Search > Bookmark, the find panel's
 //! Bookmark button, the right-click menu and the session.
 
-mod util;
+use crate::util;
 
 use egui::{Event, FontId, Key, Modifiers, PointerButton, Pos2, Vec2};
 use egui_kittest::Harness;

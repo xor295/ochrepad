@@ -23,9 +23,6 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
-  # Line numbers only (no full debug info): faster builds and a smaller
-  # cache, and panics still point at the line.
-  CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
 jobs:
   check:
@@ -48,11 +45,11 @@ jobs:
         with:
           persist-credentials: false
 
+      # The version, components and targets are in rust-toolchain.toml.
       - name: Install Rust
         shell: bash
         run: |
-          rustup toolchain install stable --profile minimal --component rustfmt,clippy
-          rustup default stable
+          rustup toolchain install
           rustc --version
 
       # eframe's recommended development packages, plus Mesa's software

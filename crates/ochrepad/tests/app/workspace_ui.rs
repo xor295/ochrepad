@@ -1,7 +1,7 @@
 //! The folder workspace: the sidebar's file tree, opening and renaming
 //! files from it, and watching for changes.
 
-mod util;
+use crate::util;
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};

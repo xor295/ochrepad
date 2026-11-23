@@ -17,3 +17,10 @@ ochrepad-core = { version = "=0.5.0", path = "crates/ochrepad-core" }
 ochrepad-fileio = { version = "=0.5.0", path = "crates/ochrepad-fileio" }
 ochrepad-lsp = { version = "=0.5.0", path = "crates/ochrepad-lsp" }
 ochrepad-syntax = { version = "=0.5.0", path = "crates/ochrepad-syntax" }
+
+# Line numbers only, no variables or types: tests and debug builds link far
+# faster and take less than half the disk (full debug info made each test
+# binary about 580 MB), and panics still point at the line. For a debugger,
+# build with CARGO_PROFILE_DEV_DEBUG=full.
+[profile.dev]
+debug = "line-tables-only"
