@@ -9,8 +9,10 @@ targets = ["x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu"]
 all-features = true
 
 [advisories]
-# Every vulnerability and unsound crate, and any yanked version, fails the
-# check unless it is listed under `ignore` with the reason. A crate marked
+# Every vulnerability and unsound crate, and any yanked version, fails
+# `cargo deny check advisories` unless it is listed under `ignore` with the
+# reason. CI runs that check as a warning only (see ci.yml); Dependabot opens
+# the fix for advisories, but not for yanked versions. A crate marked
 # unmaintained fails only when the workspace depends on it directly: deep in
 # egui's and syntect's trees (bincode, yaml-rust, paste, ttf-parser, zbus)
 # there is nothing to choose.
