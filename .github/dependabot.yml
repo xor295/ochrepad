@@ -4,8 +4,8 @@
 # (open-pull-requests-limit: 0): dependencies are pinned exactly and the
 # egui crates move together, so they are updated by hand.
 #
-# Needs Settings > Code security > Dependabot alerts and Dependabot
-# security updates turned on.
+# Needs Dependabot alerts and Dependabot security updates turned on in
+# the repository's Settings > Security and quality > Advanced Security.
 version: 2
 updates:
   - package-ecosystem: cargo
